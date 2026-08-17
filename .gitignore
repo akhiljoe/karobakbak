@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# test / coverage
+coverage/
+.nyc_output/
+junit.xml
+
+# load test output
+load-test/results/
+*.k6-summary.json
+
+# runtime volumes
+data/
+monitoring/grafana/data/
+monitoring/prometheus/data/
+
+# editors / OS
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

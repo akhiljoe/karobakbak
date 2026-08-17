@@ -1,0 +1,12 @@
+# Normalise everything to LF in the repository. The backend and frontend both
+# run in Linux containers; CRLF in shell scripts, Dockerfiles or nginx configs
+# breaks them.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
