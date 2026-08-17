@@ -8,20 +8,37 @@
  */
 import {
   CLIENT_ID_PATTERN,
+  DEFAULT_MESSAGE_CONTENT_TYPE,
   PROTOCOL_VERSION,
+  RESERVED_MEDIA_FIELDS,
   isClientEventType,
+  isMessageContentType,
   type ClientEventType,
+  type MessageContentType,
   type MessagePayload,
   type ProtocolErrorCode,
 } from './types';
 
-/** A frame that passed every check, narrowed by event type. */
+/**
+ * A frame that passed every check, narrowed by event type.
+ *
+ * `contentType` is separate from the command's own `type` discriminator: the
+ * former is *what kind of content the message carries*, the latter is *which
+ * command this is*. Today `contentType` is always `'text'`, but downstream code
+ * switches on it rather than assuming, so adding a type later does not mean
+ * hunting for implicit text assumptions (DESIGN.md §23).
+ */
 export type ValidatedCommand =
   | { type: 'join_queue'; clientId: string | null }
   | { type: 'leave_queue'; clientId: string | null }
   | { type: 'skip'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
-  | { type: 'message'; clientId: string | null; text: string };
+  | {
+      type: 'message';
+      clientId: string | null;
+      contentType: MessageContentType;
+      text: string;
+    };
 
 export type ParseResult =
   | { ok: true; command: ValidatedCommand }
@@ -98,11 +115,59 @@ export function validateMessageText(
 }
 
 /**
+ * Validate the content-type discriminator on a `message` payload.
+ *
+ * Two distinct controls, both required because `type` is client-supplied and
+ * therefore a spoofing surface (DESIGN.md §23.6):
+ *
+ *  1. **Only implemented types are accepted.** A client naming a content type
+ *     this server does not implement — including a plausible future one like
+ *     `image` — is rejected, not coerced to text. Coercing would mean a client
+ *     could believe it sent an image while the partner received a text frame.
+ *  2. **Reserved media fields are rejected, not ignored.** A payload carrying
+ *     `mediaId`, `attachment`, `url` and friends is refused outright, so a
+ *     fabricated media reference cannot be smuggled past a server that has no
+ *     concept of media, and so a client is never told "accepted" for content
+ *     that was silently discarded.
+ */
+function validateContentType(
+  payload: Record<string, unknown>,
+):
+  | { ok: true; contentType: MessageContentType }
+  | { ok: false; code: ProtocolErrorCode; message: string } {
+  for (const field of RESERVED_MEDIA_FIELDS) {
+    if (payload[field] !== undefined) {
+      return {
+        ok: false,
+        code: 'UNSUPPORTED_CONTENT_TYPE',
+        message: `payload.${field} is reserved for future media support and is not accepted`,
+      };
+    }
+  }
+
+  const raw = payload.type;
+  if (raw === undefined || raw === null) {
+    return { ok: true, contentType: DEFAULT_MESSAGE_CONTENT_TYPE };
+  }
+  if (!isMessageContentType(raw)) {
+    // The reason is deliberately generic: it does not enumerate which types
+    // might exist later, and it never echoes the client-supplied value.
+    return {
+      ok: false,
+      code: 'UNSUPPORTED_CONTENT_TYPE',
+      message: 'unsupported message content type',
+    };
+  }
+  return { ok: true, contentType: raw };
+}
+
+/**
  * Parse a raw inbound frame.
  *
  * @param raw      frame contents as received from `ws`
  * @param isBinary whether the frame was a binary frame (binary is rejected:
- *                 this protocol is JSON text only)
+ *                 this protocol is JSON text only, and is never a media
+ *                 transport — see DESIGN.md §23.2)
  */
 export function parseClientFrame(
   raw: string | Buffer,
@@ -161,11 +226,23 @@ export function parseClientFrame(
     case 'ping':
       return { ok: true, command: { type, clientId } };
     case 'message': {
+      const contentType = validateContentType(payload);
+      if (!contentType.ok) {
+        return fail(contentType.code, contentType.message);
+      }
       const result = validateMessageText((payload as Partial<MessagePayload>).text, limits);
       if (!result.ok) {
         return fail(result.code, result.message);
       }
-      return { ok: true, command: { type: 'message', clientId, text: result.text } };
+      return {
+        ok: true,
+        command: {
+          type: 'message',
+          clientId,
+          contentType: contentType.contentType,
+          text: result.text,
+        },
+      };
     }
     default: {
       // Exhaustiveness guard: adding a client event without handling it here

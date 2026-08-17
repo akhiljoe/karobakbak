@@ -111,11 +111,19 @@ describe('parseClientFrame — envelope', () => {
       false,
       limits,
     );
-    expect(result).toEqual({ ok: true, command: { type: 'message', clientId: null, text: 'hi' } });
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+    });
     // The parsed command carries no routing information at all: the server
     // resolves the recipient from its own match record.
     if (result.ok) {
-      expect(Object.keys(result.command).sort()).toEqual(['clientId', 'text', 'type']);
+      expect(Object.keys(result.command).sort()).toEqual([
+        'clientId',
+        'contentType',
+        'text',
+        'type',
+      ]);
     }
   });
 });
@@ -123,7 +131,10 @@ describe('parseClientFrame — envelope', () => {
 describe('parseClientFrame — message payload', () => {
   it('accepts text and trims surrounding whitespace', () => {
     const result = parseClientFrame(frame({ type: 'message', payload: { text: '  hi  ' } }), false, limits);
-    expect(result).toEqual({ ok: true, command: { type: 'message', clientId: null, text: 'hi' } });
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+    });
   });
 
   it('rejects a non-string text field', () => {
@@ -207,5 +218,158 @@ describe('parseClientFrame — message payload', () => {
     const result = validateMessageText(`${secret}${'x'.repeat(100)}`, limits);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).not.toContain(secret);
+  });
+});
+
+/**
+ * The content-type discriminator is the one media-related seam implemented
+ * today (DESIGN.md §23). It exists so a future type can be added without a
+ * protocol version bump — and because it is client-supplied, it is also a
+ * spoofing surface that must be closed.
+ */
+describe('parseClientFrame — message content type', () => {
+  it('defaults to text when the client omits the discriminator', () => {
+    const result = parseClientFrame(frame({ type: 'message', payload: { text: 'hi' } }), false, limits);
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+    });
+  });
+
+  it('accepts an explicit text discriminator', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { type: 'text', text: 'hi' } }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+    });
+  });
+
+  it('treats an explicit null discriminator as text rather than failing', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { type: null, text: 'hi' } }),
+      false,
+      limits,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects every unimplemented content type — a client cannot opt into future features', () => {
+    for (const spoofed of ['image', 'voice', 'video', 'audio', 'file', 'sticker']) {
+      const result = parseClientFrame(
+        frame({ type: 'message', payload: { type: spoofed, text: 'hi' } }),
+        false,
+        limits,
+      );
+      expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
+    }
+  });
+
+  it('rejects rather than coerces an unknown type, so a client is never told text was sent', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { type: 'image', text: 'caption' } }),
+      false,
+      limits,
+    );
+    // Crucially NOT { ok: true, contentType: 'text' } — coercion would mean the
+    // sender believes an image was delivered when only text was.
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a non-string discriminator', () => {
+    for (const bogus of [42, true, {}, ['text']]) {
+      const result = parseClientFrame(
+        frame({ type: 'message', payload: { type: bogus, text: 'hi' } }),
+        false,
+        limits,
+      );
+      expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
+    }
+  });
+
+  it('rejects reserved media fields instead of silently ignoring them', () => {
+    for (const field of ['mediaId', 'media', 'attachment', 'attachments', 'blob', 'file', 'url']) {
+      const result = parseClientFrame(
+        frame({ type: 'message', payload: { text: 'hi', [field]: 'm_fabricated' } }),
+        false,
+        limits,
+      );
+      expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
+    }
+  });
+
+  it('rejects a fabricated media reference even when the type is valid text', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { type: 'text', text: 'hi', mediaId: 'm_1' } }),
+      false,
+      limits,
+    );
+    expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
+  });
+
+  it('never names the rejected type in the error, so the reply is not a capability oracle', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { type: 'video', text: 'hi' } }),
+      false,
+      limits,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).not.toContain('video');
+      expect(result.message).not.toContain('image');
+    }
+  });
+
+  it('still rejects binary frames — the WebSocket is not a media transport', () => {
+    // This is the architectural boundary of DESIGN.md §23.2, enforced in code.
+    const result = parseClientFrame(Buffer.from([0xff, 0xd8, 0xff, 0xe0]), true, limits);
+    expectError(result, 'BAD_ENVELOPE');
+  });
+
+  it('applies text validation regardless of an explicit discriminator', () => {
+    expectError(
+      parseClientFrame(
+        frame({ type: 'message', payload: { type: 'text', text: '' } }),
+        false,
+        limits,
+      ),
+      'EMPTY_MESSAGE',
+    );
+    expectError(
+      parseClientFrame(
+        frame({ type: 'message', payload: { type: 'text', text: 'x'.repeat(21) } }),
+        false,
+        limits,
+      ),
+      'MESSAGE_TOO_LONG',
+    );
+  });
+});
+
+describe('protocol surface — future signalling is not accepted early', () => {
+  it('rejects WebRTC-style signalling events that are not implemented', () => {
+    for (const event of [
+      'call.offer',
+      'call.answer',
+      'call.ice-candidate',
+      'call.started',
+      'call.ended',
+      'media.upload',
+    ]) {
+      expectError(
+        parseClientFrame(frame({ type: event, payload: {} }), false, limits),
+        'UNKNOWN_EVENT',
+      );
+    }
+  });
+
+  it('keeps every currently implemented event working', () => {
+    for (const event of ['join_queue', 'leave_queue', 'skip', 'ping']) {
+      const result = parseClientFrame(frame({ type: event, payload: {} }), false, limits);
+      expect(result.ok).toBe(true);
+    }
   });
 });

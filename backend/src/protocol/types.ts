@@ -73,6 +73,55 @@ export const SESSION_STATES = ['IDLE', 'SEARCHING', 'MATCHED'] as const;
 export type SessionState = (typeof SESSION_STATES)[number];
 
 /* -------------------------------------------------------------------------- */
+/* Message content type                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Content types this server implements. **Today this list is exactly `text`.**
+ *
+ * The discriminator exists so that a future content type can be added without
+ * a protocol version bump and a dual-stack compatibility period on both ends.
+ * It is the one media-related seam that is genuinely expensive to retrofit,
+ * because the wire format is versioned and browsers cache old clients.
+ *
+ * It is NOT an announcement that other types are coming, and it is NOT a
+ * capability list: a client sending anything other than `text` is rejected with
+ * `UNSUPPORTED_CONTENT_TYPE`. See DESIGN.md §23.
+ *
+ * When a second type is implemented, it is added here AND announced through
+ * `connected.features` so clients never have to hardcode what the server
+ * accepts.
+ */
+export const MESSAGE_CONTENT_TYPES = ['text'] as const;
+export type MessageContentType = (typeof MESSAGE_CONTENT_TYPES)[number];
+
+/** The content type assumed when a client omits `payload.type`. */
+export const DEFAULT_MESSAGE_CONTENT_TYPE: MessageContentType = 'text';
+
+/**
+ * Payload field names reserved for future media support.
+ *
+ * A frame containing any of these is **rejected**, not ignored. Silently
+ * dropping an unknown field is how a client comes to believe it successfully
+ * sent an attachment that the server never stored or delivered. Rejecting also
+ * means a client cannot smuggle a fabricated media reference past a server that
+ * has no concept of media (DESIGN.md §23.6).
+ */
+export const RESERVED_MEDIA_FIELDS = [
+  'mediaId',
+  'media',
+  'attachment',
+  'attachments',
+  'blob',
+  'file',
+  'url',
+] as const;
+
+export function isMessageContentType(value: unknown): value is MessageContentType {
+  return typeof value === 'string' && (MESSAGE_CONTENT_TYPES as readonly string[]).includes(value);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Client -> server payloads                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -96,6 +145,16 @@ export type PingPayload = Record<string, never>;
  * server's authoritative match record.
  */
 export interface MessagePayload {
+  /**
+   * Content type. Optional; defaults to `text`.
+   *
+   * Only `text` is accepted today — any other value, including a future type
+   * this server does not yet implement, is rejected with
+   * `UNSUPPORTED_CONTENT_TYPE`. A client cannot use this field to opt into
+   * behaviour the server has not shipped.
+   */
+  type?: MessageContentType;
+  /** The message body. Required for `text`, which is the only current type. */
   text: string;
 }
 
@@ -150,10 +209,18 @@ export interface MatchedPayload {
   startedAt: string;
 }
 
-/** Inbound message from the stranger. `text` is untrusted plain text. */
+/**
+ * Inbound message from the stranger. `text` is untrusted plain text.
+ *
+ * `type` is always present on outbound frames, even though it is optional
+ * inbound, so a client renderer can dispatch on it unconditionally rather than
+ * defaulting. That is what keeps the frontend from being written as
+ * "if text then render text" (DESIGN.md §23.4).
+ */
 export interface IncomingMessagePayload {
   matchId: string;
   messageId: string;
+  type: MessageContentType;
   text: string;
   sentAt: string;
   from: 'partner';
@@ -240,6 +307,12 @@ export const PROTOCOL_ERROR_CODES = [
   'EMPTY_MESSAGE',
   /** Message text exceeded maxMessageLength. */
   'MESSAGE_TOO_LONG',
+  /**
+   * `payload.type` names a content type this server does not implement, or the
+   * payload carried a reserved media field. Not retryable: the client must not
+   * resend the same frame hoping the server changes its mind.
+   */
+  'UNSUPPORTED_CONTENT_TYPE',
   /** Token bucket exhausted. */
   'RATE_LIMITED',
   /** Operation requires an active match and there is none. */
