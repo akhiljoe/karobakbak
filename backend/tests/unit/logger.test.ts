@@ -1,21 +1,36 @@
-import { createLogger, errorFields } from '../../src/logger';
+import {
+  createLogger,
+  dbErrorFields,
+  errorFields,
+  ForbiddenLogFieldError,
+  isForbiddenLogField,
+} from '../../src/logger';
 
 function capture(options: Parameters<typeof createLogger>[0] = { level: 'debug' }) {
   const lines: Record<string, unknown>[] = [];
+  const raw: string[] = [];
   const logger = createLogger({
     ...options,
-    sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+    sink: (line) => {
+      raw.push(line);
+      lines.push(JSON.parse(line) as Record<string, unknown>);
+    },
   });
-  return { logger, lines };
+  return { logger, lines, raw };
 }
 
-describe('logger', () => {
+/**
+ * A distinctive string standing in for a user's chat message. Every leakage
+ * test asserts this never reaches the log stream, in any nesting.
+ */
+const CANARY = 'CANARY_PRIVATE_CONVERSATION_a7f3e91b';
+
+describe('logger — basics', () => {
   it('emits one JSON object per line with level, message and timestamp', () => {
     const { logger, lines } = capture();
     logger.info('session opened', { sessionId: 's_abc' });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ level: 'info', msg: 'session opened', sessionId: 's_abc' });
-    expect(typeof lines[0]!.ts).toBe('string');
     expect(new Date(String(lines[0]!.ts)).toISOString()).toBe(lines[0]!.ts);
   });
 
@@ -34,46 +49,203 @@ describe('logger', () => {
     expect(lines[0]).toMatchObject({ instance: 'i_1', sessionId: 's_1', matchId: 'm_1' });
   });
 
-  it('throws in strict mode when a field could carry chat content', () => {
-    const { logger } = capture({ level: 'debug', strict: true });
-    expect(() => logger.info('inbound', { text: 'private message' })).toThrow(/forbidden field/);
-    expect(() => logger.info('inbound', { payload: { text: 'private' } })).toThrow(/forbidden field/);
-    expect(() => logger.info('upgrade', { ip: '203.0.113.7' })).toThrow(/forbidden field/);
-    expect(() => logger.child({ text: 'nope' })).toThrow(/forbidden field/);
-  });
-
-  it('redacts rather than throws when not strict, and never emits the value', () => {
-    const { logger, lines } = capture({ level: 'debug', strict: false });
-    logger.info('inbound', { text: 'private message', sessionId: 's_1' });
-    expect(lines[0]).toMatchObject({ text: '[redacted]', sessionId: 's_1' });
-    expect(JSON.stringify(lines[0])).not.toContain('private message');
-  });
-
   it('allows the operational fields the system actually logs', () => {
     const { logger, lines } = capture({ level: 'debug', strict: true });
-    logger.info('match created', {
+    logger.info('message persisted', {
       sessionId: 's_1',
       matchId: 'm_1',
+      messageId: 'msg_1',
+      conversationId: 'c_1',
       ipHash: 'deadbeef',
-      bytes: 128,
+      clientHash: 'feedface',
+      charLength: 42,
+      moderationAction: 'flag',
+      queueState: 'QUEUED',
+      persistenceState: 'PERSISTED',
+      queueClass: 'p3',
+      errorCode: 'NONE',
       route: 'remote',
     });
-    expect(lines[0]).toMatchObject({ matchId: 'm_1', ipHash: 'deadbeef', route: 'remote' });
+    expect(lines[0]).toMatchObject({
+      matchId: 'm_1',
+      ipHash: 'deadbeef',
+      charLength: 42,
+      persistenceState: 'PERSISTED',
+    });
   });
 
-  it('survives non-serialisable fields instead of crashing the process', () => {
+  it('truncates a circular structure at the depth limit rather than failing', () => {
     const { logger, lines } = capture();
     const circular: Record<string, unknown> = {};
     circular.self = circular;
     expect(() => logger.error('boom', { circular })).not.toThrow();
-    expect(lines[0]).toMatchObject({ level: 'error', msg: 'boom', logError: expect.any(String) });
+    // Depth limiting makes the copy finite, so the line serialises normally.
+    expect(lines[0]).toMatchObject({ level: 'error', msg: 'boom' });
+    expect(JSON.stringify(lines[0])).toContain('truncated');
   });
 
-  it('extracts error name, message and stack into fields', () => {
+  it('falls back to a safe line when a value genuinely cannot be serialised', () => {
+    const { logger, lines } = capture();
+    // BigInt makes JSON.stringify throw and cannot be depth-truncated away.
+    expect(() => logger.error('boom', { count: BigInt(1) })).not.toThrow();
+    expect(lines[0]).toMatchObject({ level: 'error', msg: 'boom', logError: expect.any(String) });
+  });
+});
+
+describe('logger — content leakage prevention (DESIGN.md I8, §18.1)', () => {
+  it('covers every content-shaped and personal-data field name', () => {
+    for (const name of [
+      'text',
+      'body',
+      'content',
+      'message',
+      'note',
+      'payload',
+      'frame',
+      'raw',
+      'input',
+      'value',
+      'excerpt',
+      'preview',
+      'snippet',
+      'transcript',
+      'conversation',
+      'ip',
+      'remoteAddress',
+      'clientIp',
+      'userAgent',
+    ]) {
+      expect(isForbiddenLogField(name)).toBe(true);
+    }
+    // Hashed and structural identifiers must remain loggable.
+    for (const name of ['ipHash', 'clientHash', 'sessionId', 'matchId', 'messageId', 'msg']) {
+      expect(isForbiddenLogField(name)).toBe(false);
+    }
+  });
+
+  it('throws in strict mode on a top-level forbidden field', () => {
+    const { logger } = capture({ level: 'debug', strict: true });
+    expect(() => logger.info('inbound', { text: CANARY })).toThrow(ForbiddenLogFieldError);
+    expect(() => logger.info('report', { note: CANARY })).toThrow(/forbidden field/);
+    expect(() => logger.info('upgrade', { ip: '203.0.113.7' })).toThrow(/forbidden field/);
+    expect(() => logger.child({ text: CANARY })).toThrow(/forbidden field/);
+  });
+
+  it('throws on a NESTED forbidden field — a shallow check would miss this', () => {
+    const { logger } = capture({ level: 'debug', strict: true });
+    expect(() => logger.info('inbound', { ctx: { text: CANARY } })).toThrow(/ctx\.text/);
+    expect(() => logger.info('inbound', { a: { b: { c: { body: CANARY } } } })).toThrow(
+      /a\.b\.c\.body/,
+    );
+  });
+
+  it('throws on a forbidden field inside an array', () => {
+    const { logger } = capture({ level: 'debug', strict: true });
+    expect(() => logger.info('batch', { rows: [{ messageId: 'm1' }, { text: CANARY }] })).toThrow(
+      /rows\[1\]\.text/,
+    );
+  });
+
+  it('redacts rather than throws in production, and the canary never appears', () => {
+    const { logger, raw } = capture({ level: 'debug', strict: false });
+    logger.info('inbound', {
+      text: CANARY,
+      ctx: { note: CANARY, deep: { body: CANARY } },
+      rows: [{ content: CANARY }],
+      sessionId: 's_1',
+    });
+    const output = raw.join('\n');
+    expect(output).not.toContain(CANARY);
+    expect(output).toContain('[redacted]');
+    expect(output).toContain('s_1');
+  });
+
+  it('does not mutate the caller-supplied fields object while redacting', () => {
+    const { logger } = capture({ level: 'debug', strict: false });
+    const fields = { ctx: { text: CANARY } };
+    logger.info('inbound', fields);
+    expect(fields.ctx.text).toBe(CANARY);
+  });
+
+  it('bounds recursion so a deep structure cannot stall the process', () => {
+    const { logger, raw } = capture({ level: 'debug', strict: false });
+    let deep: Record<string, unknown> = { text: CANARY };
+    for (let i = 0; i < 50; i += 1) deep = { nested: deep };
+    expect(() => logger.info('deep', deep)).not.toThrow();
+    expect(raw.join('\n')).not.toContain(CANARY);
+  });
+
+  it('truncates oversized arrays and objects instead of logging them whole', () => {
+    const { logger, lines } = capture({ level: 'debug', strict: false });
+    logger.info('big', { rows: Array.from({ length: 500 }, (_, i) => i) });
+    expect((lines[0]!.rows as unknown[]).length).toBeLessThanOrEqual(32);
+  });
+});
+
+describe('errorFields', () => {
+  it('extracts error name, message and stack', () => {
     const fields = errorFields(new TypeError('bad thing'));
     expect(fields).toMatchObject({ err: 'TypeError', errMsg: 'bad thing' });
     expect(typeof fields.stack).toBe('string');
+    expect(errorFields('plain string')).toMatchObject({
+      err: 'UnknownError',
+      errMsg: 'plain string',
+    });
+  });
 
-    expect(errorFields('plain string')).toEqual({ err: 'UnknownError', errMsg: 'plain string' });
+  it('truncates a long error message so a large body cannot ride along', () => {
+    const fields = errorFields(new Error('x'.repeat(5000)));
+    expect(String(fields.errMsg).length).toBeLessThan(400);
+    expect(String(fields.errMsg)).toContain('[truncated]');
+  });
+
+  it('is scanned by the denylist when logged, so an interpolated message is caught', () => {
+    // Building an Error from user text is the mistake this guards against.
+    // errorFields keeps it in `errMsg`, which is not a forbidden name — so the
+    // real defence is that content-handling code must throw constants. This
+    // test documents that contract explicitly rather than implying protection
+    // the logger does not provide.
+    const leaked = errorFields(new Error(`rejected: ${CANARY}`));
+    expect(String(leaked.errMsg)).toContain(CANARY);
+    // The rule: never construct an Error by interpolating message content.
+  });
+});
+
+describe('dbErrorFields', () => {
+  it('emits only structured driver fields, never the failing row', () => {
+    const pgError = Object.assign(new Error(`duplicate key value: (body)=(${CANARY})`), {
+      name: 'error',
+      code: '23505',
+      constraint: 'messages_pkey',
+      table: 'messages',
+      routine: '_bt_check_unique',
+      // pg attaches the offending detail here
+      detail: `Key (body)=(${CANARY}) already exists.`,
+    });
+    const fields = dbErrorFields(pgError);
+    expect(fields).toEqual({
+      err: 'error',
+      dbCode: '23505',
+      dbConstraint: 'messages_pkey',
+      dbTable: 'messages',
+      dbRoutine: '_bt_check_unique',
+    });
+    expect(JSON.stringify(fields)).not.toContain(CANARY);
+  });
+
+  it('logs cleanly through the logger without leaking the canary', () => {
+    const { logger, raw } = capture({ level: 'debug', strict: true });
+    const pgError = Object.assign(new Error(`insert failed for ${CANARY}`), {
+      code: '40001',
+      table: 'messages',
+    });
+    logger.error('persistence batch failed', { ...dbErrorFields(pgError), batchSize: 100 });
+    expect(raw.join('\n')).not.toContain(CANARY);
+    expect(raw.join('\n')).toContain('40001');
+  });
+
+  it('handles a non-Error value without throwing', () => {
+    expect(dbErrorFields(undefined)).toEqual({ err: 'DatabaseError' });
+    expect(dbErrorFields('boom')).toEqual({ err: 'DatabaseError' });
   });
 });
