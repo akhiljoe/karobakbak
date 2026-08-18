@@ -77,6 +77,11 @@ export type ResolvePartnerResult =
   | { status: 'duplicate'; matchId: string }
   | { status: 'dedupe_full'; matchId: string };
 
+export type ResolveRouteResult =
+  | { status: 'ok'; matchId: string; partnerSessionId: string; partnerInstanceId: string }
+  | { status: 'partner_gone'; matchId: string }
+  | { status: 'not_matched' };
+
 export type BlockPartnerResult =
   | {
       status: 'blocked';
@@ -400,6 +405,37 @@ export class RedisStore {
         return { status: 'dedupe_full', matchId: str(reply, 1) };
       default:
         throw new UnexpectedScriptReplyError('resolvePartner', status);
+    }
+  }
+
+  /**
+   * Resolve the recipient without consuming a dedupe id.
+   *
+   * For advisory traffic only. A typing indicator has no replay to protect
+   * against, and routing it through `resolvePartner` would burn a message id
+   * per keystroke and let a client exhaust its own dedupe set by typing.
+   */
+  async resolveRoute(sessionId: string): Promise<ResolveRouteResult> {
+    const reply = await this.runner.run(
+      'resolveRoute',
+      [this.keys.userMatch(sessionId)],
+      [this.keys.prefix, sessionId],
+    );
+    const status = str(reply, 0);
+    switch (status) {
+      case 'OK':
+        return {
+          status: 'ok',
+          matchId: str(reply, 1),
+          partnerSessionId: str(reply, 2),
+          partnerInstanceId: str(reply, 3),
+        };
+      case 'PARTNER_GONE':
+        return { status: 'partner_gone', matchId: str(reply, 1) };
+      case 'NOT_MATCHED':
+        return { status: 'not_matched' };
+      default:
+        throw new UnexpectedScriptReplyError('resolveRoute', status);
     }
   }
 

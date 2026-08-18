@@ -90,6 +90,54 @@ describe('resolvePartner', () => {
   });
 });
 
+describe('resolveRoute — routing without dedupe', () => {
+  it('resolves the same partner as resolvePartner, without touching the dedupe set', async () => {
+    const { a, b, mid } = await pair();
+
+    expect(await ctx.store.resolveRoute(a)).toEqual({
+      status: 'ok',
+      matchId: mid,
+      partnerSessionId: b,
+      partnerInstanceId: 'i_one',
+    });
+    // The whole point: a typing indicator must not consume a message id, or a
+    // client could exhaust its own replay protection by typing.
+    expect(await ctx.client.exists(ctx.keys.dedupe(mid))).toBe(0);
+  });
+
+  it('can be called repeatedly with no accumulating state', async () => {
+    const { a, mid } = await pair();
+    for (let i = 0; i < 20; i += 1) {
+      expect((await ctx.store.resolveRoute(a)).status).toBe('ok');
+    }
+    expect(await ctx.client.exists(ctx.keys.dedupe(mid))).toBe(0);
+  });
+
+  it('refuses for a session with no match', async () => {
+    const lonely = await ctx.session();
+    expect(await ctx.store.resolveRoute(lonely)).toEqual({ status: 'not_matched' });
+  });
+
+  it('refuses through a match record that is gone (I6)', async () => {
+    const { a, mid } = await pair();
+    await ctx.client.del(ctx.keys.match(mid));
+    expect(await ctx.store.resolveRoute(a)).toEqual({ status: 'not_matched' });
+  });
+
+  it('reports a partner whose session has vanished', async () => {
+    const { a, b, mid } = await pair();
+    await ctx.client.del(ctx.keys.session(b));
+    expect(await ctx.store.resolveRoute(a)).toEqual({ status: 'partner_gone', matchId: mid });
+  });
+
+  it('refuses for a session that is not a participant', async () => {
+    const { mid } = await pair();
+    const outsider = await ctx.session();
+    await ctx.client.set(ctx.keys.userMatch(outsider), mid);
+    expect(await ctx.store.resolveRoute(outsider)).toEqual({ status: 'not_matched' });
+  });
+});
+
 describe('replay protection (I14)', () => {
   it('accepts an id once and rejects the repeat', async () => {
     const { a, mid } = await pair();

@@ -65,7 +65,7 @@ describe('the handshake', () => {
       // The UI hides what the server cannot do rather than discovering it
       // through a rejection.
       expect(payload.features).toEqual({
-        typing: false,
+        typing: true,
         presence: true,
         report: false,
         block: true,
@@ -408,9 +408,11 @@ describe('control commands', () => {
     const client = await TestClient.connect(http.url);
     try {
       await client.waitForFrame('connected');
-      // `features` already says typing is off; a client that sends anyway gets
-      // a retryable error rather than silence.
-      client.command('typing', { active: true });
+      // `features.report` is false because reports are persisted evidence and
+      // the retention store does not exist yet. A client that sends anyway
+      // gets a retryable error rather than an acknowledgement of a report
+      // nobody recorded (§14.3).
+      client.command('report', { category: 'spam' });
       const error = payloadOf<ErrorPayload>(await client.waitForFrame('error'));
       expect(error.code).toBe('INTERNAL_ERROR');
       expect(error.retryable).toBe(true);

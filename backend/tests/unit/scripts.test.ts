@@ -25,6 +25,7 @@ describe('script registry', () => {
         'leaveQueue',
         'rateLimit',
         'resolvePartner',
+        'resolveRoute',
         'tryMatch',
       ].sort(),
     );

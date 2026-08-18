@@ -23,7 +23,7 @@ import type { Duplex } from 'node:stream';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import type { Config } from './config';
+import type { Config, RateLimitedCommand } from './config';
 import type { Logger } from './logger';
 import { CLOSE_CODES, type ServerFeatures, type ServerLimits } from './protocol/types';
 import type { ValidatedCommand } from './protocol/validate';
@@ -35,6 +35,7 @@ import { nowIso } from './util/time';
 import { SocketConnection } from './ws/connection';
 import { EventDispatcher } from './ws/dispatch';
 import { SessionLifecycle, type SearchOutcome } from './ws/lifecycle';
+import { MessagePipeline, type MessageOutcome } from './ws/messages';
 import { ConnectionRegistry } from './ws/registry';
 import { SessionSubscriber } from './ws/subscriber';
 import {
@@ -69,7 +70,7 @@ export interface ChatServer {
  * arrive with the message pipeline and the retention store respectively.
  */
 const FEATURES: ServerFeatures = {
-  typing: false,
+  typing: true,
   presence: true,
   report: false,
   block: true,
@@ -82,6 +83,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const dispatcher = new EventDispatcher(registry, store, logger);
   const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger);
   const subscriber = new SessionSubscriber(clients.subscriber, keys, registry, logger);
+  const pipeline = new MessagePipeline(store, dispatcher, config, logger);
 
   const limits: ServerLimits = {
     maxMessageLength: config.limits.maxMessageLength,
@@ -297,14 +299,71 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     void sendPresence(connection);
   }
 
+  /**
+   * Every state-changing command passes its own token bucket before it does
+   * anything (R7, §17).
+   *
+   * Per command, not per connection: a cheap protocol command must not be
+   * usable to spend the message budget, and a strict limit on `report` must not
+   * be reachable by sending something else. `ping` has no bucket by design —
+   * it is the liveness probe, already bounded by the heartbeat interval, and
+   * limiting it would let an idle client be reaped for keeping itself alive.
+   *
+   * The client is told `RATE_LIMITED` and nothing else: which bucket, how full
+   * it was and when it refills are all internal (§17).
+   */
+  async function withinRateLimit(
+    command: RateLimitedCommand,
+    connection: SocketConnection,
+  ): Promise<boolean> {
+    const limit = await store.rateLimit(command, connection.sessionId);
+    if (limit.allowed) return true;
+    connection.sendError('RATE_LIMITED', 'slow down');
+    return false;
+  }
+
   async function handleCommand(
     command: ValidatedCommand,
     connection: SocketConnection,
   ): Promise<void> {
+    // `message` and `typing` check their own buckets inside the pipeline, where
+    // the rest of their ordering lives (§14.1).
+    if (
+      command.type !== 'ping' &&
+      command.type !== 'message' &&
+      command.type !== 'typing' &&
+      !(await withinRateLimit(command.type, connection))
+    ) {
+      return;
+    }
+
     switch (command.type) {
       case 'ping':
         connection.sendEvent('pong', { serverTime: nowIso() });
         return;
+
+      case 'message': {
+        const outcome = await pipeline.send(
+          connection.sessionId,
+          command.clientId,
+          command.contentType,
+          command.text,
+        );
+        replyToMessage(connection, command.clientId, outcome);
+        return;
+      }
+
+      case 'typing': {
+        const outcome = await pipeline.typing(connection.sessionId, command.active);
+        // Nothing is sent back on success: an acknowledged typing indicator
+        // would double this command's traffic to confirm something advisory.
+        if (outcome.kind === 'rate_limited') {
+          connection.sendError('RATE_LIMITED', 'slow down');
+        } else if (outcome.kind === 'not_matched') {
+          connection.sendError('NOT_MATCHED', 'you are not in a conversation');
+        }
+        return;
+      }
 
       case 'join_queue': {
         const outcome = await lifecycle.joinQueue(connection.sessionId);
@@ -341,12 +400,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         return;
       }
 
-      case 'message':
-      case 'typing':
       case 'report':
-        // Wired by the message pipeline and the retention store. `features`
-        // already tells the client which of these are live, so a well-behaved
-        // client does not reach here.
+        // Reports are persisted evidence, so this waits for the retention
+        // store. `features.report` is false, so a well-behaved client does not
+        // reach here — and acknowledging a report we cannot record would be a
+        // lie to a user asking for help (§14.3).
         logger.warn('received a command this build does not serve', {
           sessionId: connection.sessionId,
           command: command.type,
@@ -359,6 +417,39 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         void exhaustive;
         connection.sendError('UNKNOWN_EVENT', 'unknown event type');
       }
+    }
+  }
+
+  function replyToMessage(
+    connection: SocketConnection,
+    clientMsgId: string,
+    outcome: MessageOutcome,
+  ): void {
+    switch (outcome.kind) {
+      case 'accepted':
+        connection.sendEvent('message_ack', {
+          clientMsgId,
+          messageId: outcome.messageId,
+          matchId: outcome.matchId,
+          acceptedAt: outcome.acceptedAt,
+          route: outcome.route,
+          delivered: outcome.delivered,
+        });
+        return;
+      case 'rate_limited':
+        connection.sendError('RATE_LIMITED', 'slow down');
+        return;
+      case 'duplicate':
+        // The first copy was delivered; this one was not (I14). Not retryable:
+        // retrying is what produced it, and a new message needs a new id.
+        connection.sendError('DUPLICATE_MESSAGE', 'that message id was already used');
+        return;
+      case 'dedupe_full':
+        connection.sendError('DUPLICATE_MESSAGE', 'too many messages in this conversation');
+        return;
+      case 'not_matched':
+        connection.sendError('NOT_MATCHED', 'you are not in a conversation');
+        return;
     }
   }
 

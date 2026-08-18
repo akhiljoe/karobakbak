@@ -71,6 +71,31 @@ local function hashToTable(flat)
   return out
 end
 
+-- Resolves who a session is talking to, and where that socket lives.
+-- Shared by resolvePartner and resolveRoute so that "who is my partner" has
+-- one answer: a second copy of this walk is how the message path and the
+-- typing path would eventually disagree about who the recipient is.
+-- Returns nil when there is no deliverable partner, else
+-- { matchId, partnerSessionId, partnerInstanceId } with the instance empty
+-- when the partner's session row is gone.
+local function resolveRouteInline(sid)
+  local mid = redis.call('GET', kUserMatch(sid))
+  if not mid then return nil end
+  local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
+  -- I6: a deleted match can never deliver, even while user_match lingers.
+  if not m[1] then return nil end
+  local partner
+  if m[1] == sid then
+    partner = m[2]
+  elseif m[2] == sid then
+    partner = m[1]
+  else
+    return nil
+  end
+  local instance = redis.call('HGET', kSession(partner), 'instanceId')
+  return { mid, partner, instance or '' }
+end
+
 -- Ends one match, symmetrically, and reports whether this caller was the one
 -- that ended it. Preserves I4 (no user_match without a match), I5 and I6 (a
 -- deleted match can never deliver again): the match record, both user_match
@@ -429,26 +454,36 @@ const resolvePartner = define(
   1,
   5,
   `
-local sid = ARGV[2]
-local mid = redis.call('GET', KEYS[1])
-if not mid then return { 'NOT_MATCHED' } end
-local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
-if not m[1] then return { 'NOT_MATCHED' } end
-local partner
-if m[1] == sid then
-  partner = m[2]
-elseif m[2] == sid then
-  partner = m[1]
-else
-  return { 'NOT_MATCHED' }
-end
-local partnerInstance = redis.call('HGET', kSession(partner), 'instanceId')
-if not partnerInstance then return { 'PARTNER_GONE', mid } end
+local route = resolveRouteInline(ARGV[2])
+if not route then return { 'NOT_MATCHED' } end
+local mid, partner, partnerInstance = route[1], route[2], route[3]
+if partnerInstance == '' then return { 'PARTNER_GONE', mid } end
 local dk = kDedupe(mid)
 if redis.call('SCARD', dk) >= tonumber(ARGV[4]) then return { 'DEDUPE_FULL', mid } end
 if redis.call('SADD', dk, ARGV[3]) == 0 then return { 'DUPLICATE', mid } end
 redis.call('EXPIRE', dk, tonumber(ARGV[5]))
 return { 'OK', mid, partner, partnerInstance }
+`,
+);
+
+/**
+ * Resolve the recipient without touching the dedupe set.
+ * KEYS: user_match(sid). ARGV: prefix, sid.
+ *
+ * For advisory traffic — a typing indicator — which has no replay to protect
+ * against and must not consume a message id. Sharing `resolveRouteInline` with
+ * `resolvePartner` is the point: two copies of "who is my partner" would
+ * eventually answer differently.
+ */
+const resolveRoute = define(
+  'resolveRoute',
+  1,
+  2,
+  `
+local route = resolveRouteInline(ARGV[2])
+if not route then return { 'NOT_MATCHED' } end
+if route[3] == '' then return { 'PARTNER_GONE', route[1] } end
+return { 'OK', route[1], route[2], route[3] }
 `,
 );
 
@@ -823,6 +858,7 @@ export const SCRIPTS = {
   tryMatch,
   endMatch,
   resolvePartner,
+  resolveRoute,
   rateLimit,
   connRateLimit,
   connAcquire,
