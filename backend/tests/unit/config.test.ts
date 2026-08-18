@@ -185,6 +185,53 @@ describe('loadConfig — per-command rate limits (R7)', () => {
   });
 });
 
+describe('loadConfig — Redis layer settings', () => {
+  it('applies the documented matchmaking and block defaults', () => {
+    const config = loadConfig(baseEnv());
+    expect(config.matchmaking.defaultSegment).toBe('default');
+    expect(config.limits.maxConnectionsPerIp).toBe(40);
+    expect(config.limits.dedupeMaxEntries).toBe(10_000);
+    expect(config.blocks).toEqual({
+      ttlSeconds: 2_592_000,
+      ipDimensionEnabled: true,
+      clientDimensionEnabled: true,
+    });
+  });
+
+  it('rejects a segment name that would break the key namespace', () => {
+    // The segment goes straight into chat:queue:{segment}; a ':' would put the
+    // queue somewhere the janitor never looks.
+    expect(() => loadConfig(baseEnv({ DEFAULT_QUEUE_SEGMENT: 'a:b' }))).toThrow(
+      /DEFAULT_QUEUE_SEGMENT/,
+    );
+    expect(() => loadConfig(baseEnv({ DEFAULT_QUEUE_SEGMENT: 'has space' }))).toThrow(
+      /DEFAULT_QUEUE_SEGMENT/,
+    );
+    expect(() => loadConfig(baseEnv({ DEFAULT_QUEUE_SEGMENT: 'UPPER' }))).toThrow(
+      /DEFAULT_QUEUE_SEGMENT/,
+    );
+    expect(loadConfig(baseEnv({ DEFAULT_QUEUE_SEGMENT: 'en-gb_1' })).matchmaking.defaultSegment).toBe(
+      'en-gb_1',
+    );
+  });
+
+  it('lets each block dimension be disabled independently (D18)', () => {
+    const noIp = loadConfig(baseEnv({ BLOCK_DIMENSION_IP_ENABLED: 'false' }));
+    expect(noIp.blocks.ipDimensionEnabled).toBe(false);
+    expect(noIp.blocks.clientDimensionEnabled).toBe(true);
+  });
+
+  it('warns when blocking is configured to record nothing', () => {
+    const warnings = configWarnings(
+      loadConfig(
+        baseEnv({ BLOCK_DIMENSION_IP_ENABLED: 'false', BLOCK_DIMENSION_CLIENT_ENABLED: 'false' }),
+      ),
+    );
+    // Legal, but it makes the block button end the match and nothing else.
+    expect(warnings.join(' ')).toMatch(/BLOCK_DIMENSION/);
+  });
+});
+
 describe('loadConfig — origin allowlist (R9)', () => {
   it('refuses to start in production with an empty allowlist', () => {
     expect(() => loadConfig(baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: '' }))).toThrow(

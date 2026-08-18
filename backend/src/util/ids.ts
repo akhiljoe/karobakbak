@@ -43,11 +43,16 @@ export function newFrameId(): string {
 /**
  * Identifies this backend process. Stable for the process lifetime and used
  * for the Redis liveness beacon that lets other instances detect a crash.
+ *
+ * The result becomes part of a Redis key (`chat:instance:{iid}`), so it is
+ * reduced to key-safe characters here rather than at every key build. A
+ * hostname routinely carries dots, and an operator-supplied `INSTANCE_ID` can
+ * carry anything at all.
  */
 export function newInstanceId(configured?: string): string {
-  const trimmed = configured?.trim();
-  if (trimmed) return trimmed;
-  return `i_${hostname()}-${process.pid}-${randomToken(4)}`;
+  const raw = configured?.trim() || `i_${hostname()}-${process.pid}-${randomToken(4)}`;
+  const cleaned = raw.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 128);
+  return cleaned.length > 0 ? cleaned : `i_${randomToken(4)}`;
 }
 
 /**

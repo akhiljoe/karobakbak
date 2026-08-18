@@ -1,0 +1,26 @@
+# Throwaway services for the integration suite.
+#
+#   npm run redis:test:up
+#   npm run test:integration
+#   npm run redis:test:down
+#
+# Deliberately published on non-default ports so a running development stack is
+# never the thing the tests wipe. Phase 7 adds a PostgreSQL service here.
+services:
+  redis-test:
+    image: redis:7-alpine
+    container_name: karobakbak-redis-test
+    # Same flags as production (D12): no RDB snapshots, no AOF. Live state is
+    # reconstructible, and disabling persistence is what guarantees no Redis
+    # structure - including a Pub/Sub payload carrying message text - reaches
+    # disk. The tests therefore exercise the same durability semantics as prod.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    tmpfs:
+      - /data

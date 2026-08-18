@@ -61,6 +61,10 @@ export interface Config {
     readonly connRateWindowSeconds: number;
     readonly invalidMessageStrikes: number;
     readonly maxBufferedBytes: number;
+    /** Concurrent connections from one salted IP hash, counted cluster-wide (R8). */
+    readonly maxConnectionsPerIp: number;
+    /** Cap on the per-match replay-protection set (D24). */
+    readonly dedupeMaxEntries: number;
     /**
      * One bucket per state-changing command, so a cheap protocol command
      * cannot be abused to dodge the message limit (security §12, R7).
@@ -85,6 +89,20 @@ export interface Config {
   readonly matchmaking: {
     readonly candidateSample: number;
     readonly retryAttempts: number;
+    /**
+     * The only queue segment implemented. Segmentation is a reserved seam:
+     * every key and every Lua script takes a segment, but filters are not
+     * built (D23, R6).
+     */
+    readonly defaultSegment: string;
+  };
+
+  readonly blocks: {
+    readonly ttlSeconds: number;
+    /** Coarse, evadable by VPN, can catch bystanders behind CGNAT (D18). */
+    readonly ipDimensionEnabled: boolean;
+    /** Precise but trivially rotated by clearing browser storage (D18). */
+    readonly clientDimensionEnabled: boolean;
   };
 
   readonly janitor: {
@@ -183,6 +201,21 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
   };
 }
 
+/**
+ * A queue segment name. It becomes part of a Redis key (`chat:queue:{segment}`),
+ * so it is restricted to characters that cannot break the namespace apart the
+ * way a `:` or a space would.
+ */
+function segment(env: Env, key: string, fallback: string): string {
+  const value = str(env, key, fallback);
+  if (!/^[a-z0-9_-]{1,32}$/.test(value)) {
+    throw new ConfigError(
+      `${key} must be 1-32 characters of [a-z0-9_-], got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 function path(env: Env, key: string, fallback: string): string {
   const value = str(env, key, fallback);
   if (!value.startsWith('/')) {
@@ -230,6 +263,8 @@ export function loadConfig(env: Env = process.env): Config {
       connRateWindowSeconds: int(env, 'CONN_RATE_WINDOW_SECONDS', 60, 1, 86_400),
       invalidMessageStrikes: int(env, 'INVALID_MESSAGE_STRIKES', 10, 1, 10_000),
       maxBufferedBytes: int(env, 'MAX_BUFFERED_BYTES', 1_048_576, 4096, 268_435_456),
+      maxConnectionsPerIp: int(env, 'MAX_CONNECTIONS_PER_IP', 40, 1, 100_000),
+      dedupeMaxEntries: int(env, 'DEDUPE_MAX_ENTRIES', 10_000, 16, 1_000_000),
       rates: {
         message: rateLimit(env, 'MESSAGE', 5, 10),
         typing: rateLimit(env, 'TYPING', 4, 8),
@@ -258,6 +293,13 @@ export function loadConfig(env: Env = process.env): Config {
     matchmaking: {
       candidateSample: int(env, 'MATCH_CANDIDATE_SAMPLE', 8, 1, 1000),
       retryAttempts: int(env, 'MATCH_RETRY_ATTEMPTS', 3, 1, 20),
+      defaultSegment: segment(env, 'DEFAULT_QUEUE_SEGMENT', 'default'),
+    },
+
+    blocks: {
+      ttlSeconds: int(env, 'BLOCK_TTL_SECONDS', 2_592_000, 60, 31_536_000),
+      ipDimensionEnabled: bool(env, 'BLOCK_DIMENSION_IP_ENABLED', true),
+      clientDimensionEnabled: bool(env, 'BLOCK_DIMENSION_CLIENT_ENABLED', true),
     },
 
     janitor: {
@@ -378,6 +420,13 @@ export function configWarnings(config: Config): string[] {
       'ALLOWED_ORIGINS is empty: WebSocket upgrades from ANY origin are accepted. ' +
         'Set an explicit allowlist before exposing this service; it is a startup ' +
         'failure under NODE_ENV=production.',
+    );
+  }
+  if (!config.blocks.ipDimensionEnabled && !config.blocks.clientDimensionEnabled) {
+    warnings.push(
+      'BLOCK_DIMENSION_IP_ENABLED and BLOCK_DIMENSION_CLIENT_ENABLED are both false: ' +
+        'the block button will end the match but record nothing, so a blocked stranger ' +
+        'can be matched again immediately.',
     );
   }
   if (config.isProduction && config.security.ipHashSalt === 'change-me-in-production') {
