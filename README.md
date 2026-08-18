@@ -1,9 +1,12 @@
 # karobakbak
 
 Anonymous, real-time, text-only random stranger chat. Two strangers are paired
-at random, exchange messages, and either one can skip to a new stranger at any
-time. **Chat history is completely ephemeral — no message content is ever
-persisted, logged, or exported as a metric.**
+at random, exchange messages, and either one can skip, report or block at any
+time. Conversations are **retained for a defined period** to support abuse
+investigation and then deleted automatically. Retained content is plaintext
+inside the trusted boundary of [`DESIGN.md`](./DESIGN.md) §2.1 and never leaves
+it: **no message content is ever logged, labelled on a metric, or exported to
+any other system.**
 
 > **Status: under construction, built in phases.** See [`PHASES.md`](./PHASES.md)
 > for what is done and what is next. The full operator README (setup, commands,

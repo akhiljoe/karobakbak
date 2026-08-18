@@ -1,11 +1,25 @@
-import { parseClientFrame, validateMessageText } from '../../src/protocol/validate';
-import { PROTOCOL_VERSION } from '../../src/protocol/types';
+import {
+  parseClientFrame,
+  validateMessageText,
+  validateReportNote,
+} from '../../src/protocol/validate';
+import { PROTOCOL_VERSION, REPORT_CATEGORIES } from '../../src/protocol/types';
 
-const limits = { maxMessageLength: 20 };
+/** Deliberately different numbers, so a test can tell which limit fired. */
+const limits = { maxMessageLength: 20, maxReportNoteLength: 30 };
 
 /** Build a raw frame the way a client would. */
 function frame(overrides: Record<string, unknown>): string {
   return JSON.stringify({ version: PROTOCOL_VERSION, ...overrides });
+}
+
+/**
+ * A `message` frame always carries an envelope id — it is the dedupe key and
+ * the server rejects a message without one (D24). Tests that are not about the
+ * id itself use this so the interesting assertion is the only thing varying.
+ */
+function messageFrame(payload: unknown, overrides: Record<string, unknown> = {}): string {
+  return frame({ type: 'message', id: 'c_1', payload, ...overrides });
 }
 
 function expectError(result: ReturnType<typeof parseClientFrame>, code: string) {
@@ -67,6 +81,13 @@ describe('parseClientFrame — envelope', () => {
       parseClientFrame(frame({ type: 'matched', payload: {} }), false, limits),
       'UNKNOWN_EVENT',
     );
+    // Same for the revision-2 server events.
+    for (const serverOnly of ['presence', 'partner_typing', 'report_ack']) {
+      expectError(
+        parseClientFrame(frame({ type: serverOnly, payload: {} }), false, limits),
+        'UNKNOWN_EVENT',
+      );
+    }
     expectError(parseClientFrame(frame({ type: 7, payload: {} }), false, limits), 'UNKNOWN_EVENT');
   });
 
@@ -104,16 +125,13 @@ describe('parseClientFrame — envelope', () => {
 
   it('ignores client attempts to assert identity or routing', () => {
     const result = parseClientFrame(
-      frame({
-        type: 'message',
-        payload: { text: 'hi', to: 's_victim', from: 's_admin', matchId: 'm_forged' },
-      }),
+      messageFrame({ text: 'hi', to: 's_victim', from: 's_admin', matchId: 'm_forged' }),
       false,
       limits,
     );
     expect(result).toEqual({
       ok: true,
-      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+      command: { type: 'message', clientId: 'c_1', contentType: 'text', text: 'hi' },
     });
     // The parsed command carries no routing information at all: the server
     // resolves the recipient from its own match record.
@@ -128,39 +146,78 @@ describe('parseClientFrame — envelope', () => {
   });
 });
 
-describe('parseClientFrame — message payload', () => {
-  it('accepts text and trims surrounding whitespace', () => {
-    const result = parseClientFrame(frame({ type: 'message', payload: { text: '  hi  ' } }), false, limits);
+/**
+ * The envelope id is optional everywhere except `message`, where it is the
+ * per-match replay-protection key (R4/D24, invariant I14). A message that
+ * arrives without one cannot be deduplicated, so it is refused rather than
+ * accepted with a generated id — a server-generated key would make every retry
+ * a fresh message and silently disable replay protection.
+ */
+describe('parseClientFrame — required message id', () => {
+  it('rejects a message with no envelope id', () => {
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { text: 'hi' } }),
+      false,
+      limits,
+    );
+    expectError(result, 'BAD_ENVELOPE');
+  });
+
+  it('rejects a message whose id is explicitly null', () => {
+    expectError(
+      parseClientFrame(frame({ type: 'message', id: null, payload: { text: 'hi' } }), false, limits),
+      'BAD_ENVELOPE',
+    );
+  });
+
+  it('reports the missing id before any payload problem', () => {
+    // Structural defects are reported first, so a client that forgot the id is
+    // not sent chasing a content error it does not have.
+    const result = parseClientFrame(
+      frame({ type: 'message', payload: { text: '', type: 'image' } }),
+      false,
+      limits,
+    );
+    expectError(result, 'BAD_ENVELOPE');
+  });
+
+  it('still allows every other event to omit an id', () => {
+    for (const event of ['join_queue', 'leave_queue', 'skip', 'block', 'ping']) {
+      const result = parseClientFrame(frame({ type: event, payload: {} }), false, limits);
+      expect(result.ok).toBe(true);
+    }
+    expect(
+      parseClientFrame(frame({ type: 'typing', payload: { active: true } }), false, limits).ok,
+    ).toBe(true);
+  });
+
+  it('surfaces the id on the validated command so the dedupe key cannot be lost', () => {
+    const result = parseClientFrame(messageFrame({ text: 'hi' }, { id: 'c_dedupe' }), false, limits);
     expect(result).toEqual({
       ok: true,
-      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+      command: { type: 'message', clientId: 'c_dedupe', contentType: 'text', text: 'hi' },
+    });
+  });
+});
+
+describe('parseClientFrame — message payload', () => {
+  it('accepts text and trims surrounding whitespace', () => {
+    const result = parseClientFrame(messageFrame({ text: '  hi  ' }), false, limits);
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'message', clientId: 'c_1', contentType: 'text', text: 'hi' },
     });
   });
 
   it('rejects a non-string text field', () => {
-    expectError(
-      parseClientFrame(frame({ type: 'message', payload: { text: 42 } }), false, limits),
-      'VALIDATION_FAILED',
-    );
-    expectError(
-      parseClientFrame(frame({ type: 'message', payload: {} }), false, limits),
-      'VALIDATION_FAILED',
-    );
-    expectError(
-      parseClientFrame(frame({ type: 'message', payload: { text: null } }), false, limits),
-      'VALIDATION_FAILED',
-    );
+    expectError(parseClientFrame(messageFrame({ text: 42 }), false, limits), 'VALIDATION_FAILED');
+    expectError(parseClientFrame(messageFrame({}), false, limits), 'VALIDATION_FAILED');
+    expectError(parseClientFrame(messageFrame({ text: null }), false, limits), 'VALIDATION_FAILED');
   });
 
   it('rejects empty and whitespace-only text', () => {
-    expectError(
-      parseClientFrame(frame({ type: 'message', payload: { text: '' } }), false, limits),
-      'EMPTY_MESSAGE',
-    );
-    expectError(
-      parseClientFrame(frame({ type: 'message', payload: { text: '   \n\t ' } }), false, limits),
-      'EMPTY_MESSAGE',
-    );
+    expectError(parseClientFrame(messageFrame({ text: '' }), false, limits), 'EMPTY_MESSAGE');
+    expectError(parseClientFrame(messageFrame({ text: '   \n\t ' }), false, limits), 'EMPTY_MESSAGE');
   });
 
   it('rejects text longer than the configured limit, measured before trimming', () => {
@@ -209,7 +266,10 @@ describe('parseClientFrame — message payload', () => {
   });
 
   it('treats HTML and script payloads as ordinary text — the frontend renders text nodes', () => {
-    const result = validateMessageText('<img src=x>', { maxMessageLength: 2000 });
+    const result = validateMessageText('<img src=x>', {
+      maxMessageLength: 2000,
+      maxReportNoteLength: 500,
+    });
     expect(result).toEqual({ ok: true, text: '<img src=x>' });
   });
 
@@ -229,51 +289,35 @@ describe('parseClientFrame — message payload', () => {
  */
 describe('parseClientFrame — message content type', () => {
   it('defaults to text when the client omits the discriminator', () => {
-    const result = parseClientFrame(frame({ type: 'message', payload: { text: 'hi' } }), false, limits);
+    const result = parseClientFrame(messageFrame({ text: 'hi' }), false, limits);
     expect(result).toEqual({
       ok: true,
-      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+      command: { type: 'message', clientId: 'c_1', contentType: 'text', text: 'hi' },
     });
   });
 
   it('accepts an explicit text discriminator', () => {
-    const result = parseClientFrame(
-      frame({ type: 'message', payload: { type: 'text', text: 'hi' } }),
-      false,
-      limits,
-    );
+    const result = parseClientFrame(messageFrame({ type: 'text', text: 'hi' }), false, limits);
     expect(result).toEqual({
       ok: true,
-      command: { type: 'message', clientId: null, contentType: 'text', text: 'hi' },
+      command: { type: 'message', clientId: 'c_1', contentType: 'text', text: 'hi' },
     });
   });
 
   it('treats an explicit null discriminator as text rather than failing', () => {
-    const result = parseClientFrame(
-      frame({ type: 'message', payload: { type: null, text: 'hi' } }),
-      false,
-      limits,
-    );
+    const result = parseClientFrame(messageFrame({ type: null, text: 'hi' }), false, limits);
     expect(result.ok).toBe(true);
   });
 
   it('rejects every unimplemented content type — a client cannot opt into future features', () => {
     for (const spoofed of ['image', 'voice', 'video', 'audio', 'file', 'sticker']) {
-      const result = parseClientFrame(
-        frame({ type: 'message', payload: { type: spoofed, text: 'hi' } }),
-        false,
-        limits,
-      );
+      const result = parseClientFrame(messageFrame({ type: spoofed, text: 'hi' }), false, limits);
       expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
     }
   });
 
   it('rejects rather than coerces an unknown type, so a client is never told text was sent', () => {
-    const result = parseClientFrame(
-      frame({ type: 'message', payload: { type: 'image', text: 'caption' } }),
-      false,
-      limits,
-    );
+    const result = parseClientFrame(messageFrame({ type: 'image', text: 'caption' }), false, limits);
     // Crucially NOT { ok: true, contentType: 'text' } — coercion would mean the
     // sender believes an image was delivered when only text was.
     expect(result.ok).toBe(false);
@@ -281,11 +325,7 @@ describe('parseClientFrame — message content type', () => {
 
   it('rejects a non-string discriminator', () => {
     for (const bogus of [42, true, {}, ['text']]) {
-      const result = parseClientFrame(
-        frame({ type: 'message', payload: { type: bogus, text: 'hi' } }),
-        false,
-        limits,
-      );
+      const result = parseClientFrame(messageFrame({ type: bogus, text: 'hi' }), false, limits);
       expectError(result, 'UNSUPPORTED_CONTENT_TYPE');
     }
   });
@@ -293,7 +333,7 @@ describe('parseClientFrame — message content type', () => {
   it('rejects reserved media fields instead of silently ignoring them', () => {
     for (const field of ['mediaId', 'media', 'attachment', 'attachments', 'blob', 'file', 'url']) {
       const result = parseClientFrame(
-        frame({ type: 'message', payload: { text: 'hi', [field]: 'm_fabricated' } }),
+        messageFrame({ text: 'hi', [field]: 'm_fabricated' }),
         false,
         limits,
       );
@@ -303,7 +343,7 @@ describe('parseClientFrame — message content type', () => {
 
   it('rejects a fabricated media reference even when the type is valid text', () => {
     const result = parseClientFrame(
-      frame({ type: 'message', payload: { type: 'text', text: 'hi', mediaId: 'm_1' } }),
+      messageFrame({ type: 'text', text: 'hi', mediaId: 'm_1' }),
       false,
       limits,
     );
@@ -311,11 +351,7 @@ describe('parseClientFrame — message content type', () => {
   });
 
   it('never names the rejected type in the error, so the reply is not a capability oracle', () => {
-    const result = parseClientFrame(
-      frame({ type: 'message', payload: { type: 'video', text: 'hi' } }),
-      false,
-      limits,
-    );
+    const result = parseClientFrame(messageFrame({ type: 'video', text: 'hi' }), false, limits);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.message).not.toContain('video');
@@ -331,21 +367,214 @@ describe('parseClientFrame — message content type', () => {
 
   it('applies text validation regardless of an explicit discriminator', () => {
     expectError(
-      parseClientFrame(
-        frame({ type: 'message', payload: { type: 'text', text: '' } }),
-        false,
-        limits,
-      ),
+      parseClientFrame(messageFrame({ type: 'text', text: '' }), false, limits),
       'EMPTY_MESSAGE',
     );
     expectError(
-      parseClientFrame(
-        frame({ type: 'message', payload: { type: 'text', text: 'x'.repeat(21) } }),
-        false,
-        limits,
-      ),
+      parseClientFrame(messageFrame({ type: 'text', text: 'x'.repeat(21) }), false, limits),
       'MESSAGE_TOO_LONG',
     );
+  });
+});
+
+describe('parseClientFrame — typing', () => {
+  it('accepts both an explicit start and an explicit stop', () => {
+    expect(parseClientFrame(frame({ type: 'typing', payload: { active: true } }), false, limits)).toEqual(
+      { ok: true, command: { type: 'typing', clientId: null, active: true } },
+    );
+    expect(
+      parseClientFrame(frame({ type: 'typing', payload: { active: false } }), false, limits),
+    ).toEqual({ ok: true, command: { type: 'typing', clientId: null, active: false } });
+  });
+
+  it('requires a strict boolean rather than anything truthy', () => {
+    // "false", 0 and 1 are exactly the values that would flip a stop into a
+    // start under JavaScript coercion.
+    for (const bogus of ['true', 'false', 0, 1, null, {}, []]) {
+      expectError(
+        parseClientFrame(frame({ type: 'typing', payload: { active: bogus } }), false, limits),
+        'VALIDATION_FAILED',
+      );
+    }
+  });
+
+  it('requires the active field to be present', () => {
+    expectError(
+      parseClientFrame(frame({ type: 'typing', payload: {} }), false, limits),
+      'VALIDATION_FAILED',
+    );
+    expectError(parseClientFrame(frame({ type: 'typing' }), false, limits), 'VALIDATION_FAILED');
+  });
+
+  it('carries no match or partner reference — routing is server-resolved', () => {
+    const result = parseClientFrame(
+      frame({ type: 'typing', payload: { active: true, matchId: 'm_forged', to: 's_victim' } }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'typing', clientId: null, active: true },
+    });
+  });
+});
+
+describe('parseClientFrame — report', () => {
+  it('accepts every declared category', () => {
+    for (const category of REPORT_CATEGORIES) {
+      const result = parseClientFrame(
+        frame({ type: 'report', payload: { category } }),
+        false,
+        limits,
+      );
+      expect(result).toEqual({
+        ok: true,
+        command: { type: 'report', clientId: null, category, note: null },
+      });
+    }
+  });
+
+  it('rejects a category outside the closed enum', () => {
+    for (const bogus of ['HARASSMENT', 'other ', 'custom-reason', '', 42, null, undefined, {}]) {
+      expectError(
+        parseClientFrame(frame({ type: 'report', payload: { category: bogus } }), false, limits),
+        'VALIDATION_FAILED',
+      );
+    }
+  });
+
+  it('never echoes the rejected category, which is attacker-controlled text', () => {
+    const canary = 'CATEGORY_CANARY_VALUE';
+    const result = parseClientFrame(
+      frame({ type: 'report', payload: { category: canary } }),
+      false,
+      limits,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).not.toContain(canary);
+  });
+
+  it('accepts and trims a note', () => {
+    const result = parseClientFrame(
+      frame({ type: 'report', payload: { category: 'spam', note: '  they sent links  ' } }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'report', clientId: null, category: 'spam', note: 'they sent links' },
+    });
+  });
+
+  it('normalises absent, null and whitespace-only notes to a single null', () => {
+    for (const note of [undefined, null, '', '   ', '\n\t ']) {
+      const result = parseClientFrame(
+        frame({ type: 'report', payload: { category: 'other', note } }),
+        false,
+        limits,
+      );
+      expect(result).toEqual({
+        ok: true,
+        command: { type: 'report', clientId: null, category: 'other', note: null },
+      });
+    }
+  });
+
+  it('enforces the note limit independently of the message limit', () => {
+    // 25 characters: over the 20-character message limit, under the 30-character
+    // note limit. A shared limit would reject this.
+    const note = 'y'.repeat(25);
+    const ok = parseClientFrame(
+      frame({ type: 'report', payload: { category: 'threats', note } }),
+      false,
+      limits,
+    );
+    expect(ok).toEqual({
+      ok: true,
+      command: { type: 'report', clientId: null, category: 'threats', note },
+    });
+
+    const tooLong = parseClientFrame(
+      frame({ type: 'report', payload: { category: 'threats', note: 'y'.repeat(31) } }),
+      false,
+      limits,
+    );
+    // VALIDATION_FAILED, not MESSAGE_TOO_LONG: the message code would send the
+    // client to check the wrong limit.
+    expectError(tooLong, 'VALIDATION_FAILED');
+  });
+
+  it('rejects a non-string note', () => {
+    for (const bogus of [42, true, {}, ['note']]) {
+      expectError(
+        parseClientFrame(
+          frame({ type: 'report', payload: { category: 'scam', note: bogus } }),
+          false,
+          limits,
+        ),
+        'VALIDATION_FAILED',
+      );
+    }
+  });
+
+  it('applies message-grade character rules to the note', () => {
+    // A note reaches a human moderator's console; a terminal escape in it is
+    // the same injection vector as in a message body.
+    const esc = validateReportNote(`ansi${String.fromCharCode(27)}[31m`, limits);
+    expect(esc.ok).toBe(false);
+    if (!esc.ok) expect(esc.code).toBe('VALIDATION_FAILED');
+
+    const nul = validateReportNote(`bad${String.fromCharCode(0)}note`, limits);
+    expect(nul.ok).toBe(false);
+
+    const lonely = validateReportNote(`a${String.fromCharCode(0xd83d)}b`, limits);
+    expect(lonely.ok).toBe(false);
+
+    expect(validateReportNote('line1\nline2', limits)).toEqual({ ok: true, note: 'line1\nline2' });
+  });
+
+  it('never echoes the note back in an error message', () => {
+    const secret = 'REPORTER_PRIVATE_WORDS';
+    const result = validateReportNote(`${secret}${'x'.repeat(40)}`, limits);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).not.toContain(secret);
+  });
+
+  it('ignores any client attempt to name who is being reported', () => {
+    const result = parseClientFrame(
+      frame({
+        type: 'report',
+        payload: { category: 'hate', reportedSessionId: 's_victim', matchId: 'm_forged' },
+      }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({
+      ok: true,
+      command: { type: 'report', clientId: null, category: 'hate', note: null },
+    });
+  });
+});
+
+describe('parseClientFrame — block', () => {
+  it('takes no arguments', () => {
+    expect(parseClientFrame(frame({ type: 'block', payload: {} }), false, limits)).toEqual({
+      ok: true,
+      command: { type: 'block', clientId: null },
+    });
+    expect(parseClientFrame(frame({ type: 'block' }), false, limits)).toEqual({
+      ok: true,
+      command: { type: 'block', clientId: null },
+    });
+  });
+
+  it('ignores a client-supplied target — the server blocks the current partner', () => {
+    const result = parseClientFrame(
+      frame({ type: 'block', payload: { target: 's_someone_else', ipHash: 'forged' } }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({ ok: true, command: { type: 'block', clientId: null } });
   });
 });
 
@@ -367,9 +596,16 @@ describe('protocol surface — future signalling is not accepted early', () => {
   });
 
   it('keeps every currently implemented event working', () => {
-    for (const event of ['join_queue', 'leave_queue', 'skip', 'ping']) {
+    for (const event of ['join_queue', 'leave_queue', 'skip', 'block', 'ping']) {
       const result = parseClientFrame(frame({ type: event, payload: {} }), false, limits);
       expect(result.ok).toBe(true);
     }
+    expect(
+      parseClientFrame(frame({ type: 'typing', payload: { active: true } }), false, limits).ok,
+    ).toBe(true);
+    expect(
+      parseClientFrame(frame({ type: 'report', payload: { category: 'spam' } }), false, limits).ok,
+    ).toBe(true);
+    expect(parseClientFrame(messageFrame({ text: 'hi' }), false, limits).ok).toBe(true);
   });
 });

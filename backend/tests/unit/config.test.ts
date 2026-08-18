@@ -18,9 +18,10 @@ describe('loadConfig', () => {
     expect(config.http.port).toBe(8080);
     expect(config.http.wsPath).toBe('/ws');
     expect(config.redis.keyPrefix).toBe('chat');
-    expect(config.limits.maxMessageLength).toBe(2000);
-    expect(config.limits.messageRatePerSec).toBe(5);
-    expect(config.limits.messageBurst).toBe(10);
+    expect(config.limits.maxMessageLength).toBe(500);
+    expect(config.limits.maxReportNoteLength).toBe(500);
+    expect(config.limits.rates.message).toEqual({ perSecond: 5, burst: 10 });
+    expect(config.presence.intervalMs).toBe(15_000);
     expect(config.ttl.sessionSeconds).toBe(120);
     expect(config.matchmaking.candidateSample).toBe(8);
     expect(config.metrics.enabled).toBe(true);
@@ -97,9 +98,26 @@ describe('loadConfig — cross-field coherence', () => {
   });
 
   it('rejects a burst smaller than one second of refill', () => {
+    expect(() => loadConfig(baseEnv({ MESSAGE_RATE_PER_SEC: '20', MESSAGE_BURST: '5' }))).toThrow(
+      /message burst/,
+    );
+  });
+
+  it('rejects a rate-limit TTL that would reset a bucket before it refills', () => {
+    // The hourly buckets are the ones this catches: a 120s TTL turns "10 per
+    // hour" into "10 per two minutes", because expiry hands back a full bucket.
+    expect(() => loadConfig(baseEnv({ RATE_LIMIT_TTL_SECONDS: '120' }))).toThrow(
+      /RATE_LIMIT_TTL_SECONDS/,
+    );
+    // The default TTL covers every default bucket.
+    expect(loadConfig(baseEnv()).limits.rateLimitTtlSeconds).toBe(3600);
+  });
+
+  it('rejects a frame limit that cannot carry a maximum-length report note', () => {
+    // The bound is over every user-text field on the wire, not messages alone.
     expect(() =>
-      loadConfig(baseEnv({ MESSAGE_RATE_PER_SEC: '20', MESSAGE_BURST: '5' })),
-    ).toThrow(/MESSAGE_BURST/);
+      loadConfig(baseEnv({ MAX_REPORT_NOTE_LENGTH: '4000', MAX_FRAME_BYTES: '8192' })),
+    ).toThrow(/MAX_FRAME_BYTES/);
   });
 
   it('rejects a match TTL shorter than the session TTL', () => {
@@ -117,6 +135,76 @@ describe('loadConfig — cross-field coherence', () => {
   it('rejects a key prefix that would corrupt the namespace', () => {
     expect(() => loadConfig(baseEnv({ REDIS_KEY_PREFIX: 'chat:v2' }))).toThrow(/REDIS_KEY_PREFIX/);
     expect(() => loadConfig(baseEnv({ REDIS_KEY_PREFIX: 'my chat' }))).toThrow(/REDIS_KEY_PREFIX/);
+  });
+});
+
+describe('loadConfig — per-command rate limits (R7)', () => {
+  it('gives every state-changing command its own bucket', () => {
+    const rates = loadConfig(baseEnv()).limits.rates;
+    // Every client event except `ping` — a cheap protocol command must not be
+    // a way around the message limit (security §12).
+    expect(Object.keys(rates).sort()).toEqual([
+      'block',
+      'join_queue',
+      'leave_queue',
+      'message',
+      'report',
+      'skip',
+      'typing',
+    ]);
+    for (const limit of Object.values(rates)) {
+      expect(limit.perSecond).toBeGreaterThan(0);
+      expect(limit.burst).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('keeps the safety commands far stricter than chat', () => {
+    const rates = loadConfig(baseEnv()).limits.rates;
+    // 10/hour and 20/hour respectively (DESIGN.md §17): a report queue is a
+    // human's time, and a block is a durable record.
+    expect(rates.report.perSecond).toBeLessThan(rates.block.perSecond);
+    expect(rates.block.perSecond).toBeLessThan(rates.skip.perSecond);
+    expect(rates.skip.perSecond).toBeLessThan(rates.message.perSecond);
+  });
+
+  it('reads each bucket from its own environment variables', () => {
+    const rates = loadConfig(
+      baseEnv({ TYPING_RATE_PER_SEC: '1.5', TYPING_BURST: '3', REPORT_BURST: '1' }),
+    ).limits.rates;
+    expect(rates.typing).toEqual({ perSecond: 1.5, burst: 3 });
+    expect(rates.report.burst).toBe(1);
+    // Changing one bucket does not disturb another.
+    expect(rates.message).toEqual({ perSecond: 5, burst: 10 });
+  });
+
+  it('rejects a nonsense rate rather than falling back to a default', () => {
+    expect(() => loadConfig(baseEnv({ MESSAGE_RATE_PER_SEC: 'fast' }))).toThrow(
+      /MESSAGE_RATE_PER_SEC/,
+    );
+    expect(() => loadConfig(baseEnv({ TYPING_BURST: '0' }))).toThrow(/TYPING_BURST/);
+  });
+});
+
+describe('loadConfig — origin allowlist (R9)', () => {
+  it('refuses to start in production with an empty allowlist', () => {
+    expect(() => loadConfig(baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: '' }))).toThrow(
+      /ALLOWED_ORIGINS/,
+    );
+    expect(() => loadConfig(baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: '  ,, ' }))).toThrow(
+      /ALLOWED_ORIGINS/,
+    );
+  });
+
+  it('starts in production once at least one origin is listed', () => {
+    const config = loadConfig(
+      baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://chat.example.com' }),
+    );
+    expect(config.http.allowedOrigins).toEqual(['https://chat.example.com']);
+  });
+
+  it('still allows an empty allowlist outside production', () => {
+    // The dev server's port moves around; this stays a warning there.
+    expect(loadConfig(baseEnv({ ALLOWED_ORIGINS: '' })).http.allowedOrigins).toEqual([]);
   });
 });
 

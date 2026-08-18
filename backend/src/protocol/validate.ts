@@ -13,10 +13,14 @@ import {
   RESERVED_MEDIA_FIELDS,
   isClientEventType,
   isMessageContentType,
+  isReportCategory,
   type ClientEventType,
   type MessageContentType,
   type MessagePayload,
   type ProtocolErrorCode,
+  type ReportCategory,
+  type ReportPayload,
+  type TypingPayload,
 } from './types';
 
 /**
@@ -27,15 +31,28 @@ import {
  * command this is*. Today `contentType` is always `'text'`, but downstream code
  * switches on it rather than assuming, so adding a type later does not mean
  * hunting for implicit text assumptions (DESIGN.md §23).
+ *
+ * `message` is the one command whose `clientId` is non-nullable: it is the
+ * per-match replay-protection key (I14), so a frame without one never reaches
+ * a validated command at all.
  */
 export type ValidatedCommand =
   | { type: 'join_queue'; clientId: string | null }
   | { type: 'leave_queue'; clientId: string | null }
   | { type: 'skip'; clientId: string | null }
+  | { type: 'block'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
+  | { type: 'typing'; clientId: string | null; active: boolean }
+  | {
+      type: 'report';
+      clientId: string | null;
+      category: ReportCategory;
+      /** The reporter's own words, or null when they did not write any. */
+      note: string | null;
+    }
   | {
       type: 'message';
-      clientId: string | null;
+      clientId: string;
       contentType: MessageContentType;
       text: string;
     };
@@ -46,6 +63,7 @@ export type ParseResult =
 
 export interface ValidationLimits {
   maxMessageLength: number;
+  maxReportNoteLength: number;
 }
 
 function fail(code: ProtocolErrorCode, message: string): ParseResult {
@@ -57,7 +75,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Control characters that must never appear in chat text.
+ * Control characters that must never appear in user text.
  * Newline (0x0A) and tab (0x09) are allowed; carriage return (0x0D) is allowed
  * because Windows clients send CRLF in multi-line input. Everything else in the
  * C0 range, plus DEL and the C1 range, is rejected — those bytes carry no
@@ -80,6 +98,33 @@ function hasForbiddenControlChar(text: string): boolean {
  */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/**
+ * Character-level checks shared by every field of user-authored text.
+ *
+ * Report notes get exactly the same treatment as message bodies: both are
+ * user-generated content under invariant I8, and a note is just as capable of
+ * carrying a terminal escape into a moderator's console as a message is.
+ *
+ * `label` is a developer-authored constant naming the field. It is never the
+ * value — an error message must not carry user content back out.
+ */
+function checkTextCharacters(
+  text: string,
+  label: string,
+): { ok: false; code: ProtocolErrorCode; message: string } | null {
+  if (hasForbiddenControlChar(text)) {
+    return {
+      ok: false,
+      code: 'VALIDATION_FAILED',
+      message: `${label} contains forbidden control characters`,
+    };
+  }
+  if (LONE_SURROGATE.test(text)) {
+    return { ok: false, code: 'VALIDATION_FAILED', message: `${label} contains invalid unicode` };
+  }
+  return null;
+}
+
 /** Validates the `text` field of a `message` payload. */
 export function validateMessageText(
   value: unknown,
@@ -101,17 +146,44 @@ export function validateMessageText(
   if (text.length === 0) {
     return { ok: false, code: 'EMPTY_MESSAGE', message: 'message is empty' };
   }
-  if (hasForbiddenControlChar(text)) {
+  const bad = checkTextCharacters(text, 'message');
+  if (bad) return bad;
+  return { ok: true, text };
+}
+
+/**
+ * Validates the optional `note` field of a `report` payload.
+ *
+ * Absent, null and whitespace-only all normalise to `null` rather than to an
+ * empty string, so the persistence layer stores "no note" one way instead of
+ * three. An over-length note is `VALIDATION_FAILED`, not `MESSAGE_TOO_LONG`:
+ * the message-specific code would mislead a client into retrying against the
+ * message limit.
+ */
+export function validateReportNote(
+  value: unknown,
+  limits: ValidationLimits,
+): { ok: true; note: string | null } | { ok: false; code: ProtocolErrorCode; message: string } {
+  if (value === undefined || value === null) {
+    return { ok: true, note: null };
+  }
+  if (typeof value !== 'string') {
+    return { ok: false, code: 'VALIDATION_FAILED', message: 'payload.note must be a string' };
+  }
+  if (value.length > limits.maxReportNoteLength) {
     return {
       ok: false,
       code: 'VALIDATION_FAILED',
-      message: 'message contains forbidden control characters',
+      message: `report note exceeds ${limits.maxReportNoteLength} characters`,
     };
   }
-  if (LONE_SURROGATE.test(text)) {
-    return { ok: false, code: 'VALIDATION_FAILED', message: 'message contains invalid unicode' };
+  const note = value.trim();
+  if (note.length === 0) {
+    return { ok: true, note: null };
   }
-  return { ok: true, text };
+  const bad = checkTextCharacters(note, 'report note');
+  if (bad) return bad;
+  return { ok: true, note };
 }
 
 /**
@@ -200,8 +272,9 @@ export function parseClientFrame(
   }
   const type: ClientEventType = parsed.type;
 
-  // `id` is an opaque correlation token. It is echoed back and never used as
-  // identity, so it only has to be short and safely printable.
+  // `id` is a correlation token. It is echoed back and, on `message`, used as
+  // the per-match dedupe key; it is never used as identity, so it only has to
+  // be short and safely printable.
   let clientId: string | null = null;
   if (parsed.id !== undefined && parsed.id !== null) {
     if (typeof parsed.id !== 'string' || !CLIENT_ID_PATTERN.test(parsed.id)) {
@@ -223,9 +296,38 @@ export function parseClientFrame(
     case 'join_queue':
     case 'leave_queue':
     case 'skip':
+    case 'block':
     case 'ping':
       return { ok: true, command: { type, clientId } };
+    case 'typing': {
+      const active = (payload as Partial<TypingPayload>).active;
+      // Strict boolean, not truthiness: accepting "false" or 0 here would make
+      // a client's stop-typing frame mean whatever the coercion rules decided.
+      if (typeof active !== 'boolean') {
+        return fail('VALIDATION_FAILED', 'payload.active must be a boolean');
+      }
+      return { ok: true, command: { type: 'typing', clientId, active } };
+    }
+    case 'report': {
+      const category = (payload as Partial<ReportPayload>).category;
+      if (!isReportCategory(category)) {
+        // The value is not echoed: a report category is a closed enum and the
+        // client already knows the list from the protocol.
+        return fail('VALIDATION_FAILED', 'payload.category is not a known report category');
+      }
+      const note = validateReportNote((payload as Partial<ReportPayload>).note, limits);
+      if (!note.ok) {
+        return fail(note.code, note.message);
+      }
+      return { ok: true, command: { type: 'report', clientId, category, note: note.note } };
+    }
     case 'message': {
+      // The envelope id is required here and nowhere else: it is the replay
+      // protection key (I14, D24). Checked before the payload so a client that
+      // forgot it is told the structural problem rather than a content one.
+      if (clientId === null) {
+        return fail('BAD_ENVELOPE', 'message requires an envelope id');
+      }
       const contentType = validateContentType(payload);
       if (!contentType.ok) {
         return fail(contentType.code, contentType.message);
