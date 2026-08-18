@@ -1,0 +1,168 @@
+# The development stack (§20).
+#
+# Two backends behind nginx, deliberately. Production starts at **one** backend
+# (cost §26); the second exists here to prove cross-instance correctness on a
+# laptop — that matchmaking, delivery and cleanup work when two processes are
+# mutating the same Redis, rather than only appearing to because there is one.
+#
+#   docker compose up --build -d
+#   open http://localhost:8081
+#
+# Everything except the frontend and the dashboards is on the private network
+# with no published port. PostgreSQL in particular publishes nothing: it holds
+# plaintext conversation content, and reaching it should require being inside
+# the network (§8.1).
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Empty, so the client derives the socket URL from the page origin —
+        # which is what keeps the block-token cookie same-site.
+        VITE_WS_URL: ""
+        VITE_ADS_ENABLED: "${VITE_ADS_ENABLED:-false}"
+        VITE_ADS_PROVIDER: "${VITE_ADS_PROVIDER:-noop}"
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend: &backend
+    build:
+      context: ./backend
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      BACKEND_PORT: "8080"
+      BACKEND_HOST: "0.0.0.0"
+      # nginx is the only thing in front, so exactly one hop is trusted and the
+      # client address is the rightmost entry of X-Forwarded-For (§6.5).
+      TRUST_PROXY_HOPS: "1"
+      # An empty allowlist is a startup failure in production (R9), so the
+      # origin the browser will actually send is named here.
+      ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-8081}"
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      # Local only. Real deployments require TLS to the database and get their
+      # credentials from secret management, never from a compose file (§8.1).
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      IP_HASH_SALT: "${IP_HASH_SALT:-local-development-salt-change-me}"
+      SPOOL_DIR: "/var/lib/karobakbak/spool"
+      METRICS_ENABLED: "true"
+    volumes:
+      # A named volume, never a bind mount to the host: the spool holds
+      # plaintext message bodies, and a developer's home directory is not where
+      # they belong (D28).
+      - spool:/var/lib/karobakbak/spool
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # No published port. The only way in is through nginx.
+    expose:
+      - "8080"
+
+  backend-2:
+    <<: *backend
+    volumes:
+      - spool2:/var/lib/karobakbak/spool
+
+  # Migrations run once, as their own step, with credentials that are not the
+  # application's (§8.1). The application role has no CREATE, so it could not
+  # run these even if something asked it to.
+  migrate:
+    build:
+      context: ./backend
+    command: ["node", "-e", "require('./dist/storage/migrate');const{loadConfig}=require('./dist/config');const{createLoggerFromConfig}=require('./dist/logger');const{createDatabase}=require('./dist/storage/pool');const{migrate}=require('./dist/storage/migrate');const c=loadConfig(process.env);const l=createLoggerFromConfig(c);const db=createDatabase(c,l);migrate(db,l).then(r=>{l.info('migrations complete',{applied:r.applied.length,skipped:r.skipped.length});return db.close();}).then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message)+'\\n');process.exit(1);});"]
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-8081}"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    # Persistence off (D12). Live state is reconstructible, and disabling it is
+    # what guarantees no Redis structure — including a Pub/Sub payload carrying
+    # message text — can reach disk.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    expose:
+      - "6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: karobakbak
+      POSTGRES_PASSWORD: karobakbak
+      POSTGRES_DB: karobakbak
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karobakbak -d karobakbak"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+    # Publishes no host port on purpose: it holds plaintext conversation
+    # content, and direct exposure needs an explicit, recorded justification.
+    expose:
+      - "5432"
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - backend
+      - backend-2
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  promdata:
+  grafanadata:
+  spool:
+  spool2:

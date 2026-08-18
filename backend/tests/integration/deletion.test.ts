@@ -2,7 +2,15 @@
  * Retention enforcement (§15, I9, I10): expiry deletes, holds protect, and the
  * cascade cannot defeat a hold.
  */
-import { randomUUID } from 'node:crypto';
+/**
+ * Ids come from the real generators, never from `randomUUID`.
+ *
+ * Fabricated ids are how the schema came to declare `uuid` columns that no id
+ * this system produces could satisfy: the tests agreed with the schema and both
+ * disagreed with the application. A test that invents its own id format is
+ * testing a system nobody runs.
+ */
+import { newMatchId, newMessageId } from '../../src/util/ids';
 
 import { createPostgresContext, type PostgresContext } from '../helpers/postgres';
 import { DeletionWorker, type DeletionLock } from '../../src/storage/deletion';
@@ -42,7 +50,7 @@ async function seed(options: {
   messages?: number;
   messageExpired?: boolean;
 }): Promise<{ conversationId: string; messageIds: string[] }> {
-  const conversationId = randomUUID();
+  const conversationId = newMatchId();
   const expiry = options.expired ? "now() - interval '1 day'" : "now() + interval '30 days'";
   await ctx.db.query(
     `insert into conversations
@@ -57,7 +65,7 @@ async function seed(options: {
       ? "now() - interval '1 day'"
       : "now() + interval '30 days'";
   for (let i = 0; i < (options.messages ?? 0); i += 1) {
-    const messageId = randomUUID();
+    const messageId = newMessageId();
     messageIds.push(messageId);
     await ctx.db.query(
       `insert into messages
@@ -119,24 +127,24 @@ describe('expiry is enforced (I10)', () => {
       `insert into reports (report_id, conversation_id, reporter_session_id, reported_session_id,
                             category, created_at, retention_expires_at)
        values ($1, $2, 's_a', 's_b', 'spam', now(), now() - interval '1 day')`,
-      [randomUUID(), conversationId],
+      [newMessageId(), conversationId],
     );
     await ctx.db.query(
       `insert into moderation_events (event_id, rule, action, severity, created_at, retention_expires_at)
        values ($1, 'url', 'flag', 'medium', now(), now() - interval '1 day')`,
-      [randomUUID()],
+      [newMessageId()],
     );
     await ctx.db.query(
       `insert into enforcement (enforcement_id, subject_key, action, reason, source, created_at, retention_expires_at)
        values ($1, 'abc', 'warn', 'spam', 'automated', now(), now() - interval '1 day')`,
-      [randomUUID()],
+      [newMessageId()],
     );
     await ctx.db.query(
       `insert into admin_audit (audit_id, actor, role, action, subject_type, subject_id,
                                 justification, created_at, retention_expires_at)
        values ($1, 'op', 'operator', 'viewed', 'conversation', $2, 'case work', now(),
                now() - interval '1 day')`,
-      [randomUUID(), conversationId],
+      [newMessageId(), conversationId],
     );
 
     const deleted = await worker(new FakeLock()).runUntilDrained();
@@ -244,7 +252,7 @@ describe('legal holds protect data (§15)', () => {
 
   it('protects a conversation while a held report references it', async () => {
     const { conversationId } = await seed({ expired: true });
-    const reportId = randomUUID();
+    const reportId = newMessageId();
     await ctx.db.query(
       `insert into reports (report_id, conversation_id, reporter_session_id, reported_session_id,
                             category, created_at, retention_expires_at)
@@ -358,7 +366,7 @@ describe('legal holds protect data (§15)', () => {
   it('holds nothing when the subject does not exist', async () => {
     const result = await holds.place({
       subjectType: 'conversation',
-      subjectId: randomUUID(),
+      subjectId: newMatchId(),
       caseId: 'CASE-8',
       owner: 'legal',
       justification: 'typo in the id',
@@ -384,7 +392,7 @@ describe('legal holds protect data (§15)', () => {
 
 describe('report-triggered extension survives a deletion pass', () => {
   it('keeps a reported conversation past the ordinary deadline', async () => {
-    const conversationId = randomUUID();
+    const conversationId = newMatchId();
     const now = Date.now();
     await ctx.repositories.insertConversations(
       ctx.db,
@@ -406,7 +414,7 @@ describe('report-triggered extension survives a deletion pass', () => {
       [
         {
           kind: 'report',
-          reportId: randomUUID(),
+          reportId: newMessageId(),
           conversationId,
           reporterSessionId: 's_a',
           reportedSessionId: 's_b',

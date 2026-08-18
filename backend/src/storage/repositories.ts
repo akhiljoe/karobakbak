@@ -213,13 +213,13 @@ export class Repositories {
     await db.query(
       `update conversations
           set retention_expires_at = greatest(retention_expires_at, $2)
-        where conversation_id = any($1::uuid[])`,
+        where conversation_id = any($1::text[])`,
       [conversationIds, reportedExpiry],
     );
     await db.query(
       `update messages
           set retention_expires_at = greatest(retention_expires_at, $2)
-        where conversation_id = any($1::uuid[])`,
+        where conversation_id = any($1::text[])`,
       [conversationIds, reportedExpiry],
     );
   }

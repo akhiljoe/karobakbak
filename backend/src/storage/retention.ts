@@ -21,7 +21,7 @@
 import type { Config, RetentionPriority } from '../config';
 import { dbErrorFields, type Logger } from '../logger';
 import { CircuitBreaker, DrainPacer, type BreakerState } from './breaker';
-import type { Database } from './pool';
+import { isPermanentWriteError, type Database } from './pool';
 import { RetentionQueue, type QueueStats } from './queue';
 import type { MessagePriorityContext, QueuedRecord, RetentionRecord } from './records';
 import { priorityFor } from './records';
@@ -213,6 +213,23 @@ export class RetentionWriter implements RetentionSink {
     } catch (err) {
       // Never the error object: the driver echoes the parameters of the failing
       // statement, and those parameters are message bodies (I8).
+      if (isPermanentWriteError(err)) {
+        // The database is up — it read the statement and refused the data. This
+        // batch will never be writable, so retrying it forever would stall
+        // every record behind it, and counting it as a breaker failure would
+        // report a healthy database as down.
+        this.logger.error('discarding a retention batch the database rejected', {
+          batchSize: batch.length,
+          ...dbErrorFields(err),
+        });
+        this.breaker.recordSuccess();
+        for (const entry of batch) {
+          this.countDrop(entry.priority, 'rejected');
+          this.reportDrop(entry.priority, entry.record);
+        }
+        return;
+      }
+
       this.logger.error('retention batch failed', {
         batchSize: batch.length,
         ...dbErrorFields(err),
@@ -255,6 +272,26 @@ export class RetentionWriter implements RetentionSink {
       this.spool.clear();
       if (remaining.length > 0) this.spool.write(remaining);
     } catch (err) {
+      if (isPermanentWriteError(err)) {
+        // Same reasoning, and it matters more here: a spooled record the
+        // database will always refuse would otherwise block the drain of every
+        // record written after it, forever, while the breaker reported an
+        // outage that was not happening.
+        this.logger.error('discarding spooled records the database rejected', {
+          batchSize: batch.length,
+          ...dbErrorFields(err),
+        });
+        this.breaker.recordSuccess();
+        for (const entry of batch) {
+          this.countDrop(entry.priority, 'rejected');
+          this.reportDrop(entry.priority, entry.record);
+        }
+        const remaining = spooled.slice(batch.length);
+        this.spool.clear();
+        if (remaining.length > 0) this.spool.write(remaining);
+        return;
+      }
+
       this.logger.error('spool drain failed', { batchSize: batch.length, ...dbErrorFields(err) });
       this.breaker.recordFailure(nowMs);
     }

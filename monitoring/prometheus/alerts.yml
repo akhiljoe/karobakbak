@@ -1,0 +1,80 @@
+# The alerts that matter, and why each one is worth waking somebody for.
+#
+# Deliberately short. An alert nobody acts on trains people to ignore the ones
+# they should, so everything here is either "users are affected" or "a promise
+# the product made is silently not being kept".
+
+groups:
+  - name: karobakbak
+    rules:
+      - alert: BackendDown
+        expr: up{job="karobakbak-backend"} == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "A backend instance is not being scraped"
+
+      - alert: RetentionDeletionFailing
+        expr: increase(chat_deletion_failures_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "The deletion worker is failing"
+          description: >-
+            Data past its retention deadline is still stored. This is a promise
+            the product made to its users that is not being kept (I10), and
+            nothing else in the system will notice.
+
+      - alert: SafetyRecordsDropped
+        expr: increase(chat_retention_dropped_total{class="p0"}[15m]) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "Safety evidence is being dropped"
+          description: >-
+            P0 covers reports, moderation events and enforcement actions.
+            Reaching its capacity requires a sustained database outage and a
+            report flood at once (§14.3).
+
+      - alert: DatabaseCircuitOpen
+        expr: chat_db_breaker_state == 2
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The retention circuit breaker is open"
+          description: >-
+            Chat is unaffected by design (D16); retention is degraded and
+            records are going to the outage spool, which is bounded and is not
+            durable storage (D28).
+
+      - alert: SpoolNearCapacity
+        expr: chat_spool_records > 40000
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The outage spool is filling"
+          description: "Records are dropped once it is full, oldest policy first."
+
+      - alert: BackupsStale
+        expr: time() - chat_backup_last_success_timestamp > 93600
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "No successful backup observed within the window"
+          description: >-
+            An unmonitored backup is indistinguishable from no backup until the
+            restore (§8.1).
+
+      - alert: EventLoopLagHigh
+        expr: chat_process_nodejs_eventloop_lag_p99_seconds > 0.25
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Event-loop lag is high"
+          description: "Every socket on this instance is feeling it."

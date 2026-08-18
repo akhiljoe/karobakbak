@@ -2,7 +2,15 @@
  * The retention path against a real PostgreSQL: migrations, repositories,
  * retention deadlines, and the write-behind pipeline end to end.
  */
-import { randomUUID } from 'node:crypto';
+/**
+ * Ids come from the real generators, never from `randomUUID`.
+ *
+ * Fabricated ids are how the schema came to declare `uuid` columns that no id
+ * this system produces could satisfy: the tests agreed with the schema and both
+ * disagreed with the application. A test that invents its own id format is
+ * testing a system nobody runs.
+ */
+import { newMatchId, newMessageId } from '../../src/util/ids';
 
 import { createPostgresContext, type PostgresContext } from '../helpers/postgres';
 import { loadMigrations, migrate } from '../../src/storage/migrate';
@@ -31,7 +39,7 @@ afterEach(async () => {
 function conversation(overrides: Partial<ConversationStartedRecord> = {}): ConversationStartedRecord {
   return {
     kind: 'conversation_started',
-    conversationId: randomUUID(),
+    conversationId: newMatchId(),
     sessionA: 's_a',
     sessionB: 's_b',
     segment: 'default',
@@ -43,7 +51,7 @@ function conversation(overrides: Partial<ConversationStartedRecord> = {}): Conve
 function message(conversationId: string, overrides: Partial<MessageRecord> = {}): MessageRecord {
   return {
     kind: 'message',
-    messageId: randomUUID(),
+    messageId: newMessageId(),
     conversationId,
     senderSessionId: 's_a',
     serverTimestamp: new Date().toISOString(),
@@ -58,7 +66,7 @@ function message(conversationId: string, overrides: Partial<MessageRecord> = {})
 function report(conversationId: string, overrides: Partial<ReportRecord> = {}): ReportRecord {
   return {
     kind: 'report',
-    reportId: randomUUID(),
+    reportId: newMessageId(),
     conversationId,
     reporterSessionId: 's_a',
     reportedSessionId: 's_b',
@@ -109,7 +117,7 @@ describe('migrations', () => {
         `insert into messages (message_id, conversation_id, sender_session_id, server_timestamp,
                                type, body, char_length, retention_expires_at)
          values ($1, $2, 's_a', now(), 'image', 'x', 1, now())`,
-        [randomUUID(), started.conversationId],
+        [newMessageId(), started.conversationId],
       ),
     ).rejects.toThrow();
   });
@@ -119,7 +127,7 @@ describe('migrations', () => {
       ctx.db.query(
         `insert into moderation_events (event_id, rule, action, severity, created_at, retention_expires_at)
          values ($1, 'url', 'delete', 'high', now(), now())`,
-        [randomUUID()],
+        [newMessageId()],
       ),
     ).rejects.toThrow();
   });
@@ -255,7 +263,7 @@ describe('repositories', () => {
     await ctx.repositories.insertBlocks(ctx.db, [
       {
         kind: 'block',
-        blockId: randomUUID(),
+        blockId: newMessageId(),
         blockerKey: 'a'.repeat(32),
         blockedKey: 'b'.repeat(32),
         dimension: 'ip',

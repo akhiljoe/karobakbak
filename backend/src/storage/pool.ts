@@ -73,6 +73,28 @@ export function assertTlsWhereRequired(config: Config): void {
   throw new DatabaseTlsError();
 }
 
+/**
+ * SQLSTATE classes that mean "this write will never succeed", as opposed to
+ * "the database could not take it right now".
+ *
+ * The distinction is load-bearing. A constraint violation is *proof the
+ * database is available* — it parsed the statement and rejected the data. A
+ * connection failure is proof it is not. Treating the first as the second is
+ * how one permanently-unwritable record opens the circuit breaker, stalls the
+ * drain behind it, and silently disables retention on that instance for good.
+ *
+ *   22  data exception (bad value for the column type)
+ *   23  integrity constraint violation (foreign key, unique, check)
+ *   42  syntax error or access rule violation (a bug in this code)
+ */
+const PERMANENT_SQLSTATE_CLASSES = ['22', '23', '42'];
+
+export function isPermanentWriteError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code !== 'string' || code.length < 2) return false;
+  return PERMANENT_SQLSTATE_CLASSES.includes(code.slice(0, 2));
+}
+
 function poolConfig(config: Config): PoolConfig {
   return {
     connectionString: config.database.url,

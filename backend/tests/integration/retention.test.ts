@@ -2,7 +2,15 @@
  * The write-behind pipeline end to end: queue, breaker, spool and the paced
  * drain, against a real PostgreSQL and a real spool file.
  */
-import { randomUUID } from 'node:crypto';
+/**
+ * Ids come from the real generators, never from `randomUUID`.
+ *
+ * Fabricated ids are how the schema came to declare `uuid` columns that no id
+ * this system produces could satisfy: the tests agreed with the schema and both
+ * disagreed with the application. A test that invents its own id format is
+ * testing a system nobody runs.
+ */
+import { newMatchId, newMessageId } from '../../src/util/ids';
 
 import { brokenDatabase, createPostgresContext, type PostgresContext } from '../helpers/postgres';
 import { createNullLogger } from '../../src/logger';
@@ -27,7 +35,7 @@ afterEach(async () => {
 let counter = 0;
 
 function conversationId(): string {
-  return randomUUID();
+  return newMatchId();
 }
 
 function conversation(id: string): RetentionRecord {
@@ -45,7 +53,7 @@ function message(id: string, sessionId = 's_a'): MessageRecord {
   counter += 1;
   return {
     kind: 'message',
-    messageId: randomUUID(),
+    messageId: newMessageId(),
     conversationId: id,
     senderSessionId: sessionId,
     serverTimestamp: new Date().toISOString(),
@@ -95,7 +103,7 @@ describe('the happy path', () => {
     for (let i = 0; i < 5; i += 1) writer.enqueue(message(id));
     writer.enqueue({
       kind: 'report',
-      reportId: randomUUID(),
+      reportId: newMessageId(),
       conversationId: id,
       reporterSessionId: 's_a',
       reportedSessionId: 's_b',
@@ -110,6 +118,21 @@ describe('the happy path', () => {
     expect(await ctx.count('messages')).toBe(0);
   });
 });
+
+/** A writer whose database always fails, over the context's real spool. */
+function brokenWriterFor(context: PostgresContext) {
+  const writerConfig = {
+    ...context.config,
+    breaker: { ...context.config.breaker, failureThreshold: 1, cooldownMs: 20 },
+    retention: { ...context.config.retention, batchSize: 100 },
+  };
+  const spool = new FileSpool(writerConfig, createNullLogger());
+  spool.open();
+  return {
+    spool,
+    writer: new RetentionWriter(writerConfig, createNullLogger(), brokenDatabase(), spool),
+  };
+}
 
 describe('a database outage', () => {
   function brokenWriter(overrides: Record<string, string> = {}) {
@@ -223,13 +246,63 @@ describe('a database outage', () => {
   });
 });
 
+describe('a record the database will never accept', () => {
+  it('is discarded rather than retried forever, and does not open the breaker', async () => {
+    const writer = ctx.writer();
+    // A message whose conversation row does not exist and never will. The
+    // foreign key refuses it every time.
+    writer.enqueue(message(newMatchId()));
+    await writer.flush();
+
+    // Proof the database is *available* — it parsed the statement and rejected
+    // the data. Counting that as a breaker failure would report a healthy
+    // database as down and stall everything behind it.
+    expect(writer.snapshot().breaker).toBe('CLOSED');
+    expect(Object.keys(writer.counters.dropped).some((key) => key.endsWith(':rejected'))).toBe(true);
+  });
+
+  it('does not block the records queued behind it', async () => {
+    const writer = ctx.writer({ RETENTION_BATCH_SIZE: '1' });
+    writer.enqueue(message(newMatchId()));
+
+    const good = conversationId();
+    writer.enqueue(conversation(good));
+    writer.enqueue(message(good));
+
+    await writer.flush();
+    await writer.flush();
+    await writer.flush();
+
+    // One poison record used to stall the whole pipeline behind it.
+    expect(await ctx.count('conversations')).toBe(1);
+    expect(await ctx.count('messages')).toBe(1);
+  });
+
+  it('drops a poisoned spool batch instead of retrying it on every cycle', async () => {
+    const broken = brokenWriterFor(ctx);
+    broken.writer.enqueue(message(newMatchId()));
+    await broken.writer.flush();
+    await broken.writer.flush();
+    await broken.writer.flush();
+    expect(broken.spool.stats().records).toBeGreaterThan(0);
+
+    // A working database that will still never accept this record.
+    const recovered = ctx.writer({ BREAKER_DRAIN_BATCHES_PER_SEC: '1000' });
+    await recovered.flush();
+    await recovered.flush();
+
+    expect(recovered.snapshot().spool.records).toBe(0);
+    expect(recovered.snapshot().breaker).toBe('CLOSED');
+  });
+});
+
 describe('capacity exhaustion', () => {
   it('refuses a P0 record when its class is full, so the caller can fail the client', async () => {
     const writer = ctx.writer({ RETENTION_QUEUE_MAX_P0: '2', RETENTION_ENABLED: 'true' });
     const id = conversationId();
     const report = (): RetentionRecord => ({
       kind: 'report',
-      reportId: randomUUID(),
+      reportId: newMessageId(),
       conversationId: id,
       reporterSessionId: 's_flood',
       reportedSessionId: 's_b',
