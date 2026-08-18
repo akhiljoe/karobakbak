@@ -12,6 +12,9 @@ import { createRedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import { ScriptRunner } from './redis/scripts';
 import { RedisStore } from './redis/store';
+import { createMetrics } from './metrics/registry';
+import { RetentionMetricsPublisher } from './metrics/retention';
+import { BackupMonitor } from './storage/backup';
 import { createChatServer } from './server';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
@@ -64,7 +67,17 @@ async function main(): Promise<void> {
     deletion.start();
   }
 
-  const server = createChatServer({ config, logger, store, clients, retention });
+  const metrics = createMetrics(config);
+
+  // Sampled rather than pushed, so nothing in the write path carries a metrics
+  // dependency. The interval is the scrape cache window: sampling faster would
+  // publish numbers nobody reads.
+  const backup = new BackupMonitor(config);
+  const publisher = new RetentionMetricsPublisher(metrics, writer, deletion, backup);
+  const metricsTimer = setInterval(() => publisher.publish(), Math.max(1000, config.metrics.cacheMs));
+  metricsTimer.unref();
+
+  const server = createChatServer({ config, logger, store, clients, retention, metrics });
   await server.listen();
 
   let stopping = false;
@@ -77,6 +90,7 @@ async function main(): Promise<void> {
     // The writer is stopped after the sockets, so records produced by the last
     // conversations to close are still placed - written if the database is up,
     // spooled if it is not.
+    clearInterval(metricsTimer);
     deletion?.stop();
     if (writer) await writer.stop();
     if (database) await database.close();

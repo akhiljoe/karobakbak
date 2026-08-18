@@ -12,6 +12,7 @@ import { createNullLogger } from '../../src/logger';
 import { createRedisClients, type RedisClients } from '../../src/redis/client';
 import { createChatServer, type ChatServer } from '../../src/server';
 import { NullRetentionSink } from '../../src/storage/sink';
+import { createMetrics, type Metrics } from '../../src/metrics/registry';
 import type { AnyServerEnvelope, ServerEventType } from '../../src/protocol/types';
 import { createTestContext, type TestContext } from './redis';
 import type { Env } from '../../src/config';
@@ -20,6 +21,7 @@ export interface TestServer {
   ctx: TestContext;
   server: ChatServer;
   clients: RedisClients;
+  metrics: Metrics;
   url: string;
   stop(): Promise<void>;
 }
@@ -33,6 +35,7 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
   const logger = createNullLogger();
   const clients = await createRedisClients(ctx.config, logger);
   await clients.waitUntilReady();
+  const metrics = createMetrics(ctx.config, { processMetrics: false });
 
   const server = createChatServer({
     config: ctx.config,
@@ -42,6 +45,7 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
     // The socket suite is about the transport; the retention path has its own
     // suite against a real database.
     retention: new NullRetentionSink(),
+    metrics,
   });
   const port = await server.listen();
 
@@ -49,6 +53,7 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
     ctx,
     server,
     clients,
+    metrics,
     url: `ws://127.0.0.1:${port}${ctx.config.http.wsPath}`,
     async stop(): Promise<void> {
       await server.stop();

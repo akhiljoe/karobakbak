@@ -31,14 +31,16 @@ import type { ValidatedCommand } from './protocol/validate';
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { RedisStore } from './redis/store';
+import type { Metrics } from './metrics/registry';
 import type { RetentionSink } from './storage/sink';
 import { hashIp } from './util/ids';
-import { nowIso } from './util/time';
+import { monotonicMs, nowIso, secondsSince } from './util/time';
 import { SocketConnection } from './ws/connection';
 import { EventDispatcher } from './ws/dispatch';
 import { SessionLifecycle, type SearchOutcome } from './ws/lifecycle';
 import { MessagePipeline, type MessageOutcome } from './ws/messages';
 import { ConnectionRegistry } from './ws/registry';
+import { Janitor } from './ws/janitor';
 import { SessionSubscriber } from './ws/subscriber';
 import {
   clientAddress,
@@ -54,6 +56,7 @@ export interface ChatServerDeps {
   clients: RedisClients;
   /** Where retained records go. Never awaited on the chat path (D16). */
   retention: RetentionSink;
+  metrics: Metrics;
 }
 
 export interface ChatServer {
@@ -62,6 +65,8 @@ export interface ChatServer {
   readonly lifecycle: SessionLifecycle;
   /** The port actually bound. Differs from the configured one when it was 0. */
   readonly port: number;
+  /** True once shutdown has begun: /ready reports 503 and upgrades are refused. */
+  readonly draining: boolean;
   listen(): Promise<number>;
   stop(): Promise<void>;
 }
@@ -81,13 +86,20 @@ const FEATURES: ServerFeatures = {
 };
 
 export function createChatServer(deps: ChatServerDeps): ChatServer {
-  const { config, logger, store, clients, retention } = deps;
+  const { config, logger, store, clients, retention, metrics } = deps;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
   const dispatcher = new EventDispatcher(registry, store, logger);
   const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention);
   const subscriber = new SessionSubscriber(clients.subscriber, keys, registry, logger);
   const pipeline = new MessagePipeline(store, dispatcher, config, logger, retention);
+  const janitor = new Janitor(config, logger, store, dispatcher, (counts) => {
+    // Cluster-wide gauges, refreshed by whichever instance held the lock. They
+    // are the same Redis cardinalities the presence frame reports, so the
+    // dashboard and the UI cannot disagree.
+    metrics.activeMatches.set(counts.conversations);
+    metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(counts.queueDepth);
+  });
 
   const limits: ServerLimits = {
     maxMessageLength: config.limits.maxMessageLength,
@@ -151,6 +163,20 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       return;
     }
 
+    if (config.metrics.enabled && path === config.metrics.path) {
+      void metrics
+        .scrape()
+        .then((body) => {
+          res.writeHead(200, {
+            'content-type': metrics.registry.contentType,
+            'cache-control': 'no-store',
+          });
+          res.end(body);
+        })
+        .catch(() => json(res, 500, { error: 'scrape_failed' }));
+      return;
+    }
+
     json(res, 404, { error: 'not_found' });
   }
 
@@ -173,11 +199,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   async function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     const path = (req.url ?? '/').split('?')[0];
     if (path !== config.http.wsPath) {
+      metrics.connectionsRejected.labels('bad_path').inc();
       refuse(socket, 404, 'not_found');
       return;
     }
 
     if (draining) {
+      metrics.connectionsRejected.labels('draining').inc();
       refuse(socket, 503, 'shutting_down');
       return;
     }
@@ -185,12 +213,14 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     if (!isOriginAllowed(req.headers.origin, config.http.allowedOrigins)) {
       // Refused without saying what would have been accepted: the allowlist is
       // not something a caller needs to enumerate.
+      metrics.connectionsRejected.labels('origin').inc();
       logger.warn('rejected a websocket upgrade from a disallowed origin');
       refuse(socket, 403, 'origin_not_allowed');
       return;
     }
 
     if (registry.size >= config.limits.maxConnections) {
+      metrics.connectionsRejected.labels('at_capacity').inc();
       logger.warn('refusing a connection: instance at capacity', { connections: registry.size });
       refuse(socket, 503, 'at_capacity');
       return;
@@ -216,6 +246,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       });
     } catch (err) {
       await releaseSubscription();
+      metrics.connectionsRejected.labels('error').inc();
       logger.error('failed to open a session', {
         errName: err instanceof Error ? err.name : 'unknown',
       });
@@ -226,8 +257,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     if (outcome.kind !== 'opened') {
       await releaseSubscription();
       if (outcome.kind === 'rate_limited') {
+        metrics.connectionsRejected.labels('rate_limited').inc();
         refuse(socket, 429, 'too_many_attempts', { 'retry-after': String(outcome.retryAfterSeconds) });
       } else {
+        metrics.connectionsRejected.labels('too_many_connections').inc();
         refuse(socket, 429, 'too_many_connections');
       }
       return;
@@ -300,10 +333,14 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           });
         }
         await subscriber.unsubscribe(conn.sessionId);
+        metrics.disconnects.inc();
+        metrics.connectionsActive.set(registry.size);
       },
     });
 
     registry.add(connection);
+    metrics.connectionsTotal.inc();
+    metrics.connectionsActive.set(registry.size);
     connection.sendEvent('connected', {
       sessionId,
       protocolVersion: 1,
@@ -333,6 +370,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   ): Promise<boolean> {
     const limit = await store.rateLimit(command, connection.sessionId);
     if (limit.allowed) return true;
+    metrics.rateLimited.labels(command).inc();
     connection.sendError('RATE_LIMITED', 'slow down');
     return false;
   }
@@ -358,12 +396,23 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         return;
 
       case 'message': {
+        metrics.messagesReceived.inc();
+        const started = monotonicMs();
         const outcome = await pipeline.send(
           connection.sessionId,
           command.clientId,
           command.contentType,
           command.text,
         );
+        if (outcome.kind === 'accepted') {
+          metrics.messagesDelivered.labels(outcome.delivered ? outcome.route : 'dropped').inc();
+          metrics.deliveryLatency.labels(outcome.route).observe(secondsSince(started));
+          for (const flag of outcome.flags) void flag;
+          metrics.moderationFlags.labels(outcome.flags.length > 0 ? 'flag' : 'allow').inc();
+        } else {
+          metrics.messagesRejected.labels(outcome.kind).inc();
+          if (outcome.kind === 'withheld') metrics.moderationFlags.labels('block').inc();
+        }
         replyToMessage(connection, command.clientId, outcome);
         return;
       }
@@ -398,6 +447,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       }
 
       case 'skip': {
+        metrics.skips.inc();
         const outcome = await lifecycle.skip(connection.sessionId);
         replyToSearch(connection, outcome);
         return;
@@ -413,6 +463,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           connection.sendError('NOT_MATCHED', 'you are not in a conversation');
           return;
         }
+        metrics.blocks.labels('recorded').inc(outcome.recorded);
         // The blocker is returned to IDLE rather than re-queued (§5).
         connection.sendEvent('queue_status', { state: 'IDLE', waiting: 0 });
         return;
@@ -457,6 +508,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           return;
         }
 
+        metrics.reports.inc();
         // No moderation detail, no verdict, nothing about the reported user
         // (security §31).
         connection.sendEvent('report_ack', { reportId, acceptedAt });
@@ -513,6 +565,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   function replyToSearch(connection: SocketConnection, outcome: SearchOutcome): void {
     switch (outcome.kind) {
       case 'matched':
+        metrics.matchesCreated.inc();
         connection.sendEvent('matched', {
           matchId: outcome.matchId,
           startedAt: outcome.startedAt,
@@ -608,6 +661,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       return boundPort;
     },
 
+    get draining() {
+      return draining;
+    },
+
     async listen(): Promise<number> {
       await new Promise<void>((resolve, reject) => {
         httpServer.once('error', reject);
@@ -629,28 +686,58 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       }, config.presence.intervalMs);
       presenceTimer.unref();
 
+      janitor.start();
+
       logger.info('listening', { port: boundPort, wsPath: config.http.wsPath });
       return boundPort;
     },
 
     async stop(): Promise<void> {
+      // Refusing new upgrades is the first thing that happens: a load balancer
+      // that has not yet noticed /ready going red must not be able to hand this
+      // instance a connection it is about to drop.
+      //
+      // The listener closes at the end of this method, so anything arriving
+      // after that is refused at the TCP level. Holding the port open for a
+      // grace period while /ready reports 503 is deliberately **not** done
+      // here: how long to wait for a load balancer to deregister is a property
+      // of the deployment, not of the process, and it belongs in a preStop
+      // hook or a deregistration delay where an operator can see it.
       draining = true;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (presenceTimer) clearInterval(presenceTimer);
+      janitor.stop();
 
       // Tell every client before the socket goes, so a reconnect is a decision
       // rather than a surprise. Their sessions are closed through the ordinary
       // path, which ends matches and releases partners.
-      for (const connection of registry.all()) {
-        if (connection instanceof SocketConnection) {
-          connection.sendEvent('server_shutdown', { reason: 'shutdown' });
-          connection.close(CLOSE_CODES.GOING_AWAY, 'server shutting down');
-        }
+      // Every socket is closed through the ordinary path, so each session's
+      // match is ended and its partner released. A process that simply dropped
+      // its sockets would leave every partner waiting for a TTL.
+      const closing = registry.all().filter((c): c is SocketConnection => c instanceof SocketConnection);
+      for (const connection of closing) {
+        connection.sendEvent('server_shutdown', { reason: 'shutdown' });
+        connection.close(CLOSE_CODES.GOING_AWAY, 'server shutting down');
+      }
+
+      // Give the close handlers time to finish their Redis work before the
+      // caller tears the connections down underneath them.
+      const deadline = Date.now() + config.timers.shutdownTimeoutMs;
+      while (registry.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      if (registry.size > 0) {
+        logger.warn('shutting down with sessions still attached', { remaining: registry.size });
       }
 
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
-        // Sockets already closed above; this bounds anything still lingering.
+        // `close` waits for every open connection, and an idle keep-alive HTTP
+        // connection is open — a scraper polling /metrics would hold a draining
+        // instance until its timeout. The WebSockets are already closed above;
+        // this drops what is left.
+        httpServer.closeAllConnections();
+        // Bounds anything the platform still will not let go of.
         setTimeout(resolve, config.timers.shutdownTimeoutMs).unref();
       });
       wss.close();
