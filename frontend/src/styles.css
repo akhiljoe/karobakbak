@@ -1,0 +1,457 @@
+/*
+ * Visual direction: dark and atmospheric, with editorial restraint.
+ *
+ * The UI spec offers three directions. Playful was the wrong one for a product
+ * whose most important controls are "report" and "block" — a chat with a
+ * stranger needs to feel calm and legible, not lively. Dark surfaces let the
+ * two per-match identity colours carry all the colour in the room, which is
+ * exactly where the eye needs to go: telling the two speakers apart is the only
+ * distinction that matters on this screen.
+ *
+ * Everything is one system: one accent, one scale, one radius family, and no
+ * shadow that is not doing work.
+ */
+
+:root {
+  --bg: #0b0d10;
+  --surface: #14171c;
+  --surface-raised: #1b1f26;
+  --border: #262b33;
+  --text: #e8eaed;
+  --text-muted: #98a1ad;
+  --accent: #7c5cff;
+  --accent-hover: #8f74ff;
+  --danger: #ff6b6b;
+  --success: #4ade80;
+  --focus: #7c5cff;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  gap: var(--space-4);
+}
+
+/* --- header ------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.brand {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.presence {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.presence__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--success);
+}
+
+/* Counts are cached Redis cardinalities and the frame says so. The UI is
+   required to say so too, rather than presenting them as exact (D21). */
+.presence__hint {
+  opacity: 0.65;
+}
+
+/* --- notices ------------------------------------------------------------ */
+
+.notice {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.notice__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+/* --- panels ------------------------------------------------------------- */
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  margin: auto 0;
+  padding: var(--space-6) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.panel__lead {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 46ch;
+}
+
+/* --- buttons ------------------------------------------------------------ */
+
+.button {
+  font: inherit;
+  font-size: 15px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.button--quiet {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.button--quiet:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* --- chat --------------------------------------------------------------- */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.chat__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.chat__partner {
+  font-weight: 600;
+}
+
+.chat__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 78%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+}
+
+.message--mine {
+  align-self: flex-end;
+  background: var(--surface-raised);
+}
+
+.message__who {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.message__text {
+  margin: 0;
+  /* A stranger's text, rendered as a text node. It may be one long unbroken
+     run, and it must not be able to push the layout apart. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.message__text--unsupported {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.message__status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.message__status--withheld {
+  color: var(--danger);
+}
+
+.typing {
+  margin: 0;
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* --- composer ----------------------------------------------------------- */
+
+.composer {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.composer__input {
+  flex: 1;
+  font: inherit;
+  resize: none;
+  padding: var(--space-3);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.composer__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.composer__count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.composer__count--over {
+  color: var(--danger);
+}
+
+/* --- modal -------------------------------------------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.modal__panel {
+  width: min(440px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.modal__lead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.modal__field {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.radio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+}
+
+.modal__note {
+  font: inherit;
+  resize: vertical;
+  padding: var(--space-3);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* --- ads ---------------------------------------------------------------- */
+
+/* Never inside the conversation: advertising must not interrupt a chat, and a
+   slot that only exists on the landing and between-chats screens cannot. */
+.ad {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.ad__headline {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ad__body {
+  margin: 0;
+}
+
+/* --- footer ------------------------------------------------------------- */
+
+.footer {
+  color: var(--text-muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.footer p {
+  margin: 0;
+  max-width: 60ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

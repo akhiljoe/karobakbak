@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>karobakbak</title>
+    <meta name="description" content="Talk to a stranger. Anonymous, text only, no account." />
+
+    <!--
+      Content Security Policy.
+
+      The strongest control the frontend has, because message text is rendered
+      as untrusted content from another person. React escapes it, but a policy
+      that forbids inline and remote script means a mistake anywhere in the
+      pipeline still cannot execute.
+
+      `connect-src 'self'` covers the WebSocket too: same origin, which is what
+      the compose topology and the dev proxy both serve. The nginx image in
+      phase 11 sends the same policy as a header, which is what a browser
+      honours most strictly; this tag is the floor, not the ceiling.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="dark" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>karobakbak needs JavaScript to hold a live conversation.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
