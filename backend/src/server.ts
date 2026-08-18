@@ -436,6 +436,12 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           delivered: outcome.delivered,
         });
         return;
+      case 'withheld':
+        // The hard rule set refused it. Not retryable, and deliberately vague:
+        // naming the rule would tell someone probing the filter exactly which
+        // pattern to work around.
+        connection.sendError('MESSAGE_WITHHELD', 'that message was not delivered');
+        return;
       case 'rate_limited':
         connection.sendError('RATE_LIMITED', 'slow down');
         return;

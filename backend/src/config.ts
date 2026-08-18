@@ -9,6 +9,7 @@
  *
  * Every variable is documented in .env.example and README.md.
  */
+import { RULE_IDS } from './moderation/rules';
 import type { ClientEventType } from './protocol/types';
 import { newInstanceId } from './util/ids';
 
@@ -24,6 +25,9 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
  * be reaped for keeping itself alive.
  */
 export type RateLimitedCommand = Exclude<ClientEventType, 'ping'>;
+
+/** Re-exported so `Config` can name it without importing the policy module. */
+export type ConfigurableAction = 'flag' | 'withhold' | 'block';
 
 /** A Redis token bucket: sustained refill per second, and bucket capacity. */
 export interface RateLimit {
@@ -115,6 +119,23 @@ export interface Config {
     readonly ipDimensionEnabled: boolean;
     /** Precise but trivially rotated by clearing browser storage (D18). */
     readonly clientDimensionEnabled: boolean;
+  };
+
+  readonly moderation: {
+    readonly enabled: boolean;
+    /**
+     * What a rule match does by default. `flag` delivers and records a signal
+     * (D20): local rules have a real false-positive rate, and refusing a
+     * message somebody was allowed to send is far more visible than a flag a
+     * moderator later ignores.
+     */
+    readonly defaultAction: ConfigurableAction;
+    /** Rule ids that escalate to an outright block. Validated against RULE_IDS. */
+    readonly hardBlockRules: readonly string[];
+    /** Contact-exchange detection, as a group. */
+    readonly detectContact: boolean;
+    /** Case-insensitive terms an operator has banned outright. */
+    readonly denyList: readonly string[];
   };
 
   readonly janitor: {
@@ -211,6 +232,31 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
     perSecond: num(env, `${prefix}_RATE_PER_SEC`, perSecond, 0.0001, 10_000),
     burst: int(env, `${prefix}_BURST`, burst, 1, 100_000),
   };
+}
+
+function moderationAction(env: Env, key: string, fallback: ConfigurableAction): ConfigurableAction {
+  const raw = str(env, key, fallback);
+  if (raw === 'flag' || raw === 'withhold' || raw === 'block') return raw;
+  throw new ConfigError(`${key} must be flag|withhold|block, got ${JSON.stringify(raw)}`);
+}
+
+/**
+ * Rule ids for the hard-block set, checked against the rules that exist.
+ *
+ * A typo here would silently disable a hard block an operator believed they
+ * had configured, which is exactly the kind of failure that is only discovered
+ * by the abuse it did not stop.
+ */
+function knownRules(env: Env, key: string): string[] {
+  const ids = list(env, key, '');
+  for (const id of ids) {
+    if (!RULE_IDS.includes(id)) {
+      throw new ConfigError(
+        `${key} names an unknown rule ${JSON.stringify(id)}; known rules are ${RULE_IDS.join(', ')}`,
+      );
+    }
+  }
+  return ids;
 }
 
 /**
@@ -316,6 +362,14 @@ export function loadConfig(env: Env = process.env): Config {
       ttlSeconds: int(env, 'BLOCK_TTL_SECONDS', 2_592_000, 60, 31_536_000),
       ipDimensionEnabled: bool(env, 'BLOCK_DIMENSION_IP_ENABLED', true),
       clientDimensionEnabled: bool(env, 'BLOCK_DIMENSION_CLIENT_ENABLED', true),
+    },
+
+    moderation: {
+      enabled: bool(env, 'MODERATION_ENABLED', true),
+      defaultAction: moderationAction(env, 'MODERATION_DEFAULT_ACTION', 'flag'),
+      hardBlockRules: knownRules(env, 'MODERATION_HARD_BLOCK_RULES'),
+      detectContact: bool(env, 'MODERATION_DETECT_CONTACT', true),
+      denyList: list(env, 'MODERATION_DENY_LIST', '').map((term) => term.toLowerCase()),
     },
 
     janitor: {

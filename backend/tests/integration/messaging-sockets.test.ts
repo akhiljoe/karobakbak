@@ -390,6 +390,124 @@ describe('per-command rate limits at the edge (R7)', () => {
   });
 });
 
+describe('moderation over the wire (§14.2, D20)', () => {
+  it('delivers a flagged message, because flagging is not blocking', async () => {
+    const { alice, bob } = await pairAcrossInstances();
+    try {
+      alice.command('message', { text: 'my site is example.com' }, 'c_1');
+      const ack = payloadOf<MessageAckPayload>(await alice.waitForFrame('message_ack'));
+      // Default policy is flag-and-deliver: refusing a message somebody was
+      // allowed to send is far more visible than a flag nobody acts on.
+      expect(ack.delivered).toBe(true);
+      const received = payloadOf<IncomingMessagePayload>(await bob.waitForFrame('message'));
+      expect(received.text).toBe('my site is example.com');
+    } finally {
+      alice.close();
+      bob.close();
+    }
+  });
+
+  it('never tells the client which rule fired', async () => {
+    const { alice, bob } = await pairAcrossInstances();
+    try {
+      alice.command('message', { text: 'reach me at me@example.com' }, 'c_1');
+      await alice.waitForFrame('message_ack');
+      // Naming the rule would tell someone probing the filter exactly which
+      // pattern to work around.
+      const seen = JSON.stringify(alice.frames);
+      expect(seen).not.toContain('email');
+      expect(seen).not.toContain('moderation');
+      expect(seen).not.toContain('flag');
+    } finally {
+      alice.close();
+      bob.close();
+    }
+  });
+
+  it('acks a withheld message with delivered:false rather than an error', async () => {
+    const strict = await startTestServer({ MODERATION_DEFAULT_ACTION: 'withhold' });
+    try {
+      const alice = await TestClient.connect(strict.url);
+      const bob = await TestClient.connect(strict.url);
+      await alice.waitForFrame('connected');
+      await bob.waitForFrame('connected');
+      alice.command('join_queue');
+      await alice.waitForFrame('queue_status');
+      bob.command('join_queue');
+      await alice.waitForFrame('matched');
+      await bob.waitForFrame('matched');
+
+      alice.command('message', { text: 'visit example.com' }, 'c_1');
+      const ack = payloadOf<MessageAckPayload>(await alice.waitForFrame('message_ack'));
+      // The frame was valid and there is nothing to retry, so this is an ack,
+      // not an error (D20).
+      expect(ack.delivered).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(bob.frames.filter((frame) => frame.type === 'message')).toHaveLength(0);
+      alice.close();
+      bob.close();
+    } finally {
+      await strict.stop();
+    }
+  });
+
+  it('refuses a hard-blocked message with MESSAGE_WITHHELD', async () => {
+    const strict = await startTestServer({ MODERATION_HARD_BLOCK_RULES: 'invite_link' });
+    try {
+      const alice = await TestClient.connect(strict.url);
+      const bob = await TestClient.connect(strict.url);
+      await alice.waitForFrame('connected');
+      await bob.waitForFrame('connected');
+      alice.command('join_queue');
+      await alice.waitForFrame('queue_status');
+      bob.command('join_queue');
+      await alice.waitForFrame('matched');
+      await bob.waitForFrame('matched');
+
+      alice.command('message', { text: 'join discord.gg/abcd' }, 'c_1');
+      const error = payloadOf<ErrorPayload>(await alice.waitForFrame('error'));
+      expect(error.code).toBe('MESSAGE_WITHHELD');
+      // Not retryable: resending the same message will be refused the same way.
+      expect(error.retryable).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(bob.frames.filter((frame) => frame.type === 'message')).toHaveLength(0);
+      alice.close();
+      bob.close();
+    } finally {
+      await strict.stop();
+    }
+  });
+
+  it('leaves the conversation usable after a refusal', async () => {
+    const strict = await startTestServer({ MODERATION_HARD_BLOCK_RULES: 'invite_link' });
+    try {
+      const alice = await TestClient.connect(strict.url);
+      const bob = await TestClient.connect(strict.url);
+      await alice.waitForFrame('connected');
+      await bob.waitForFrame('connected');
+      alice.command('join_queue');
+      await alice.waitForFrame('queue_status');
+      bob.command('join_queue');
+      await alice.waitForFrame('matched');
+      await bob.waitForFrame('matched');
+
+      alice.command('message', { text: 'join discord.gg/abcd' }, 'c_1');
+      await alice.waitForFrame('error');
+      // A refused message is not a protocol violation: the socket stays open
+      // and the next ordinary message goes through.
+      alice.command('message', { text: 'sorry, ignore that' }, 'c_2');
+      const received = payloadOf<IncomingMessagePayload>(await bob.waitForFrame('message'));
+      expect(received.text).toBe('sorry, ignore that');
+      alice.close();
+      bob.close();
+    } finally {
+      await strict.stop();
+    }
+  });
+});
+
 describe('a message cannot outlive its conversation (I6)', () => {
   it('is refused after the partner skips', async () => {
     const { alice, bob } = await pairAcrossInstances();

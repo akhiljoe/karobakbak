@@ -246,6 +246,47 @@ describe('loadConfig — Redis layer settings', () => {
   });
 });
 
+describe('loadConfig — moderation', () => {
+  it('applies the documented defaults', () => {
+    const config = loadConfig(baseEnv());
+    expect(config.moderation).toEqual({
+      enabled: true,
+      // Flag, not withhold: local rules produce signals, not verdicts (D20).
+      defaultAction: 'flag',
+      hardBlockRules: [],
+      detectContact: true,
+      denyList: [],
+    });
+  });
+
+  it('rejects an action that is not one of the three', () => {
+    expect(() => loadConfig(baseEnv({ MODERATION_DEFAULT_ACTION: 'delete' }))).toThrow(
+      /MODERATION_DEFAULT_ACTION/,
+    );
+    expect(() => loadConfig(baseEnv({ MODERATION_DEFAULT_ACTION: 'allow' }))).toThrow(
+      /MODERATION_DEFAULT_ACTION/,
+    );
+  });
+
+  it('refuses to start on a hard-block rule that does not exist', () => {
+    // A typo here would silently disable a hard block an operator believed
+    // they had configured - discovered only by the abuse it did not stop.
+    expect(() => loadConfig(baseEnv({ MODERATION_HARD_BLOCK_RULES: 'crypto_adress' }))).toThrow(
+      /unknown rule/,
+    );
+    expect(
+      loadConfig(baseEnv({ MODERATION_HARD_BLOCK_RULES: 'crypto_address,invite_link' })).moderation
+        .hardBlockRules,
+    ).toEqual(['crypto_address', 'invite_link']);
+  });
+
+  it('lower-cases the deny list, because matching is case-insensitive', () => {
+    expect(loadConfig(baseEnv({ MODERATION_DENY_LIST: 'BadWord, Other ' })).moderation.denyList).toEqual(
+      ['badword', 'other'],
+    );
+  });
+});
+
 describe('loadConfig — origin allowlist (R9)', () => {
   it('refuses to start in production with an empty allowlist', () => {
     expect(() => loadConfig(baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: '' }))).toThrow(

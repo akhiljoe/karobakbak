@@ -196,6 +196,73 @@ describe('sending a message', () => {
   });
 });
 
+describe('moderation in the pipeline (§14.2)', () => {
+  it('delivers a flagged message and reports the flags on the ack', async () => {
+    const ctx = build();
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'visit example.com');
+    // Flag-and-deliver is the default (D20): a false positive here would be a
+    // person told they cannot say something they are allowed to say.
+    expect(outcome).toMatchObject({ kind: 'accepted', delivered: true, flags: ['url'] });
+    expect(partner.frames).toHaveLength(1);
+  });
+
+  it('withholds without delivering, and still acks', async () => {
+    const ctx = build({ MODERATION_DEFAULT_ACTION: 'withhold' });
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'visit example.com');
+    // Accepted and recorded, not handed on. Reported through the ack rather
+    // than an error, because the frame was valid and there is nothing to retry.
+    expect(outcome).toMatchObject({ kind: 'accepted', delivered: false });
+    expect(partner.frames).toEqual([]);
+  });
+
+  it('refuses a hard-blocked message outright', async () => {
+    const ctx = build({ MODERATION_HARD_BLOCK_RULES: 'crypto_address' });
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    const outcome = await ctx.pipeline.send(
+      's_me',
+      'c_1',
+      'text',
+      'send to bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+    );
+    expect(outcome).toMatchObject({ kind: 'withheld', flags: ['crypto_address'] });
+    expect(partner.frames).toEqual([]);
+  });
+
+  it('leaves a clean message unflagged', async () => {
+    const ctx = build();
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'how is your day going');
+    expect(outcome).toMatchObject({ kind: 'accepted', delivered: true, flags: [] });
+  });
+
+  it('never writes the message or the matched fragment into a log line (I8)', async () => {
+    const ctx = build({ MODERATION_HARD_BLOCK_RULES: 'email' });
+    await ctx.pipeline.send('s_me', 'c_1', 'text', 'reach me at CANARY@example.com');
+    await ctx.pipeline.send('s_me', 'c_2', 'text', 'also SECOND_CANARY.com is mine');
+
+    const logged = JSON.stringify(ctx.logger.lines);
+    expect(logged).not.toContain('CANARY@example.com');
+    expect(logged).not.toContain('SECOND_CANARY');
+    // What does get logged is the rule id and the severity.
+    expect(logged).toContain('moderationFlags');
+  });
+
+  it('moderates after the dedupe, so a duplicate is never judged twice', async () => {
+    const ctx = build();
+    ctx.store.resolveResult = { status: 'duplicate', matchId: 'm_1' };
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'visit example.com');
+    expect(outcome).toEqual({ kind: 'duplicate' });
+    expect(ctx.logger.lines).toEqual([]);
+  });
+});
+
 describe('typing', () => {
   it('routes without consuming a dedupe id', async () => {
     const ctx = build();

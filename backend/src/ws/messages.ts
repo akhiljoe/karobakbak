@@ -18,9 +18,9 @@
  * The ack comes last, because acknowledging before routing would be a claim we
  * have not yet earned.
  *
- * Moderation (§14.2) belongs between the dedupe and the delivery, and the
- * retention enqueue (§14.3) after the ack. Neither exists yet; both slot into
- * this sequence without moving anything already here.
+ * Moderation (§14.2) sits between the dedupe and the delivery, and is entered
+ * by content-type dispatch rather than as a call on the text (§23.5). The
+ * retention enqueue (§14.3) belongs after the ack and does not exist yet.
  *
  * ---------------------------------------------------------------------------
  * WHAT `route` MEANS
@@ -38,6 +38,7 @@ import type { ResolvePartnerResult } from '../redis/store';
 import type { RateLimitedCommand } from '../config';
 import { newMessageId } from '../util/ids';
 import { nowIso } from '../util/time';
+import { moderate } from '../moderation';
 import type { EventDispatcher } from './dispatch';
 import type { MessageContentType } from '../protocol/types';
 
@@ -55,8 +56,13 @@ export type MessageOutcome =
       matchId: string;
       acceptedAt: string;
       route: 'local' | 'remote';
+      /** False when policy withheld it: accepted and recorded, not handed on (D20). */
       delivered: boolean;
+      /** Rule ids that fired. Never carries user text. */
+      flags: readonly string[];
     }
+  /** Refused outright by the hard rule set. */
+  | { kind: 'withheld'; matchId: string; flags: readonly string[] }
   | { kind: 'rate_limited'; retryAfterMs: number }
   | { kind: 'not_matched' }
   | { kind: 'duplicate' }
@@ -118,25 +124,64 @@ export class MessagePipeline {
     const messageId = newMessageId();
     const sentAt = nowIso();
 
-    // Delivery cannot fail the send: the dedupe entry is already written, so
-    // unwinding here would leave an id burnt for a message nobody has. A
-    // dropped frame costs the partner one message they can no longer be shown
-    // — which is exactly what `message_ack` refuses to promise (D14).
-    await this.dispatcher.toSession(
-      resolved.partnerSessionId,
-      { event: 'message', matchId: resolved.matchId, messageId, contentType, text, sentAt },
-      sentAt,
-    );
+    // Entered by content type, never as a direct call on the text (§23.5), so
+    // no content can reach delivery without a decision having been made about
+    // it. A type this build cannot judge fails closed inside `moderate`.
+    const verdict = moderate({ type: contentType, text }, this.config.moderation);
+    const route: 'local' | 'remote' =
+      resolved.partnerInstanceId === this.config.instanceId ? 'local' : 'remote';
+
+    if (verdict.action === 'block') {
+      // The hard rule set only. The sender is told plainly rather than being
+      // left to believe a delivered message vanished.
+      this.logger.info('message blocked by policy', {
+        sessionId,
+        matchId: resolved.matchId,
+        messageId,
+        moderationFlags: verdict.flags,
+        moderationSeverity: verdict.severity,
+      });
+      return { kind: 'withheld', matchId: resolved.matchId, flags: verdict.flags };
+    }
+
+    if (verdict.deliverable) {
+      // Delivery cannot fail the send: the dedupe entry is already written, so
+      // unwinding here would leave an id burnt for a message nobody has. A
+      // dropped frame costs the partner one message they can no longer be
+      // shown — exactly what `message_ack` refuses to promise (D14).
+      await this.dispatcher.toSession(
+        resolved.partnerSessionId,
+        { event: 'message', matchId: resolved.matchId, messageId, contentType, text, sentAt },
+        sentAt,
+      );
+    }
+
+    if (verdict.flags.length > 0) {
+      // Rule ids and a severity, never the text or the matched substring: this
+      // line is the shape a `moderation_events` row will take, and the matched
+      // fragment is the part of a message most likely to be personal (I8).
+      this.logger.info('message flagged by policy', {
+        sessionId,
+        matchId: resolved.matchId,
+        messageId,
+        moderationAction: verdict.action,
+        moderationFlags: verdict.flags,
+        moderationSeverity: verdict.severity,
+        delivered: verdict.deliverable,
+      });
+    }
 
     return {
       kind: 'accepted',
       messageId,
       matchId: resolved.matchId,
       acceptedAt: sentAt,
-      route: resolved.partnerInstanceId === this.config.instanceId ? 'local' : 'remote',
-      // Always true until the moderation policy exists; a withheld message
-      // will report false here rather than as an error (D20).
-      delivered: true,
+      route,
+      // A withheld message was accepted and recorded but not handed on. The
+      // sender is told through the ack rather than through an error, because
+      // the frame was valid and there is nothing to retry (D20).
+      delivered: verdict.deliverable,
+      flags: verdict.flags,
     };
   }
 
