@@ -193,6 +193,17 @@ export interface Config {
     readonly maxAgeSeconds: number;
   };
 
+  readonly deletion: {
+    readonly enabled: boolean;
+    readonly intervalMs: number;
+    readonly batch: number;
+  };
+
+  readonly backup: {
+    /** Alert when no successful backup has been observed within this window. */
+    readonly maxAgeSeconds: number;
+  };
+
   readonly janitor: {
     readonly batch: number;
   };
@@ -477,6 +488,16 @@ export function loadConfig(env: Env = process.env): Config {
       maxBytes: int(env, 'SPOOL_MAX_BYTES', 134_217_728, 1024, 68_719_476_736),
       maxRecords: int(env, 'SPOOL_MAX_RECORDS', 50_000, 1, 100_000_000),
       maxAgeSeconds: int(env, 'SPOOL_MAX_AGE_SECONDS', 86_400, 1, 31_536_000),
+    },
+
+    deletion: {
+      enabled: bool(env, 'DELETION_WORKER_ENABLED', true),
+      intervalMs: int(env, 'DELETION_INTERVAL_MS', 3_600_000, 1000, 86_400_000),
+      batch: int(env, 'DELETION_BATCH', 500, 1, 100_000),
+    },
+
+    backup: {
+      maxAgeSeconds: int(env, 'BACKUP_MAX_AGE_SECONDS', 93_600, 60, 2_592_000),
     },
 
     janitor: {

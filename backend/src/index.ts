@@ -13,6 +13,7 @@ import { createKeys } from './redis/keys';
 import { ScriptRunner } from './redis/scripts';
 import { RedisStore } from './redis/store';
 import { createChatServer } from './server';
+import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
 import { NullRetentionSink, type RetentionSink } from './storage/sink';
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   // nothing here creates schema.
   let retention: RetentionSink = new NullRetentionSink();
   let writer: RetentionWriter | null = null;
+  let deletion: DeletionWorker | null = null;
   let database: ReturnType<typeof createDatabase> | null = null;
 
   if (config.retention.enabled) {
@@ -54,6 +56,12 @@ async function main(): Promise<void> {
     writer = new RetentionWriter(config, logger, database, spool);
     writer.start();
     retention = writer;
+
+    // Leader-locked through Redis, so one instance does the deleting. A
+    // retention policy that only exists in configuration is a promise nobody
+    // keeps (I10).
+    deletion = new DeletionWorker(config, logger, database, store);
+    deletion.start();
   }
 
   const server = createChatServer({ config, logger, store, clients, retention });
@@ -69,6 +77,7 @@ async function main(): Promise<void> {
     // The writer is stopped after the sockets, so records produced by the last
     // conversations to close are still placed - written if the database is up,
     // spooled if it is not.
+    deletion?.stop();
     if (writer) await writer.stop();
     if (database) await database.close();
     await clients.close();

@@ -607,6 +607,22 @@ export class RedisStore {
     return result === 'OK';
   }
 
+  /**
+   * Take the deletion lock. A separate key from the janitor's: the two do
+   * unrelated work at very different intervals, and one lock would make the
+   * slower of them starve the other.
+   */
+  async acquireDeletionLock(instanceId: string): Promise<boolean> {
+    const result = await this.client.set(
+      this.keys.deletionLock(),
+      instanceId,
+      'EX',
+      Math.max(60, Math.ceil(this.config.deletion.intervalMs / 1000)),
+      'NX',
+    );
+    return result === 'OK';
+  }
+
   async refreshInstanceBeacon(instanceId: string): Promise<void> {
     await this.runner.run(
       'instanceBeacon',

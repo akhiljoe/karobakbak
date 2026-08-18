@@ -81,6 +81,8 @@ export interface RedisKeys {
   instances(): string;
   /** STRING — the distributed janitor lock. */
   janitorLock(): string;
+  /** STRING — the deletion worker's own lock, separate so the two never contend. */
+  deletionLock(): string;
   /** Pub/Sub channel for one session. The channel name IS the routing key (D8). */
   sessionChannel(sid: string): string;
   /** Parse a session id back out of a channel name, or null if it is not ours. */
@@ -110,6 +112,7 @@ export function createKeys(prefix: string): RedisKeys {
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,
+    deletionLock: () => `${prefix}:deletion:lock`,
     sessionChannel: (sid) => `${channelPrefix}${assertComponent(sid, 'session id')}`,
 
     sessionIdFromChannel: (channel) => {

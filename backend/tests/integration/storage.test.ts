@@ -91,6 +91,7 @@ describe('migrations', () => {
       'blocks',
       'conversations',
       'enforcement',
+      'legal_holds',
       'messages',
       'moderation_events',
       'reports',
