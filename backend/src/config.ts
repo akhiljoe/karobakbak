@@ -43,6 +43,18 @@ export interface Config {
     readonly wsPath: string;
     /** Empty array means "allow any Origin" (development only). */
     readonly allowedOrigins: readonly string[];
+    /**
+     * How many reverse proxies sit in front of this process.
+     *
+     * 0 means the peer address is the client. Anything above 0 reads the
+     * client address out of `X-Forwarded-For`, counting from the **right**:
+     * each trusted proxy appends the address it saw, so the rightmost entries
+     * are the ones our own infrastructure wrote and the left of the header is
+     * whatever the client claimed. Trusting the leftmost value — the common
+     * mistake — lets any client pick its own rate-limit bucket and shed its
+     * blocks by sending a header.
+     */
+    readonly trustProxyHops: number;
   };
 
   readonly redis: {
@@ -240,9 +252,13 @@ export function loadConfig(env: Env = process.env): Config {
 
     http: {
       host: str(env, 'BACKEND_HOST', '0.0.0.0'),
-      port: int(env, 'BACKEND_PORT', 8080, 1, 65535),
+      // 0 is legal and means "bind any free port". It is how the socket tests
+      // avoid fighting over a fixed one; the bound port is logged at startup
+      // and reported by `listen()`.
+      port: int(env, 'BACKEND_PORT', 8080, 0, 65535),
       wsPath: path(env, 'WS_PATH', '/ws'),
       allowedOrigins: list(env, 'ALLOWED_ORIGINS', ''),
+      trustProxyHops: int(env, 'TRUST_PROXY_HOPS', 0, 0, 8),
     },
 
     redis: {

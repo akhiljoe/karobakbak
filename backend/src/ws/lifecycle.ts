@@ -151,14 +151,26 @@ export class SessionLifecycle {
    * concurrency cap bounds how many it may hold at once (R8). A session that
    * fails the concurrency check is closed again immediately rather than left
    * as a row nobody owns.
+   *
+   * `beforeCreate` runs after the session id exists but **before** the row does.
+   * That ordering is required, not incidental: the caller subscribes to the
+   * session's event channel there, so there is no window in which a session is
+   * matchable but its instance is not listening (§11). Getting it the other way
+   * round loses the `matched` event of exactly the users who were quickest.
    */
-  async open(ipHash: string, clientHash: string): Promise<OpenOutcome> {
+  async open(
+    ipHash: string,
+    clientHash: string,
+    beforeCreate?: (sessionId: string) => Promise<void>,
+  ): Promise<OpenOutcome> {
     const rate = await this.store.connectionRateLimit(ipHash);
     if (!rate.allowed) {
       return { kind: 'rate_limited', retryAfterSeconds: rate.resetSeconds };
     }
 
     const sessionId = newSessionId();
+    if (beforeCreate) await beforeCreate(sessionId);
+
     await this.store.createSession(
       { sessionId, instanceId: this.config.instanceId, ipHash, clientHash },
       this.segment,

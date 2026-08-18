@@ -41,6 +41,17 @@ export function newFrameId(): string {
 }
 
 /**
+ * The browser's block token.
+ *
+ * Server-generated, opaque, and carried in an HttpOnly cookie. It is a block
+ * dimension and nothing else: it authorises no operation, is never read as
+ * identity, and is deliberately cheap to rotate (D18, R14).
+ */
+export function newClientToken(): string {
+  return randomToken();
+}
+
+/**
  * Identifies this backend process. Stable for the process lifetime and used
  * for the Redis liveness beacon that lets other instances detect a crash.
  *

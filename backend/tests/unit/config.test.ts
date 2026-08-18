@@ -58,8 +58,22 @@ describe('loadConfig', () => {
   it('rejects non-integer, out-of-range and nonsense numbers', () => {
     expect(() => loadConfig(baseEnv({ BACKEND_PORT: 'eighty' }))).toThrow(/BACKEND_PORT/);
     expect(() => loadConfig(baseEnv({ BACKEND_PORT: '1.5' }))).toThrow(/BACKEND_PORT/);
-    expect(() => loadConfig(baseEnv({ BACKEND_PORT: '0' }))).toThrow(/BACKEND_PORT/);
+    expect(() => loadConfig(baseEnv({ BACKEND_PORT: '-1' }))).toThrow(/BACKEND_PORT/);
     expect(() => loadConfig(baseEnv({ BACKEND_PORT: '70000' }))).toThrow(/BACKEND_PORT/);
+  });
+
+  it('accepts port 0, which means "bind any free port"', () => {
+    // Used by the socket tests so parallel runs do not fight over a fixed
+    // port. The bound port is reported by listen() and logged at startup.
+    expect(loadConfig(baseEnv({ BACKEND_PORT: '0' })).http.port).toBe(0);
+  });
+
+  it('does not trust proxy headers unless told how many proxies there are', () => {
+    // Reading X-Forwarded-For with no proxy in front lets any client pick its
+    // own rate-limit bucket and shed its blocks by sending a header.
+    expect(loadConfig(baseEnv()).http.trustProxyHops).toBe(0);
+    expect(loadConfig(baseEnv({ TRUST_PROXY_HOPS: '2' })).http.trustProxyHops).toBe(2);
+    expect(() => loadConfig(baseEnv({ TRUST_PROXY_HOPS: '99' }))).toThrow(/TRUST_PROXY_HOPS/);
   });
 
   it('rejects an invalid log level', () => {
