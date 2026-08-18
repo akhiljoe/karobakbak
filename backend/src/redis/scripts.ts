@@ -668,7 +668,10 @@ end
 
 local ended = 0
 if endMatchInline(mid, tonumber(ARGV[6])) then ended = 1 end
-return { 'BLOCKED', mid, partner, recorded, ended }
+-- The blocked party's hashes are returned so the caller can write a truthful
+-- database row. They are salted hashes the server computed itself, and they
+-- never reach a client.
+return { 'BLOCKED', mid, partner, recorded, ended, theirs[1] or '', theirs[2] or '' }
 `,
 );
 

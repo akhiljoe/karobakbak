@@ -39,6 +39,8 @@ import type { RateLimitedCommand } from '../config';
 import { newMessageId } from '../util/ids';
 import { nowIso } from '../util/time';
 import { moderate } from '../moderation';
+import { newMessageId as newRecordId } from '../util/ids';
+import type { RetentionSink } from '../storage/sink';
 import type { EventDispatcher } from './dispatch';
 import type { MessageContentType } from '../protocol/types';
 
@@ -82,6 +84,7 @@ export class MessagePipeline {
     private readonly dispatcher: EventDispatcher,
     private readonly config: Config,
     private readonly logger: Logger,
+    private readonly retention: RetentionSink,
   ) {}
 
   /**
@@ -171,6 +174,10 @@ export class MessagePipeline {
       });
     }
 
+    // After the ack decision is made, never before it (§14.1). Retention is
+    // write-behind and best-effort; the conversation does not depend on it.
+    this.persist(sessionId, resolved.matchId, messageId, sentAt, contentType, text, verdict);
+
     return {
       kind: 'accepted',
       messageId,
@@ -183,6 +190,59 @@ export class MessagePipeline {
       delivered: verdict.deliverable,
       flags: verdict.flags,
     };
+  }
+
+  /**
+   * Hand the message and its moderation signals to the retention pipeline.
+   *
+   * Enqueueing is synchronous and cannot fail the send: a full queue drops the
+   * record, counts it and alerts, and the conversation carries on. Losing a
+   * retention row is a storage incident; refusing to carry the conversation
+   * would turn it into an outage (§14.3).
+   */
+  private persist(
+    sessionId: string,
+    matchId: string,
+    messageId: string,
+    sentAt: string,
+    contentType: MessageContentType,
+    text: string,
+    verdict: { action: ReturnType<typeof moderate>['action']; flags: readonly string[]; severity: 'low' | 'medium' | 'high' | null },
+  ): void {
+    this.retention.enqueue(
+      {
+        kind: 'message',
+        messageId,
+        conversationId: matchId,
+        senderSessionId: sessionId,
+        serverTimestamp: sentAt,
+        type: contentType,
+        body: text,
+        moderationAction: verdict.action,
+        moderationFlags: verdict.flags,
+      },
+      // Both signals are the server's own: the moderation engine's output, and
+      // the conversation's report state read server-side (D27).
+      {
+        moderationAction: verdict.action,
+        conversationReported: this.retention.isConversationReported(matchId),
+      },
+    );
+
+    // One row per rule that fired, so triage can ask "which rule" without
+    // reading any message body.
+    for (const rule of verdict.flags) {
+      this.retention.enqueue({
+        kind: 'moderation_event',
+        eventId: newRecordId(),
+        conversationId: matchId,
+        messageId,
+        rule,
+        action: verdict.action,
+        severity: verdict.severity ?? 'low',
+        createdAt: sentAt,
+      });
+    }
   }
 
   /**

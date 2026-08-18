@@ -9,6 +9,7 @@ import { FakeConnection, FakePublisher, FakeStore, silentLogger } from '../helpe
 import { loadConfig, type Config, type Env } from '../../src/config';
 import { EventDispatcher } from '../../src/ws/dispatch';
 import { SessionLifecycle } from '../../src/ws/lifecycle';
+import { NullRetentionSink } from '../../src/storage/sink';
 import { ConnectionRegistry } from '../../src/ws/registry';
 
 function buildConfig(overrides: Env = {}): Config {
@@ -28,7 +29,7 @@ function build(overrides: Env = {}) {
   const registry = new ConnectionRegistry(logger);
   const publisher = new FakePublisher();
   const dispatcher = new EventDispatcher(registry, publisher, logger);
-  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger);
+  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, new NullRetentionSink());
   return { logger, config, store, registry, publisher, dispatcher, lifecycle };
 }
 
@@ -343,7 +344,7 @@ describe('block', () => {
     ctx.store.seedSession({ sessionId: 's_b', ipHash: 'ip-b', clientHash: 'cl-b' });
     ctx.store.seedMatch('m_1', 's_a', 's_b');
 
-    expect(await ctx.lifecycle.block('s_a')).toEqual({
+    expect(await ctx.lifecycle.block('s_a', { ipHash: 'ip-s_a', clientHash: 'cl-s_a' })).toEqual({
       kind: 'blocked',
       matchId: 'm_1',
       recorded: 2,
@@ -363,7 +364,7 @@ describe('block', () => {
     ctx.store.seedMatch('m_1', 's_a', 's_b');
     const blockedSocket = attach(ctx, 's_b');
 
-    await ctx.lifecycle.block('s_a');
+    await ctx.lifecycle.block('s_a', { ipHash: 'ip-s_a', clientHash: 'cl-s_a' });
     const frames = blockedSocket.parsed();
     // A distinct signal would tell an abuser which behaviour got them blocked.
     expect(frames).toEqual([
@@ -375,7 +376,7 @@ describe('block', () => {
   it('refuses when there is no partner to block', async () => {
     const ctx = build();
     ctx.store.seedSession({ sessionId: 's_a' });
-    expect(await ctx.lifecycle.block('s_a')).toEqual({ kind: 'not_matched' });
+    expect(await ctx.lifecycle.block('s_a', { ipHash: 'ip-s_a', clientHash: 'cl-s_a' })).toEqual({ kind: 'not_matched' });
   });
 });
 

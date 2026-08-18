@@ -13,6 +13,10 @@ import { createKeys } from './redis/keys';
 import { ScriptRunner } from './redis/scripts';
 import { RedisStore } from './redis/store';
 import { createChatServer } from './server';
+import { createDatabase, assertTlsWhereRequired } from './storage/pool';
+import { RetentionWriter } from './storage/retention';
+import { NullRetentionSink, type RetentionSink } from './storage/sink';
+import { DisabledSpool, FileSpool, type Spool } from './storage/spool';
 
 async function main(): Promise<void> {
   // A misconfigured process fails here, before it can accept a connection and
@@ -33,7 +37,26 @@ async function main(): Promise<void> {
   const store = new RedisStore(clients.command, runner, createKeys(config.redis.keyPrefix), config);
   await store.refreshInstanceBeacon(config.instanceId);
 
-  const server = createChatServer({ config, logger, store, clients });
+  // Retention is optional at runtime: a deployment that has not provisioned a
+  // database still serves chat, which is the whole point of the write-behind
+  // path (D16). Migrations are a deploy-time step run as a different role, so
+  // nothing here creates schema.
+  let retention: RetentionSink = new NullRetentionSink();
+  let writer: RetentionWriter | null = null;
+  let database: ReturnType<typeof createDatabase> | null = null;
+
+  if (config.retention.enabled) {
+    assertTlsWhereRequired(config);
+    database = createDatabase(config, logger);
+    const spool: Spool = config.spool.enabled
+      ? new FileSpool(config, logger)
+      : new DisabledSpool();
+    writer = new RetentionWriter(config, logger, database, spool);
+    writer.start();
+    retention = writer;
+  }
+
+  const server = createChatServer({ config, logger, store, clients, retention });
   await server.listen();
 
   let stopping = false;
@@ -43,6 +66,11 @@ async function main(): Promise<void> {
     stopping = true;
     logger.info('shutting down', { signal });
     await server.stop();
+    // The writer is stopped after the sockets, so records produced by the last
+    // conversations to close are still placed - written if the database is up,
+    // spooled if it is not.
+    if (writer) await writer.stop();
+    if (database) await database.close();
     await clients.close();
     process.exit(0);
   };

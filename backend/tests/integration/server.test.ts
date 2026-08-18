@@ -67,7 +67,7 @@ describe('the handshake', () => {
       expect(payload.features).toEqual({
         typing: true,
         presence: true,
-        report: false,
+        report: true,
         block: true,
       });
     } finally {
@@ -404,20 +404,47 @@ describe('control commands', () => {
     expect(await http.ctx.store.queueDepth(http.ctx.segment)).toBe(0);
   });
 
-  it('reports a command this build does not serve, rather than pretending', async () => {
+  it('refuses a report with no conversation to report', async () => {
     const client = await TestClient.connect(http.url);
     try {
       await client.waitForFrame('connected');
-      // `features.report` is false because reports are persisted evidence and
-      // the retention store does not exist yet. A client that sends anyway
-      // gets a retryable error rather than an acknowledgement of a report
-      // nobody recorded (§14.3).
+      // The reported party is resolved server-side; with no conversation there
+      // is nobody to name, and the client never gets to name one itself.
       client.command('report', { category: 'spam' });
       const error = payloadOf<ErrorPayload>(await client.waitForFrame('error'));
-      expect(error.code).toBe('INTERNAL_ERROR');
-      expect(error.retryable).toBe(true);
+      expect(error.code).toBe('NOT_MATCHED');
     } finally {
       client.close();
+    }
+  });
+
+  it('acknowledges a report without any moderation detail (security §31)', async () => {
+    const alice = await TestClient.connect(http.url);
+    const bob = await TestClient.connect(http.url);
+    try {
+      await alice.waitForFrame('connected');
+      await bob.waitForFrame('connected');
+      alice.command('join_queue');
+      await alice.waitForFrame('queue_status');
+      bob.command('join_queue');
+      await alice.waitForFrame('matched');
+      await bob.waitForFrame('matched');
+
+      bob.command('report', { category: 'harassment', note: 'they would not stop' });
+      const ack = payloadOf<{ reportId: string; acceptedAt: string }>(
+        await bob.waitForFrame('report_ack'),
+      );
+      expect(Object.keys(ack).sort()).toEqual(['acceptedAt', 'reportId']);
+      // No verdict, no indication of what happens next, nothing about the
+      // reported user. And the reported user is told nothing at all: no frame
+      // of any kind arrives to say they were reported.
+      const aliceFrameTypes = alice.frames.map((frame) => frame.type);
+      expect(aliceFrameTypes).not.toContain('error');
+      expect(aliceFrameTypes).not.toContain('report_ack');
+      expect(aliceFrameTypes.filter((type) => type === 'matched')).toHaveLength(1);
+    } finally {
+      alice.close();
+      bob.close();
     }
   });
 });

@@ -11,6 +11,7 @@ import { WebSocket } from 'ws';
 import { createNullLogger } from '../../src/logger';
 import { createRedisClients, type RedisClients } from '../../src/redis/client';
 import { createChatServer, type ChatServer } from '../../src/server';
+import { NullRetentionSink } from '../../src/storage/sink';
 import type { AnyServerEnvelope, ServerEventType } from '../../src/protocol/types';
 import { createTestContext, type TestContext } from './redis';
 import type { Env } from '../../src/config';
@@ -33,7 +34,15 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
   const clients = await createRedisClients(ctx.config, logger);
   await clients.waitUntilReady();
 
-  const server = createChatServer({ config: ctx.config, logger, store: ctx.store, clients });
+  const server = createChatServer({
+    config: ctx.config,
+    logger,
+    store: ctx.store,
+    clients,
+    // The socket suite is about the transport; the retention path has its own
+    // suite against a real database.
+    retention: new NullRetentionSink(),
+  });
   const port = await server.listen();
 
   return {

@@ -6,6 +6,7 @@ import { FakeConnection, FakePublisher, silentLogger } from '../helpers/fakes';
 import { loadConfig, type Config, type Env, type RateLimitedCommand } from '../../src/config';
 import { EventDispatcher } from '../../src/ws/dispatch';
 import { MessagePipeline, type MessageStore } from '../../src/ws/messages';
+import { NullRetentionSink } from '../../src/storage/sink';
 import { ConnectionRegistry } from '../../src/ws/registry';
 import type {
   RateLimitResult,
@@ -67,7 +68,7 @@ function build(env: Env = {}) {
     registry,
     publisher,
     store,
-    pipeline: new MessagePipeline(store, dispatcher, config, logger),
+    pipeline: new MessagePipeline(store, dispatcher, config, logger, new NullRetentionSink()),
   };
 }
 

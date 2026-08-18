@@ -220,6 +220,8 @@ export class FakeStore implements LifecycleStore {
       partnerSessionId: partnerId,
       recorded,
       endedByUs: ended.status === 'ended',
+      blockedIpHash: partner?.ipHash ?? '',
+      blockedClientHash: partner?.clientHash ?? '',
     };
   }
 

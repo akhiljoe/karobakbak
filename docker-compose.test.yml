@@ -24,3 +24,24 @@ services:
       retries: 15
     tmpfs:
       - /data
+
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: karobakbak-postgres-test
+    environment:
+      POSTGRES_USER: karobakbak
+      POSTGRES_PASSWORD: karobakbak
+      POSTGRES_DB: karobakbak_test
+      # Throwaway data on a throwaway service: fsync off makes the suite
+      # noticeably faster and risks nothing that matters.
+      POSTGRES_INITDB_ARGS: "--nosync"
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off"]
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karobakbak -d karobakbak_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data

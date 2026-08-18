@@ -91,6 +91,9 @@ export type BlockPartnerResult =
       recorded: number;
       /** True when this call was the one that ended the match, and so owes the peer a notification (D6). */
       endedByUs: boolean;
+      /** The blocked party's salted hashes, for the database row. Empty when their session had expired. */
+      blockedIpHash: string;
+      blockedClientHash: string;
     }
   | { status: 'not_matched' };
 
@@ -538,6 +541,8 @@ export class RedisStore {
       partnerSessionId: str(reply, 2),
       recorded: num(reply, 3),
       endedByUs: num(reply, 4) === 1,
+      blockedIpHash: str(reply, 5),
+      blockedClientHash: str(reply, 6),
     };
   }
 

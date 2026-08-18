@@ -232,7 +232,16 @@ export class SocketConnection implements Connection {
     if (this.cleanedUp) return;
     this.cleanedUp = true;
     this.closed = true;
-    await this.deps.onClose(this);
+    try {
+      await this.deps.onClose(this);
+    } catch (err) {
+      // Nothing is awaiting this: it runs from a socket event, so a rejection
+      // here has nowhere to go but the process's unhandled-rejection handler.
+      this.logger.error('session close handler failed', {
+        sessionId: this.sessionId,
+        errName: err instanceof Error ? err.name : 'unknown',
+      });
+    }
   }
 }
 

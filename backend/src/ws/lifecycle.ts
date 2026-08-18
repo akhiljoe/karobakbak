@@ -37,7 +37,8 @@ import type {
   SessionIdentity,
   TryMatchResult,
 } from '../redis/store';
-import { newMatchId, newSessionId } from '../util/ids';
+import type { RetentionSink } from '../storage/sink';
+import { newMatchId, newMessageId, newSessionId } from '../util/ids';
 import { nowIso } from '../util/time';
 import type { DeliveryRoute, EventDispatcher } from './dispatch';
 import { newIdentityPair } from './identity';
@@ -139,6 +140,7 @@ export class SessionLifecycle {
     private readonly registry: ConnectionRegistry,
     private readonly config: Config,
     private readonly logger: Logger,
+    private readonly retention: RetentionSink,
   ) {
     this.segment = config.matchmaking.defaultSegment;
   }
@@ -261,7 +263,7 @@ export class SessionLifecycle {
    * distinct "you were blocked" signal would tell an abuser exactly which
    * behaviour got them blocked, and by whom (security §32).
    */
-  async block(sessionId: string): Promise<BlockOutcome> {
+  async block(sessionId: string, blocker: { ipHash: string; clientHash: string }): Promise<BlockOutcome> {
     const result = await this.store.blockPartner(sessionId);
     if (result.status === 'not_matched') return { kind: 'not_matched' };
 
@@ -270,6 +272,33 @@ export class SessionLifecycle {
         event: 'partner_skipped',
         matchId: result.matchId,
       });
+    }
+
+    // One row per dimension actually written in Redis, so the database record
+    // and the matchmaking filter cannot disagree about what was blocked.
+    if (result.recorded > 0) {
+      const expiresAt = new Date(Date.now() + this.config.blocks.ttlSeconds * 1000).toISOString();
+      for (const dimension of ['ip', 'client'] as const) {
+        const enabled =
+          dimension === 'ip'
+            ? this.config.blocks.ipDimensionEnabled
+            : this.config.blocks.clientDimensionEnabled;
+        if (!enabled) continue;
+        const blockerKey = dimension === 'ip' ? blocker.ipHash : blocker.clientHash;
+        const blockedKey =
+          dimension === 'ip' ? result.blockedIpHash : result.blockedClientHash;
+        if (blockedKey === '') continue;
+        this.retention.enqueue({
+          kind: 'block',
+          blockId: newMessageId(),
+          blockerKey,
+          blockedKey,
+          dimension,
+          conversationId: result.matchId,
+          createdAt: nowIso(),
+          expiresAt,
+        });
+      }
     }
 
     if (result.recorded === 0) {
@@ -360,6 +389,17 @@ export class SessionLifecycle {
     const startedAt = nowIso();
     const identities = newIdentityPair();
 
+    // The conversation row is P0: the server generated it, and every message
+    // and report that follows carries a foreign key into it.
+    this.retention.enqueue({
+      kind: 'conversation_started',
+      conversationId: matchId,
+      sessionA: sessionId,
+      sessionB: partnerSessionId,
+      segment: this.segment,
+      startedAt,
+    });
+
     const partnerRoute = await this.notify(partnerSessionId, {
       event: 'matched',
       matchId,
@@ -394,6 +434,14 @@ export class SessionLifecycle {
   ): Promise<boolean> {
     const ended = await this.store.endMatch(matchId);
     if (ended.status !== 'ended') return false;
+
+    // Written once, by the caller that won the termination race (D6).
+    this.retention.enqueue({
+      kind: 'conversation_ended',
+      conversationId: matchId,
+      endedAt: nowIso(),
+      endReason: event === 'partner_skipped' ? 'skip' : 'disconnect',
+    });
 
     const peer = ended.a === sessionId ? ended.b : ended.a;
     if (peer === '' || peer === sessionId) return true;

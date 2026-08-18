@@ -10,6 +10,7 @@ import { createNullLogger } from '../../src/logger';
 import { decodeSessionEvent, type SessionEvent } from '../../src/ws/events';
 import { EventDispatcher } from '../../src/ws/dispatch';
 import { SessionLifecycle } from '../../src/ws/lifecycle';
+import { NullRetentionSink } from '../../src/storage/sink';
 import { ConnectionRegistry } from '../../src/ws/registry';
 import { FakeConnection } from '../helpers/fakes';
 import { createTestContext, delay, type TestContext } from '../helpers/redis';
@@ -27,7 +28,7 @@ function instanceFor(ctx: TestContext): Instance {
   return {
     ctx,
     registry,
-    lifecycle: new SessionLifecycle(ctx.store, dispatcher, registry, ctx.config, logger),
+    lifecycle: new SessionLifecycle(ctx.store, dispatcher, registry, ctx.config, logger, new NullRetentionSink()),
   };
 }
 
@@ -245,7 +246,7 @@ describe('block across two instances (D18)', () => {
       await delay(60);
       heard.events.length = 0;
 
-      const blocked = await one.lifecycle.block(a.sessionId);
+      const blocked = await one.lifecycle.block(a.sessionId, { ipHash: a.ipHash, clientHash: 'cl' });
       expect(blocked).toMatchObject({ kind: 'blocked', recorded: 2 });
       await delay(60);
       // Indistinguishable from a skip (security §32).
@@ -266,7 +267,7 @@ describe('block across two instances (D18)', () => {
     await one.lifecycle.joinQueue(a.sessionId);
     await one.lifecycle.joinQueue(b.sessionId);
 
-    await one.lifecycle.block(a.sessionId);
+    await one.lifecycle.block(a.sessionId, { ipHash: a.ipHash, clientHash: 'cl' });
     expect((await one.ctx.store.readSession(a.sessionId))?.state).toBe('IDLE');
     expect(await one.ctx.store.queueDepth(one.ctx.segment)).toBe(0);
   });

@@ -18,6 +18,7 @@
  * serves chat correctly and must stay in the load balancer (§10.18); one whose
  * Redis is down cannot serve a single transition and must leave it.
  */
+import { randomUUID } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 
@@ -30,6 +31,7 @@ import type { ValidatedCommand } from './protocol/validate';
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { RedisStore } from './redis/store';
+import type { RetentionSink } from './storage/sink';
 import { hashIp } from './util/ids';
 import { nowIso } from './util/time';
 import { SocketConnection } from './ws/connection';
@@ -50,6 +52,8 @@ export interface ChatServerDeps {
   logger: Logger;
   store: RedisStore;
   clients: RedisClients;
+  /** Where retained records go. Never awaited on the chat path (D16). */
+  retention: RetentionSink;
 }
 
 export interface ChatServer {
@@ -72,18 +76,18 @@ export interface ChatServer {
 const FEATURES: ServerFeatures = {
   typing: true,
   presence: true,
-  report: false,
+  report: true,
   block: true,
 };
 
 export function createChatServer(deps: ChatServerDeps): ChatServer {
-  const { config, logger, store, clients } = deps;
+  const { config, logger, store, clients, retention } = deps;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
   const dispatcher = new EventDispatcher(registry, store, logger);
-  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger);
+  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention);
   const subscriber = new SessionSubscriber(clients.subscriber, keys, registry, logger);
-  const pipeline = new MessagePipeline(store, dispatcher, config, logger);
+  const pipeline = new MessagePipeline(store, dispatcher, config, logger, retention);
 
   const limits: ServerLimits = {
     maxMessageLength: config.limits.maxMessageLength,
@@ -283,7 +287,18 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       logger,
       onCommand: (command, conn) => handleCommand(command, conn),
       onClose: async (conn) => {
-        await lifecycle.close(conn.sessionId, conn.ipHash, conn);
+        // A socket closing while Redis is unavailable — a restart, a failover,
+        // a test tearing its server down — must not produce an unhandled
+        // rejection. The TTLs and the janitor are the recovery net for whatever
+        // this could not clean up (§13).
+        try {
+          await lifecycle.close(conn.sessionId, conn.ipHash, conn);
+        } catch (err) {
+          logger.warn('session cleanup failed', {
+            sessionId: conn.sessionId,
+            errName: err instanceof Error ? err.name : 'unknown',
+          });
+        }
         await subscriber.unsubscribe(conn.sessionId);
       },
     });
@@ -389,7 +404,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       }
 
       case 'block': {
-        const outcome = await lifecycle.block(connection.sessionId);
+        const outcome = await lifecycle.block(connection.sessionId, {
+          ipHash: connection.ipHash,
+          clientHash: connection.clientHash,
+        });
         if (outcome.kind === 'session_gone') return sessionGone(connection);
         if (outcome.kind === 'not_matched') {
           connection.sendError('NOT_MATCHED', 'you are not in a conversation');
@@ -400,17 +418,50 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         return;
       }
 
-      case 'report':
-        // Reports are persisted evidence, so this waits for the retention
-        // store. `features.report` is false, so a well-behaved client does not
-        // reach here — and acknowledging a report we cannot record would be a
-        // lie to a user asking for help (§14.3).
-        logger.warn('received a command this build does not serve', {
-          sessionId: connection.sessionId,
-          command: command.type,
+      case 'report': {
+        // The reported party is resolved server-side; a client never names who
+        // it is reporting, because it is never told a partner session id.
+        const route = await store.resolveRoute(connection.sessionId);
+        if (route.status === 'not_matched') {
+          connection.sendError('NOT_MATCHED', 'you are not in a conversation');
+          return;
+        }
+        // A partner whose session expired is still reportable: the conversation
+        // and its messages are what the report references, and refusing here
+        // would mean the moment somebody leaves is the moment they stop being
+        // reportable.
+        const reportedSessionId = route.status === 'ok' ? route.partnerSessionId : '';
+
+        const reportId = randomUUID();
+        const acceptedAt = nowIso();
+        const accepted = retention.enqueue({
+          kind: 'report',
+          reportId,
+          conversationId: route.matchId,
+          reporterSessionId: connection.sessionId,
+          reportedSessionId,
+          category: command.category,
+          note: command.note,
+          createdAt: acceptedAt,
         });
-        connection.sendError('INTERNAL_ERROR', 'that command is not available yet');
+
+        if (!accepted.accepted) {
+          // A report the system could not record must not be acknowledged:
+          // telling a user asking for help that it was filed would be a lie
+          // (§14.3). Retryable, because the queue may drain.
+          logger.error('refusing to acknowledge a report that could not be recorded', {
+            sessionId: connection.sessionId,
+            matchId: route.matchId,
+          });
+          connection.sendError('INTERNAL_ERROR', 'could not record that report; please retry');
+          return;
+        }
+
+        // No moderation detail, no verdict, nothing about the reported user
+        // (security §31).
+        connection.sendEvent('report_ack', { reportId, acceptedAt });
         return;
+      }
 
       default: {
         const exhaustive: never = command;
@@ -499,6 +550,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
    */
   async function heartbeatSweep(): Promise<void> {
     for (const connection of registry.all()) {
+      // Re-checked inside the loop, not just at entry: a sweep already running
+      // when shutdown begins would otherwise keep issuing Redis commands after
+      // the connection was closed, which surfaces as an unhandled rejection
+      // from whatever ran next.
+      if (draining) return;
       if (!(connection instanceof SocketConnection)) continue;
       if (!connection.pingOrTimeout()) continue;
       try {
@@ -517,7 +573,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
 
   /** Real Redis cardinalities, cached by the interval itself (D21). */
   async function presenceSweep(): Promise<void> {
-    if (registry.size === 0) return;
+    if (draining || registry.size === 0) return;
     try {
       const counts = await store.presenceCounts();
       for (const connection of registry.all()) {
@@ -533,6 +589,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   }
 
   async function sendPresence(connection: SocketConnection): Promise<void> {
+    if (draining) return;
     try {
       const counts = await store.presenceCounts();
       connection.sendEvent('presence', { ...counts, approximate: true });

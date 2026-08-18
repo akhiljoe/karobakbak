@@ -26,6 +26,9 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
  */
 export type RateLimitedCommand = Exclude<ClientEventType, 'ping'>;
 
+/** Durability priority classes (D26). Assigned by the server, never by a client. */
+export type RetentionPriority = 'p0' | 'p1' | 'p2' | 'p3';
+
 /** Re-exported so `Config` can name it without importing the policy module. */
 export type ConfigurableAction = 'flag' | 'withhold' | 'block';
 
@@ -138,6 +141,58 @@ export interface Config {
     readonly denyList: readonly string[];
   };
 
+  readonly database: {
+    readonly url: string;
+    readonly poolMax: number;
+    readonly connectTimeoutMs: number;
+    readonly statementTimeoutMs: number;
+    readonly ssl: boolean;
+    /** Refuse to start in production on a connection that would not use TLS. */
+    readonly requireSslInProduction: boolean;
+  };
+
+  readonly retention: {
+    readonly enabled: boolean;
+    readonly batchSize: number;
+    readonly flushIntervalMs: number;
+    /**
+     * Hard capacity per priority class. Deliberately NOT shared: a full P3
+     * cannot consume P0's budget, so ordinary chat is always shed before
+     * safety evidence (D26).
+     */
+    readonly queueMax: Readonly<Record<RetentionPriority, number>>;
+    /**
+     * The share of one class a single session may occupy. This is what stops
+     * an attacker deliberately tripping a mild moderation rule to flood P1 and
+     * evict other people's evidence (D26).
+     */
+    readonly sessionQuotaPct: number;
+    readonly days: {
+      readonly conversation: number;
+      readonly reported: number;
+      readonly report: number;
+      readonly moderationEvent: number;
+      readonly enforcement: number;
+      readonly adminAudit: number;
+    };
+  };
+
+  readonly breaker: {
+    readonly failureThreshold: number;
+    readonly cooldownMs: number;
+    readonly cooldownMaxMs: number;
+    readonly drainBatchesPerSec: number;
+  };
+
+  readonly spool: {
+    readonly enabled: boolean;
+    readonly backend: 'file' | 'redis';
+    readonly dir: string;
+    readonly maxBytes: number;
+    readonly maxRecords: number;
+    readonly maxAgeSeconds: number;
+  };
+
   readonly janitor: {
     readonly batch: number;
   };
@@ -232,6 +287,12 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
     perSecond: num(env, `${prefix}_RATE_PER_SEC`, perSecond, 0.0001, 10_000),
     burst: int(env, `${prefix}_BURST`, burst, 1, 100_000),
   };
+}
+
+function spoolBackend(env: Env, key: string, fallback: 'file' | 'redis'): 'file' | 'redis' {
+  const raw = str(env, key, fallback);
+  if (raw === 'file' || raw === 'redis') return raw;
+  throw new ConfigError(`${key} must be file|redis, got ${JSON.stringify(raw)}`);
 }
 
 function moderationAction(env: Env, key: string, fallback: ConfigurableAction): ConfigurableAction {
@@ -370,6 +431,52 @@ export function loadConfig(env: Env = process.env): Config {
       hardBlockRules: knownRules(env, 'MODERATION_HARD_BLOCK_RULES'),
       detectContact: bool(env, 'MODERATION_DETECT_CONTACT', true),
       denyList: list(env, 'MODERATION_DENY_LIST', '').map((term) => term.toLowerCase()),
+    },
+
+    database: {
+      url: str(env, 'DATABASE_URL', 'postgres://karobakbak:karobakbak@localhost:5432/karobakbak'),
+      poolMax: int(env, 'DATABASE_POOL_MAX', 10, 1, 500),
+      connectTimeoutMs: int(env, 'DATABASE_CONNECT_TIMEOUT_MS', 5000, 100, 120_000),
+      statementTimeoutMs: int(env, 'DATABASE_STATEMENT_TIMEOUT_MS', 10_000, 100, 600_000),
+      ssl: bool(env, 'DATABASE_SSL', false),
+      requireSslInProduction: bool(env, 'DATABASE_REQUIRE_SSL_IN_PRODUCTION', true),
+    },
+
+    retention: {
+      enabled: bool(env, 'RETENTION_ENABLED', true),
+      batchSize: int(env, 'RETENTION_BATCH_SIZE', 100, 1, 10_000),
+      flushIntervalMs: int(env, 'RETENTION_FLUSH_INTERVAL_MS', 1000, 10, 600_000),
+      queueMax: {
+        p0: int(env, 'RETENTION_QUEUE_MAX_P0', 2000, 1, 1_000_000),
+        p1: int(env, 'RETENTION_QUEUE_MAX_P1', 5000, 1, 1_000_000),
+        p2: int(env, 'RETENTION_QUEUE_MAX_P2', 5000, 1, 1_000_000),
+        p3: int(env, 'RETENTION_QUEUE_MAX_P3', 20_000, 1, 1_000_000),
+      },
+      sessionQuotaPct: int(env, 'RETENTION_QUEUE_SESSION_QUOTA_PCT', 10, 1, 100),
+      days: {
+        conversation: int(env, 'CONVERSATION_RETENTION_DAYS', 30, 1, 3650),
+        reported: int(env, 'REPORTED_RETENTION_DAYS', 90, 1, 3650),
+        report: int(env, 'REPORT_RETENTION_DAYS', 90, 1, 3650),
+        moderationEvent: int(env, 'MODERATION_EVENT_RETENTION_DAYS', 90, 1, 3650),
+        enforcement: int(env, 'ENFORCEMENT_RETENTION_DAYS', 90, 1, 3650),
+        adminAudit: int(env, 'ADMIN_AUDIT_RETENTION_DAYS', 365, 1, 3650),
+      },
+    },
+
+    breaker: {
+      failureThreshold: int(env, 'BREAKER_FAILURE_THRESHOLD', 5, 1, 1000),
+      cooldownMs: int(env, 'BREAKER_COOLDOWN_MS', 5000, 10, 3_600_000),
+      cooldownMaxMs: int(env, 'BREAKER_COOLDOWN_MAX_MS', 120_000, 10, 86_400_000),
+      drainBatchesPerSec: num(env, 'BREAKER_DRAIN_BATCHES_PER_SEC', 5, 0.01, 10_000),
+    },
+
+    spool: {
+      enabled: bool(env, 'SPOOL_ENABLED', true),
+      backend: spoolBackend(env, 'SPOOL_BACKEND', 'file'),
+      dir: str(env, 'SPOOL_DIR', '/var/lib/karobakbak/spool'),
+      maxBytes: int(env, 'SPOOL_MAX_BYTES', 134_217_728, 1024, 68_719_476_736),
+      maxRecords: int(env, 'SPOOL_MAX_RECORDS', 50_000, 1, 100_000_000),
+      maxAgeSeconds: int(env, 'SPOOL_MAX_AGE_SECONDS', 86_400, 1, 31_536_000),
     },
 
     janitor: {
