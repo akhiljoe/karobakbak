@@ -8,7 +8,7 @@ describe('script registry', () => {
   it('covers every transition the design names', () => {
     expect(names.sort()).toEqual(
       [
-        'addBlock',
+        'blockPartner',
         'closeSession',
         'connAcquire',
         'connRateLimit',

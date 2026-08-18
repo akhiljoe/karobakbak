@@ -77,6 +77,18 @@ export type ResolvePartnerResult =
   | { status: 'duplicate'; matchId: string }
   | { status: 'dedupe_full'; matchId: string };
 
+export type BlockPartnerResult =
+  | {
+      status: 'blocked';
+      matchId: string;
+      partnerSessionId: string;
+      /** Dimensions actually written. 0 when the partner's session row is gone. */
+      recorded: number;
+      /** True when this call was the one that ended the match, and so owes the peer a notification (D6). */
+      endedByUs: boolean;
+    }
+  | { status: 'not_matched' };
+
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterMs: number;
@@ -461,26 +473,36 @@ export class RedisStore {
   /* --- safety ------------------------------------------------------------- */
 
   /**
-   * Records one direction of a block (D18). Preserves I12 together with the
-   * two-directional check inside `tryMatch`.
+   * Blocks the current partner and ends the match in one script (D18).
+   * Preserves I12 together with the two-directional check inside `tryMatch`,
+   * and I4/I6 through the shared match teardown.
+   *
+   * `recorded` is how many dimensions were actually written. It can be 0 with a
+   * successful block — a partner whose session row has already expired has no
+   * hashes left to record — and the caller must not report protection that was
+   * not stored.
    */
-  async addBlock(
-    blocker: { ipHash: string; clientHash: string },
-    blocked: { ipHash: string; clientHash: string },
-  ): Promise<number> {
+  async blockPartner(sessionId: string): Promise<BlockPartnerResult> {
     const reply = await this.runner.run(
-      'addBlock',
-      [this.keys.blocks(blocker.ipHash), this.keys.blocks(blocker.clientHash)],
+      'blockPartner',
+      [this.keys.userMatch(sessionId)],
       [
         this.keys.prefix,
-        blocked.ipHash,
-        blocked.clientHash,
+        sessionId,
         this.config.blocks.ttlSeconds,
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
+        this.sessionTtl,
       ],
     );
-    return num(reply, 1);
+    if (str(reply, 0) === 'NOT_MATCHED') return { status: 'not_matched' };
+    return {
+      status: 'blocked',
+      matchId: str(reply, 1),
+      partnerSessionId: str(reply, 2),
+      recorded: num(reply, 3),
+      endedByUs: num(reply, 4) === 1,
+    };
   }
 
   /* --- janitor ------------------------------------------------------------ */

@@ -577,32 +577,63 @@ return { n }
 /* -------------------------------------------------------------------------- */
 
 /**
- * Record a block on both dimensions (D18).
- * KEYS: blocks:{blockerIpHash}, blocks:{blockerClientHash}.
- * ARGV: prefix, blockedIpHash, blockedClientHash, ttlSeconds,
- *       ipDimension, clientDimension.
+ * Block the current partner and end the match, atomically.
+ * KEYS: user_match(sid).
+ * ARGV: prefix, sid, blockTtl, ipDimension, clientDimension, sessionTtl.
  *
- * One direction only: the blocker refuses the blocked. `tryMatch` checks both
- * directions, so the refusal is mutual in effect without being mutual in
- * storage — which matters, because storing it both ways would tell the blocked
- * user something happened.
+ * Resolving the partner and recording the block have to be one script. Doing
+ * them as two round trips leaves a window in which the match ends and a new one
+ * begins between the read and the write, so the user blocks somebody they were
+ * never talking to — rare, silent, and impossible to explain to whoever gets
+ * blocked (§10.16).
+ *
+ * The block is stored in one direction only: the blocker refuses the blocked.
+ * `tryMatch` checks both directions, so the refusal is mutual in effect without
+ * being mutual in storage — which matters, because a record written under the
+ * blocked user's key is a record they could observe.
+ *
+ * A partner whose session row has already expired cannot be blocked: their
+ * hashes are gone. The script reports what it actually recorded rather than
+ * claiming success, so the caller never tells a user they are protected when
+ * nothing was written.
  */
-const addBlock = define(
-  'addBlock',
-  2,
+const blockPartner = define(
+  'blockPartner',
+  1,
   6,
   `
-local ttl = tonumber(ARGV[4])
-local added = 0
-if ARGV[5] == '1' and ARGV[2] ~= '' then
-  added = added + redis.call('SADD', KEYS[1], ARGV[2])
-  redis.call('EXPIRE', KEYS[1], ttl)
+local sid = ARGV[2]
+local mid = redis.call('GET', KEYS[1])
+if not mid then return { 'NOT_MATCHED' } end
+local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
+if not m[1] then return { 'NOT_MATCHED' } end
+local partner
+if m[1] == sid then
+  partner = m[2]
+elseif m[2] == sid then
+  partner = m[1]
+else
+  return { 'NOT_MATCHED' }
 end
-if ARGV[6] == '1' and ARGV[3] ~= '' then
-  added = added + redis.call('SADD', KEYS[2], ARGV[3])
-  redis.call('EXPIRE', KEYS[2], ttl)
+
+local ttl = tonumber(ARGV[3])
+local mine = redis.call('HMGET', kSession(sid), 'ipHash', 'clientHash')
+local theirs = redis.call('HMGET', kSession(partner), 'ipHash', 'clientHash')
+local recorded = 0
+if ARGV[4] == '1' and mine[1] and theirs[1] then
+  redis.call('SADD', kBlocks(mine[1]), theirs[1])
+  redis.call('EXPIRE', kBlocks(mine[1]), ttl)
+  recorded = recorded + 1
 end
-return { 'OK', added }
+if ARGV[5] == '1' and mine[2] and theirs[2] then
+  redis.call('SADD', kBlocks(mine[2]), theirs[2])
+  redis.call('EXPIRE', kBlocks(mine[2]), ttl)
+  recorded = recorded + 1
+end
+
+local ended = 0
+if endMatchInline(mid, tonumber(ARGV[6])) then ended = 1 end
+return { 'BLOCKED', mid, partner, recorded, ended }
 `,
 );
 
@@ -796,7 +827,7 @@ export const SCRIPTS = {
   connRateLimit,
   connAcquire,
   connRelease,
-  addBlock,
+  blockPartner,
   janitorQueue,
   janitorMatches,
   janitorSessions,
