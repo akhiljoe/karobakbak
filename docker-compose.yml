@@ -90,10 +90,18 @@ services:
       # adding `http://<lan-ip>:8081`, which is a different origin.
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "${DATABASE_URL:-postgres://karobakbak:karobakbak@postgres:5432/karobakbak}"
+      # Fixed, not read from the environment. `postgres` is the compose service
+      # name — a fact about this topology, not a deployment variable. Reading it
+      # from `.env` looks flexible and is a trap: `.env.example` documents the
+      # values for running the backend *outside* Docker, so a `.env` copied from
+      # it points the container at `localhost:5432`, where nothing is listening.
+      # The failure is quiet — chat keeps working, because retention is
+      # write-behind, and only the spool filling up says anything is wrong.
+      # Production supplies its own URL through docker-compose.prod.yml.
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
       # Local only. Real deployments require TLS to the database and take their
       # credentials from secret management, never from a compose file (§8.1).
-      # Fixed, not read from the environment: the local PostgreSQL container
+      # Also fixed, for the same reason: the local PostgreSQL container
       # speaks no TLS, and a `.env` copied from `.env.example` carries
       # `DATABASE_REQUIRE_SSL_IN_PRODUCTION=true`, which would stop the stack
       # booting for a reason that has nothing to do with what is being worked
@@ -152,7 +160,7 @@ services:
       NODE_ENV: development
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
-      DATABASE_URL: "${DATABASE_URL:-postgres://karobakbak:karobakbak@postgres:5432/karobakbak}"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
       DATABASE_SSL: "false"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       REDIS_URL: "redis://redis:6379"
