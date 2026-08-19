@@ -1,17 +1,45 @@
-# The development stack (§20).
+# The stack. Development by default.
 #
-# Two backends behind nginx, deliberately. Production starts at **one** backend
-# (cost §26); the second exists here to prove cross-instance correctness on a
-# laptop — that matchmaking, delivery and cleanup work when two processes are
-# mutating the same Redis, rather than only appearing to because there is one.
-#
-#   docker compose up --build -d
+#   docker compose up --build -d      (or: npm run up)
 #   open http://localhost:8081
 #
-# Everything except the frontend and the dashboards is on the private network
-# with no published port. PostgreSQL in particular publishes nothing: it holds
-# plaintext conversation content, and reaching it should require being inside
-# the network (§8.1).
+# Production is the same file with an override that replaces every value that
+# should not be shared between a laptop and the internet:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ---------------------------------------------------------------------------
+# WHY DEVELOPMENT IS THE DEFAULT AND PRODUCTION IS THE OVERRIDE
+# ---------------------------------------------------------------------------
+# The other way round — a base that runs nothing until an environment is named
+# — is safer on paper and worse in practice: the command typed twenty times a
+# day becomes the long one, and the short one becomes a footgun people alias
+# their way around. So the default is the harmless environment, and reaching
+# production takes an explicit second file.
+#
+# The backstop is that `docker-compose.prod.yml` **requires** every secret with
+# no default. A deployment that forgets the override does not quietly run with
+# development credentials; it runs a stack whose salt is literally called
+# `local-development-salt-change-me`, against a database it will refuse to
+# reach without TLS.
+#
+# Two backend replicas here, deliberately. Production starts at **one**
+# (cost §26); the second exists on a laptop to prove cross-instance correctness
+# — that matchmaking, delivery and cleanup work when two processes mutate the
+# same Redis, rather than only appearing to because there is one. It has caught
+# real bugs, most recently retention losing records to a cross-instance write
+# order.
+#
+# They are **replicas of one service**, not two services. That is what makes
+# them `karobakbak-backend-1` and `karobakbak-backend-2` rather than
+# `backend-1` and `backend-2-1` — compose names containers
+# `<project>-<service>-<replica>`, so a service called `backend-2` produced a
+# container ending in two different numbers. Scaling is also the honest model:
+# nothing distinguishes one instance from another, every transition is a Lua
+# script precisely so that holds, and `--scale backend=N` is how it grows.
+#
+# Everything is tunable through the environment so a different profile needs an
+# env file, not another compose file. `.env.loadtest` is exactly that.
 
 services:
   frontend:
@@ -28,44 +56,71 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      backend-2:
-        condition: service_healthy
     restart: unless-stopped
 
-  backend: &backend
+  backend:
     build:
       context: ./backend
     environment:
-      NODE_ENV: production
+      # `development`, even though the image is a production build.
+      #
+      # This is not about which dependencies are installed — the image already
+      # ran `npm ci --omit=dev`. It is about `logger.ts`, which sets
+      # `strict: !isProduction`: outside production the message-content denylist
+      # **throws** on a forbidden field, and in production it quietly redacts.
+      #
+      # Redacting is right for a live server — a bad log line must not take down
+      # a service. Throwing is right here, because this is where new code is
+      # written and a leak of message content into a log line should be
+      # impossible to miss. Running the laptop as `production` disarms the
+      # loudest safety control in the one place it is most likely to fire.
+      #
+      # It also governs whether an empty origin allowlist is fatal (R9) and
+      # whether TLS to the database is enforced. `docker-compose.prod.yml` sets
+      # this back to `production`.
+      NODE_ENV: development
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       BACKEND_PORT: "8080"
       BACKEND_HOST: "0.0.0.0"
       # nginx is the only thing in front, so exactly one hop is trusted and the
       # client address is the rightmost entry of X-Forwarded-For (§6.5).
-      TRUST_PROXY_HOPS: "1"
-      # An empty allowlist is a startup failure in production (R9), so the
-      # origin the browser will actually send is named here.
-      #
-      # Overridable, because the default only admits a browser on this machine:
-      # testing from a phone or a second laptop means the browser sends
-      # `http://<lan-ip>:8081`, which is a different origin and is refused with
-      # 403. Set ALLOWED_ORIGINS in .env to the full comma-separated list —
-      # every entry must match scheme, host *and* port exactly.
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-1}"
+      # An empty allowlist is a startup failure in production (R9). Every entry
+      # must match scheme, host *and* port exactly — testing from a phone means
+      # adding `http://<lan-ip>:8081`, which is a different origin.
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
       REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
-      # Local only. Real deployments require TLS to the database and get their
+      DATABASE_URL: "${DATABASE_URL:-postgres://karobakbak:karobakbak@postgres:5432/karobakbak}"
+      # Local only. Real deployments require TLS to the database and take their
       # credentials from secret management, never from a compose file (§8.1).
+      # Fixed, not read from the environment: the local PostgreSQL container
+      # speaks no TLS, and a `.env` copied from `.env.example` carries
+      # `DATABASE_REQUIRE_SSL_IN_PRODUCTION=true`, which would stop the stack
+      # booting for a reason that has nothing to do with what is being worked
+      # on. Production sets both to `true` and means it.
       DATABASE_SSL: "false"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       IP_HASH_SALT: "${IP_HASH_SALT:-local-development-salt-change-me}"
       SPOOL_DIR: "/var/lib/karobakbak/spool"
       METRICS_ENABLED: "true"
+      # Per-IP abuse controls. Tunable because a load generator is a single
+      # address and is exactly the traffic shape these exist to refuse — see
+      # `.env.loadtest`. Production keeps the shipped defaults.
+      CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-60}"
+      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-40}"
     volumes:
-      # A named volume, never a bind mount to the host: the spool holds
-      # plaintext message bodies, and a developer's home directory is not where
-      # they belong (D28).
-      - spool:/var/lib/karobakbak/spool
+      # An **anonymous** volume, one per replica.
+      #
+      # Every instance needs its own spool: they are separate processes writing
+      # separate `spool.jsonl` files, and sharing one would interleave two
+      # writers into a single append-only file. A *named* volume cannot do this
+      # — replicas of a service share it — so the volume is anonymous and Docker
+      # gives each container its own.
+      #
+      # Never a bind mount to the host either way: the spool holds plaintext
+      # message bodies, and a developer's home directory is not where they
+      # belong (D28). The volume behind it is where encryption at rest belongs.
+      - /var/lib/karobakbak/spool
     depends_on:
       redis:
         condition: service_healthy
@@ -81,11 +136,10 @@ services:
     # No published port. The only way in is through nginx.
     expose:
       - "8080"
-
-  backend-2:
-    <<: *backend
-    volumes:
-      - spool2:/var/lib/karobakbak/spool
+    # Two on a laptop, one in production. `docker compose up -d --scale
+    # backend=N` overrides it for a one-off.
+    deploy:
+      replicas: 2
 
   # Migrations run once, as their own step, with credentials that are not the
   # application's (§8.1). The application role has no CREATE, so it could not
@@ -95,10 +149,11 @@ services:
       context: ./backend
     command: ["node", "-e", "require('./dist/storage/migrate');const{loadConfig}=require('./dist/config');const{createLoggerFromConfig}=require('./dist/logger');const{createDatabase}=require('./dist/storage/pool');const{migrate}=require('./dist/storage/migrate');const c=loadConfig(process.env);const l=createLoggerFromConfig(c);const db=createDatabase(c,l);migrate(db,l).then(r=>{l.info('migrations complete',{applied:r.applied.length,skipped:r.skipped.length});return db.close();}).then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message)+'\\n');process.exit(1);});"]
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
-      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      DATABASE_URL: "${DATABASE_URL:-postgres://karobakbak:karobakbak@postgres:5432/karobakbak}"
+      DATABASE_SSL: "false"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       REDIS_URL: "redis://redis:6379"
     depends_on:
@@ -120,41 +175,45 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
-    expose:
-      - "6379"
+    # Loopback only, so a client on this machine can look inside while nothing
+    # on the network can. Production removes this entirely.
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6381}:6379"
 
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: karobakbak
-      POSTGRES_PASSWORD: karobakbak
-      POSTGRES_DB: karobakbak
+      POSTGRES_USER: "${POSTGRES_USER:-karobakbak}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-karobakbak}"
+      POSTGRES_DB: "${POSTGRES_DB:-karobakbak}"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U karobakbak -d karobakbak"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 15
     restart: unless-stopped
-    # Publishes no host port on purpose: it holds plaintext conversation
-    # content, and direct exposure needs an explicit, recorded justification.
-    expose:
-      - "5432"
+    # Loopback only, for DBeaver and psql. It holds plaintext conversation
+    # content, so this is a development convenience and nothing more —
+    # production removes the mapping and the database is reached through a
+    # bastion or a tunnel. 5434 keeps clear of a PostgreSQL installed on the
+    # host (5432) and of the integration-test stack (5433).
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
 
   prometheus:
     image: prom/prometheus:v3.1.0
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}"
     volumes:
       - ./monitoring/prometheus:/etc/prometheus:ro
       - promdata:/prometheus
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     depends_on:
       - backend
-      - backend-2
     restart: unless-stopped
 
   grafana:
@@ -169,7 +228,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafanadata:/var/lib/grafana
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
     restart: unless-stopped
@@ -178,5 +237,3 @@ volumes:
   pgdata:
   promdata:
   grafanadata:
-  spool:
-  spool2:

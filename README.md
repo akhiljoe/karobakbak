@@ -46,17 +46,18 @@ Redis, PostgreSQL, a one-shot migration job, Prometheus and Grafana.
 | Grafana | http://localhost:3000 | `admin` / `admin` by default; dashboard **karobakbak — overview** |
 | Backends, Redis, PostgreSQL | — | private network, no published host port |
 
-Two backends is deliberate. Production starts at **one** (cost §26); the second
-exists here so cross-instance correctness is *exercised* on a laptop rather than
-asserted. Open two browser windows and they will usually land on different
-instances — nginx balances with `least_conn`, because these are long-lived
-sockets and what matters is how many each instance already holds.
+Two backend **replicas** is deliberate. Production starts at **one** (cost §26);
+the second exists here so cross-instance correctness is *exercised* on a laptop
+rather than asserted — it has caught real bugs. They are replicas of one
+service, so they are `karobakbak-backend-1` and `karobakbak-backend-2`, and
+`--scale backend=N` is how the count changes. nginx finds them through Docker's
+DNS and Prometheus discovers them the same way, so neither needs editing.
 
 To open a second, independent chat client, use a private window: the block token
 is a same-site cookie, so two normal tabs share one identity.
 
 ```bash
-docker compose logs -f backend backend-2   # or: npm run logs
+docker compose logs -f backend            # or: npm run logs
 docker compose down -v                     # or: npm run down  (drops volumes)
 ```
 
@@ -90,12 +91,13 @@ npm test                 # backend unit tests
 npm run test:frontend    # frontend unit tests
 npm run test:integration # needs redis:test:up — real Redis, Postgres, sockets
 npm run build            # tsc -> backend/dist, vite build -> frontend/dist
-npm run up / down / logs # the compose stack
-npm run up:inspect       # the stack, plus PostgreSQL and Redis on 127.0.0.1
+npm run up / down / logs # the development stack
 npm run psql             # a shell in the running database
 npm run redis-cli        # a shell in the running Redis
 npm run loadtest         # k6 against an isolated load-test stack
 npm run loadtest:down    # destroy that stack, volumes and all
+npm run prod:config      # resolve the production config without starting it
+npm run prod:up          # the production stack (needs .env.prod)
 
 # integration dependencies
 npm run redis:test:up    # Redis :6380 and PostgreSQL :5433, both tmpfs-backed
@@ -109,18 +111,15 @@ generated: edit the backend one, then run `node scripts/verify-protocol.mjs
 
 ### Looking inside a running stack
 
-`docker-compose.yml` publishes no host port for PostgreSQL or Redis on purpose
-(§8.1) — PostgreSQL holds plaintext conversation content. To inspect them with
-a client, ask for the opt-in override:
-
-```bash
-npm run up:inspect        # adds 127.0.0.1:5434 (PostgreSQL) and 127.0.0.1:6381 (Redis)
-```
+Development publishes PostgreSQL and Redis on **loopback only** — reachable
+from this machine, from nothing on the network. Production publishes neither
+(§8.1): PostgreSQL holds plaintext conversation content, and reaching it should
+mean coming through a bastion or a tunnel.
 
 DBeaver, or any PostgreSQL client: host `localhost`, port **5434**, database
-`karobakbak`, user `karobakbak`, password `karobakbak`. Both are bound to
-loopback rather than every interface, which matters on a laptop that is also
-serving the app to a phone on the same network.
+`karobakbak`, user `karobakbak`, password `karobakbak`. Port 5434 keeps clear of
+a PostgreSQL installed on the host (5432) and of the integration-test stack
+(5433).
 
 Redis holds only live state — sessions, the queue, rate-limit buckets — and has
 persistence off (D12), so it is small and empties itself. `npm run redis-cli --
@@ -129,9 +128,11 @@ happen.
 
 ### Load testing
 
-`npm run loadtest` builds and runs a **separate stack** (compose project
-`karobakbak-loadtest`, port 8090, its own volumes) and points k6 at it. Its
-traffic never reaches the development database.
+`npm run loadtest` runs the **same stack under a different compose project**
+(`karobakbak-loadtest`, port 8090), which gives it its own volumes and therefore
+its own database. Its traffic never reaches the development one. The differences
+are a handful of environment variables in `.env.loadtest`, not another compose
+file.
 
 Retention stays enabled there deliberately: the write-behind path is where load
 actually hurts, and a run that skipped it would prove much less. The per-IP
@@ -305,7 +306,8 @@ quickly, which is its job. Resize the run, or raise the ceiling on the target
 stack for the test. See the sizing note under [Verification](#verification).
 
 **Grafana panels say "no data".** Check Prometheus → Status → Targets: both
-`backend:8080` and `backend-2:8080` must be `UP`. Grafana's datasource is pinned
+one target per backend replica must be `UP` (Prometheus finds them by DNS, so
+the list follows `--scale`). Grafana's datasource is pinned
 to uid `karobakbak-prometheus` and every panel references it by that uid.
 
 **Integration tests fail to connect.** `npm run redis:test:up` first. They use

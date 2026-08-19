@@ -1,6 +1,6 @@
-# Scrapes both backends directly on the private network, not through nginx.
-# nginx returns 404 for /metrics on purpose: the scrape is for this service,
-# not for the internet.
+# Scrapes every backend replica directly on the private network, not through
+# nginx. nginx returns 404 for /metrics on purpose: the scrape is for this
+# service, not for the internet.
 
 global:
   scrape_interval: 15s
@@ -12,10 +12,28 @@ rule_files:
 scrape_configs:
   - job_name: karobakbak-backend
     metrics_path: /metrics
-    static_configs:
-      # Both instances. Every series already carries an `instance` label from
-      # the application, so a metric can be read per-process or summed.
-      - targets: ["backend:8080", "backend-2:8080"]
+    # ---------------------------------------------------------------------
+    # DNS DISCOVERY, NOT A STATIC LIST
+    # ---------------------------------------------------------------------
+    # The backends are replicas of one compose service, so they share the name
+    # `backend` and Docker's embedded DNS returns an A record per container. A
+    # static target of `backend:8080` would resolve to whichever replica the DNS
+    # round-robin happened to answer with and scrape only that one — the other
+    # instance would silently contribute nothing, which is the worst kind of
+    # monitoring gap: the dashboard looks fine and is describing half the
+    # system.
+    #
+    # DNS discovery follows `--scale backend=N` with no config change, which is
+    # the point of scaling rather than hand-listing instances.
+    #
+    # Every series already carries an `instance` label from the application
+    # itself, so a metric can be read per-process or summed regardless of what
+    # the target list looks like.
+    dns_sd_configs:
+      - names: ["backend"]
+        type: A
+        port: 8080
+        refresh_interval: 15s
 
   - job_name: prometheus
     static_configs:

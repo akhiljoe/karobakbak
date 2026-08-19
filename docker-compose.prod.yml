@@ -1,0 +1,143 @@
+# Production overrides.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   (or: npm run prod:up)
+#
+# Naming `-f` explicitly is what stops development defaults leaking in.
+#
+# ---------------------------------------------------------------------------
+# EVERY SECRET IS REQUIRED, NONE HAS A DEFAULT
+# ---------------------------------------------------------------------------
+# `${VAR:?message}` makes compose refuse to start when a variable is unset,
+# with that message. This is the whole safety property of the file: a
+# deployment that has not been configured fails loudly at `up`, rather than
+# starting with the salt named `local-development-salt-change-me` and hashing
+# every user's IP with a value published on GitHub.
+#
+# Fill these in from `.env.prod.example`. Keep the real file off the machine
+# where possible — a secret manager injecting environment variables is better
+# than a file, and both are better than this repository.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS FILE DOES NOT DO
+# ---------------------------------------------------------------------------
+# * **No TLS.** Something must terminate HTTPS in front of `frontend`, which
+#   publishes only to loopback here. On a single host that is Caddy, nginx or
+#   Traefik on the host with a Let's Encrypt certificate, proxying to
+#   127.0.0.1:8080. On a managed platform it is the platform's load balancer.
+#   Choosing it is the deployment decision this file deliberately leaves open.
+#   Whatever does it, `TRUST_PROXY_HOPS` must equal the number of proxies in
+#   front, or clients can forge their own address (§6.5).
+# * **No backups.** `BackupMonitor` reports staleness and the `BackupsStale`
+#   alert fires, but nothing here *takes* a backup. Something must, and it must
+#   report success to the application, or the alert is permanently red.
+# * **No secret manager.** Variables are read from the environment; where they
+#   come from is the platform's business.
+#
+# ---------------------------------------------------------------------------
+# ONE BACKEND
+# ---------------------------------------------------------------------------
+# Production starts at one (cost §26) and scales on measured resource pressure,
+# not on user count. The second replica on a laptop exists to prove
+# cross-instance correctness; it is not a capacity decision.
+#
+# Scaling up is `--scale backend=N` — every matchmaking transition is a single
+# Lua script precisely so that works, and Prometheus discovers replicas by DNS
+# rather than a hand-written target list.
+
+services:
+  frontend:
+    # Loopback only. The TLS terminator in front is the only thing that should
+    # be able to reach this, and it lives on the same host.
+    ports: !override
+      - "127.0.0.1:${FRONTEND_BIND_PORT:-8080}:80"
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  backend:
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      BACKEND_PORT: "8080"
+      BACKEND_HOST: "0.0.0.0"
+      # However many proxies actually sit in front. Too high and a client can
+      # forge its own address in X-Forwarded-For, which defeats rate limiting
+      # and blocks at once.
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:?how many proxies sit in front of this}"
+      # The public origin, exactly: scheme, host and port. An empty allowlist
+      # is a startup failure in production (R9).
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin, e.g. https://karobakbak.com}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      DATABASE_URL: "${DATABASE_URL:?postgres connection string, from secret management}"
+      DATABASE_SSL: "true"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
+      # Salts every IP hash. Changing it later invalidates every existing
+      # IP-dimension block, so pick it once and keep it secret.
+      IP_HASH_SALT: "${IP_HASH_SALT:?a long random value, kept secret}"
+      SPOOL_DIR: "/var/lib/karobakbak/spool"
+      METRICS_ENABLED: "true"
+      # The shipped defaults. Not tunable here on purpose: these are abuse
+      # controls, and the only reason to raise them is a load test, which runs
+      # against its own stack.
+      CONN_RATE_LIMIT: "60"
+      MAX_CONNECTIONS_PER_IP: "40"
+    logging: *logging
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          # Matches the 384 MB heap the image pins, with room for the runtime.
+          memory: 640M
+
+  migrate:
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin}"
+      # Deliberately a *different* credential from the application's: this role
+      # may CREATE, and the application's may not (§8.1). Point it at the same
+      # database with a migration user.
+      DATABASE_URL: "${MIGRATION_DATABASE_URL:?a migration credential, not the application's}"
+      DATABASE_SSL: "true"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+    logging: *logging
+
+  redis:
+    # Nothing published. Reaching Redis means being inside the network.
+    ports: !reset []
+    logging: *logging
+
+  postgres:
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?database superuser name}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?database superuser password}"
+      POSTGRES_DB: "${POSTGRES_DB:-karobakbak}"
+    # Nothing published: it holds plaintext conversation content, and reaching
+    # it should require being inside the network or coming through a bastion
+    # (§8.1). The volume behind it is where encryption at rest belongs.
+    ports: !reset []
+    logging: *logging
+
+  prometheus:
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}"
+    ports: !reset []
+    logging: *logging
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:?grafana admin user}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?grafana admin password}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-http://localhost:3000}"
+    # Loopback only. Reach it over an SSH tunnel rather than publishing a
+    # dashboard with an admin login to the internet.
+    ports: !override
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    logging: *logging

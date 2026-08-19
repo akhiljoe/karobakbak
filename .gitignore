@@ -12,7 +12,14 @@ build/
 .env
 .env.local
 .env.*.local
+# Real production secrets. `.env.prod.example` is the template and is tracked;
+# the filled-in file must never be.
+.env.prod
 !.env.example
+!.env.prod.example
+# Tracked on purpose: it holds no secrets, only the port and abuse-limit
+# overrides a load run needs.
+!.env.loadtest
 
 # logs
 *.log
