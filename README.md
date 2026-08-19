@@ -238,9 +238,17 @@ restarted. Persistence is off on purpose (D12), so all live state is gone and
 clients reconnect into new sessions. There is no session resumption by design;
 reconnect always creates a *new* session.
 
-**Two tabs never match each other.** Expected: they share a block token and an
-IP, and blocks are checked in both dimensions. Use a private window. If they
-still do not match, check `chat_queue_depth`.
+**Two tabs on one machine do match each other.** Sharing an IP and a block
+token does not prevent pairing — only an actual block record does. This is the
+easiest way to try the app. If they do not pair, check `chat_queue_depth`.
+
+**...but do not test the block button with two tabs in the same browser.** A
+block is recorded against the salted IP hash *and* the client-token hash (D18),
+and two tabs in one browser share both — so blocking your own partner adds your
+own hashes to your own block set, and that browser will then refuse to match
+itself. Harmless, and it clears when `BLOCK_TTL_SECONDS` expires or the Redis
+state is flushed, but it looks like matchmaking has broken. Test blocking from
+two genuinely different devices.
 
 **`DUPLICATE_MESSAGE` on a retry.** Working as intended — `id` is required on
 `message` and deduplicated per match (I14, §10.17).
@@ -333,13 +341,15 @@ karobakbak/
 │   │   ├── metrics/         registry
 │   │   └── util/            ids, time
 │   └── tests/               unit (hermetic) + integration (real everything)
-├── frontend/                React + TypeScript + Vite, native WebSocket
+├── frontend/                React + TypeScript + Vite + Tailwind, native WebSocket
 │   └── src/
 │       ├── protocol/        byte-identical COPY of the backend types
+│       ├── state/           the UI state machine (a pure reducer)
+│       ├── hooks/           useChat — socket, reconnect, typing throttle
+│       ├── view/            ChatState -> layout, as pure functions
 │       ├── components/      presentational only
-│       ├── state/           the UI state machine
-│       ├── hooks/           useChat — client + reconnect
-│       └── ads/             slot provider (no-op)
+│       ├── ads/             slot provider (no-op)
+│       └── features.ts      flags for surface the server cannot back yet
 ├── load-test/               k6 WebSocket load test
 ├── monitoring/              Prometheus scrape config + alerts, Grafana
 ├── scripts/                 protocol drift checker

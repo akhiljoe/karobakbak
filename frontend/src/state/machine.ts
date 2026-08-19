@@ -61,6 +61,8 @@ export interface ChatState {
   readonly limits: ServerLimits | null;
   readonly features: ServerFeatures;
   readonly matchId: string | null;
+  /** When the server said this match began. Display only; it drives the timer. */
+  readonly matchStartedAt: string | null;
   readonly you: Identity | null;
   readonly partner: Identity | null;
   readonly messages: readonly ChatMessage[];
@@ -91,6 +93,7 @@ export const initialState: ChatState = {
   limits: null,
   features: NO_FEATURES,
   matchId: null,
+  matchStartedAt: null,
   you: null,
   partner: null,
   messages: [],
@@ -128,6 +131,7 @@ function clearedConversation(state: ChatState): ChatState {
   return {
     ...state,
     matchId: null,
+    matchStartedAt: null,
     you: null,
     partner: null,
     messages: [],
@@ -182,6 +186,7 @@ export function reduce(state: ChatState, action: Action): ChatState {
         ...clearedConversation(state),
         screen: 'chatting',
         matchId: action.payload.matchId,
+        matchStartedAt: action.payload.startedAt,
         you: action.payload.you,
         partner: action.payload.partner,
         endReason: null,

@@ -1,0 +1,114 @@
+/*
+ * Global styles.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE FONTS ARE NOT LOADED FROM GOOGLE
+ * ---------------------------------------------------------------------------
+ * The design this is built from imported its typefaces from
+ * `fonts.googleapis.com`. Two reasons that is not done here:
+ *
+ *  1. The Content-Security-Policy is `font-src 'self'` (see `index.html` and
+ *     `security-headers.conf`). A remote font is simply blocked, and widening
+ *     the policy to admit a CDN weakens the strongest control this client has.
+ *  2. This is an anonymity product. A remote font request tells a third party
+ *     the visitor's IP address on every single page load, which is exactly the
+ *     kind of quiet correlation handle the rest of the system works to avoid.
+ *
+ * `@fontsource/*` ships the same faces as npm packages, so they are bundled
+ * and served from this origin. Only the weights actually used are imported —
+ * each one is a file the visitor has to download.
+ */
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/fraunces/400.css';
+@import '@fontsource/fraunces/500.css';
+@import '@fontsource/fraunces/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Ambient warm gradient backdrop — a dim, cosy room rather than a form. */
+  #root {
+    @apply min-h-[100dvh];
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(245, 158, 11, 0.08), transparent 60%),
+      radial-gradient(100% 60% at 50% 110%, rgba(90, 146, 81, 0.05), transparent 60%),
+      #13100b;
+  }
+
+  ::selection {
+    background: rgba(245, 158, 11, 0.3);
+    color: #fff8eb;
+  }
+
+  :focus-visible {
+    outline: 2px solid theme('colors.amber.400');
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(138, 125, 104, 0.4) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(138, 125, 104, 0.35);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(138, 125, 104, 0.55);
+  }
+}
+
+@layer utilities {
+  .safe-pt {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .safe-pb {
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

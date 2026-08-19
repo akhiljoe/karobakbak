@@ -1,175 +1,132 @@
 /**
  * The application shell.
  *
- * One screen at a time, chosen by the state machine. The controls a user sees
+ * One layout at a time, chosen by the state machine. The controls a user sees
  * are gated on `features` from the `connected` frame, so this build never
  * offers a button for something the server has turned off — a client that
  * discovers a capability through a rejection is a client that has to explain
  * the rejection.
+ *
+ * Everything this file knows about the session comes from `useChat`. It holds
+ * only the state that is genuinely about the interface: which sheet is open.
  */
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { AdSlot } from './components/AdSlot';
-import { Composer } from './components/Composer';
-import { MessageList } from './components/MessageList';
+import { AppHeader } from './components/AppHeader';
+import { AuthModal } from './components/AuthModal';
+import { ChatShell } from './components/ChatShell';
+import { FiltersModal } from './components/FiltersModal';
+import { LandingScreen } from './components/LandingScreen';
 import { ReportDialog } from './components/ReportDialog';
+import { SafetySheet } from './components/SafetySheet';
+import { Toast } from './components/Toast';
+import { ACCOUNTS_ENABLED } from './features';
 import { useChat } from './hooks/useChat';
 import type { ReportCategory } from './protocol/types';
+import { connectionOf, phaseOf } from './view/presentation';
 
 export function App(): JSX.Element {
   const chat = useChat();
   const { state } = chat;
+
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
 
+  const phase = phaseOf(state.screen);
+  const connection = connectionOf(state.screen);
+
+  // Any sheet about the current conversation is meaningless once it ends.
+  useEffect(() => {
+    if (state.screen !== 'chatting') {
+      setSafetyOpen(false);
+      setReporting(false);
+    }
+  }, [state.screen]);
+
+  // Enter starts a search from the landing screen; Escape skips a conversation.
+  // Both are ignored while the user is typing into something.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (phase === 'idle' && state.screen === 'idle' && event.key === 'Enter') {
+        event.preventDefault();
+        chat.start();
+      }
+      if (phase === 'chatting' && event.key === 'Escape') chat.skip();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chat, phase, state.screen]);
+
+  const submitReport = useCallback(
+    (category: ReportCategory, note: string) => {
+      chat.report(category, note);
+      setReporting(false);
+    },
+    [chat],
+  );
+
+  const showShell = phase === 'searching' || phase === 'chatting';
+
   return (
-    <div className="app">
-      <header className="header">
-        <h1 className="brand">karobakbak</h1>
-        {state.features.presence && state.presence ? (
-          <p className="presence" title="Counts are approximate">
-            <span className="presence__dot" aria-hidden="true" />
-            {state.presence.online.toLocaleString()} here · {state.presence.conversations.toLocaleString()} talking
-            <span className="presence__hint"> (approx.)</span>
-          </p>
-        ) : null}
-      </header>
+    <div className="flex min-h-[100dvh] flex-col">
+      <AppHeader
+        state={state}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onOpenAuth={() => setAuthOpen(true)}
+      />
 
-      {state.notice ? (
-        <p className="notice" role="status">
-          {state.notice}
-          <button className="notice__close" onClick={chat.dismissNotice} aria-label="Dismiss">
-            ×
-          </button>
-        </p>
-      ) : null}
-
-      <main className="main">
-        {state.screen === 'connecting' ? <Connecting /> : null}
-        {state.screen === 'disconnected' ? <Connecting reconnecting /> : null}
-
-        {state.screen === 'idle' ? (
-          <section className="panel">
-            <h2 className="panel__title">Talk to a stranger</h2>
-            <p className="panel__lead">
-              Text only. No account, no profile, no history you carry around. Either of you can leave
-              at any moment.
-            </p>
-            <button className="button button--primary" onClick={chat.start}>
-              Start chatting
-            </button>
-            <AdSlot slot="landing" />
-          </section>
-        ) : null}
-
-        {state.screen === 'searching' ? (
-          <section className="panel">
-            <h2 className="panel__title">Finding someone…</h2>
-            <p className="panel__lead">
-              {state.waiting > 1
-                ? `${state.waiting.toLocaleString()} people are looking right now.`
-                : 'You are first in the queue. This usually takes a moment.'}
-            </p>
-            <button className="button" onClick={chat.stop}>
-              Cancel
-            </button>
-          </section>
-        ) : null}
-
-        {state.screen === 'ended' ? (
-          <section className="panel">
-            <h2 className="panel__title">
-              {state.endReason === 'you_blocked' ? 'Blocked' : 'Conversation ended'}
-            </h2>
-            <p className="panel__lead">
-              {state.endReason === 'you_blocked'
-                ? 'You will not be matched with them again.'
-                : 'They are gone. There is no way back to that conversation.'}
-            </p>
-            <button className="button button--primary" onClick={chat.start}>
-              Find someone else
-            </button>
-            <AdSlot slot="between-chats" />
-          </section>
-        ) : null}
-
-        {state.screen === 'chatting' && state.you && state.partner ? (
-          <section className="chat">
-            <div className="chat__bar">
-              <span className="chat__partner" style={{ color: state.partner.colour }}>
-                {state.partner.nickname}
-              </span>
-              <div className="chat__actions">
-                {state.features.report ? (
-                  <button
-                    className="button button--quiet"
-                    onClick={() => setReporting(true)}
-                    disabled={state.reportSent}
-                  >
-                    {state.reportSent ? 'Reported' : 'Report'}
-                  </button>
-                ) : null}
-                {state.features.block ? (
-                  <button className="button button--quiet" onClick={chat.block}>
-                    Block
-                  </button>
-                ) : null}
-                <button className="button" onClick={chat.skip}>
-                  Next stranger
-                </button>
-              </div>
-            </div>
-
-            <MessageList
-              messages={state.messages}
-              youNickname={state.you.nickname}
-              partnerNickname={state.partner.nickname}
-              youColour={state.you.colour}
-              partnerColour={state.partner.colour}
-            />
-
-            <p className="typing" aria-live="polite">
-              {state.partnerTyping ? `${state.partner.nickname} is typing…` : ' '}
-            </p>
-
-            <Composer
-              maxLength={state.limits?.maxMessageLength ?? 500}
+      <main className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          {showShell ? (
+            <ChatShell
+              state={state}
+              connection={connection}
+              searching={phase === 'searching'}
               onSend={chat.send}
               onTyping={chat.typing}
+              onSkip={chat.skip}
+              onCancelSearch={chat.stop}
+              onOpenSafety={() => setSafetyOpen(true)}
+              onBack={chat.stop}
             />
-          </section>
-        ) : null}
+          ) : (
+            <LandingScreen state={state} ended={phase === 'ended'} onStart={chat.start} />
+          )}
+        </div>
       </main>
 
-      <footer className="footer">
-        <p>
-          Conversations are kept for a limited period so abuse can be investigated, then deleted.
-          They are never shown back to you.
-        </p>
-      </footer>
+      <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
 
-      {reporting ? (
+      {/*
+        Mounted only when accounts are enabled, which they are not. The modal
+        guards itself as well, but a credential form that is never rendered is
+        the stronger of the two controls.
+      */}
+      {ACCOUNTS_ENABLED && <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />}
+
+      <SafetySheet
+        open={safetyOpen}
+        reportAvailable={state.features.report}
+        blockAvailable={state.features.block}
+        reportSent={state.reportSent}
+        onClose={() => setSafetyOpen(false)}
+        onReport={() => setReporting(true)}
+        onBlock={chat.block}
+      />
+
+      {reporting && (
         <ReportDialog
           maxNoteLength={state.limits?.maxReportNoteLength ?? 500}
           onCancel={() => setReporting(false)}
-          onSubmit={(category: ReportCategory, note: string) => {
-            chat.report(category, note);
-            setReporting(false);
-          }}
+          onSubmit={submitReport}
         />
-      ) : null}
-    </div>
-  );
-}
+      )}
 
-function Connecting({ reconnecting = false }: { reconnecting?: boolean }): JSX.Element {
-  return (
-    <section className="panel">
-      <h2 className="panel__title">{reconnecting ? 'Reconnecting…' : 'Connecting…'}</h2>
-      <p className="panel__lead">
-        {reconnecting
-          ? 'A dropped connection ends the conversation — there is no way to resume one.'
-          : 'One moment.'}
-      </p>
-    </section>
+      <Toast message={state.notice} onDismiss={chat.dismissNotice} />
+    </div>
   );
 }

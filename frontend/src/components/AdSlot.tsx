@@ -4,7 +4,8 @@
  * Renders nothing at all when ads are disabled or the provider declines, which
  * is the normal case. It is deliberately never placed inside the conversation:
  * the ads document requires that advertising not interrupt the chat, and a slot
- * that exists only on the landing and between-chats screens cannot.
+ * that exists only on the landing, between-chats and desktop-rail positions
+ * cannot.
  */
 import { adsEnabled, providerFrom, type AdPlacement } from '../ads/provider';
 
@@ -16,9 +17,12 @@ export function AdSlot({ slot }: AdPlacement): JSX.Element | null {
   if (!creative) return null;
 
   return (
-    <aside className="ad" aria-label="Sponsored">
-      <p className="ad__headline">{creative.headline}</p>
-      <p className="ad__body">{creative.body}</p>
+    <aside
+      className="rounded-2xl border border-ink-800 bg-ink-900/40 p-4 text-left"
+      aria-label="Sponsored"
+    >
+      <p className="text-sm font-semibold text-ink-100">{creative.headline}</p>
+      <p className="mt-1 text-xs text-ink-400">{creative.body}</p>
     </aside>
   );
 }
