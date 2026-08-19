@@ -94,6 +94,7 @@ npm run build            # tsc -> backend/dist, vite build -> frontend/dist
 npm run up / down / logs # the development stack
 npm run psql             # a shell in the running database
 npm run redis-cli        # a shell in the running Redis
+npm run unblock          # clear every block, so testing can continue
 npm run loadtest         # k6 against an isolated load-test stack
 npm run loadtest:down    # destroy that stack, volumes and all
 npm run prod:config      # resolve the production config without starting it
@@ -283,13 +284,24 @@ reconnect always creates a *new* session.
 token does not prevent pairing — only an actual block record does. This is the
 easiest way to try the app. If they do not pair, check `chat_queue_depth`.
 
-**...but do not test the block button with two tabs in the same browser.** A
-block is recorded against the salted IP hash *and* the client-token hash (D18),
-and two tabs in one browser share both — so blocking your own partner adds your
-own hashes to your own block set, and that browser will then refuse to match
-itself. Harmless, and it clears when `BLOCK_TTL_SECONDS` expires or the Redis
-state is flushed, but it looks like matchmaking has broken. Test blocking from
-two genuinely different devices.
+**After testing Block, you cannot match any more.** Working as designed, and
+the fix is one command:
+
+```bash
+npm run unblock          # clears every block in Redis (development only)
+```
+
+A block is recorded against the salted IP hash **and** the client-token hash,
+in both directions (D18), and it lasts `BLOCK_TTL_SECONDS` — thirty days by
+default. Two tabs in one browser share both hashes, so blocking your own
+partner puts your own hashes in your own block set and that browser then
+refuses to match itself. Two devices on one network share the IP hash, so
+blocking between them stops those two matching for a month.
+
+Neither is a bug, and both make testing miserable without the escape hatch
+above. The Redis keys are the matching filter; the `blocks` table in PostgreSQL
+is the record and is not consulted during matchmaking, so clearing Redis
+restores matching without rewriting history.
 
 **`DUPLICATE_MESSAGE` on a retry.** Working as intended — `id` is required on
 `message` and deduplicated per match (I14, §10.17).

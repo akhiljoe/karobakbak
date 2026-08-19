@@ -31,6 +31,7 @@
     "prod:config": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml config",
     "prod:up": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d",
     "prod:down": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml down",
-    "prod:logs": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs -f backend"
+    "prod:logs": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs -f backend",
+    "unblock": "docker compose exec -T redis redis-cli EVAL \"local n=0 for _,k in ipairs(redis.call('KEYS','chat:blocks:*')) do redis.call('DEL',k) n=n+1 end return n\" 0"
   }
 }
