@@ -4,8 +4,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json vite.config.ts index.html ./
+# Every file the build reads. `tailwind.config.js` and `postcss.config.js` are
+# not optional extras: without them PostCSS never runs, Tailwind emits no
+# utilities at all, and the image ships a stylesheet containing only font
+# declarations — a page that serves 200 and renders as unstyled HTML.
+COPY tsconfig.json vite.config.ts index.html tailwind.config.js postcss.config.js ./
 COPY src ./src
+COPY public ./public
 
 # Build-time values. Vite inlines them into the bundle, so they are public by
 # construction — nothing secret may be passed this way.
