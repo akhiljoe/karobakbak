@@ -17,6 +17,7 @@ import { DeletionWorker, type DeletionLock } from '../../src/storage/deletion';
 import { LegalHolds } from '../../src/storage/holds';
 import { BackupMonitor } from '../../src/storage/backup';
 import { createNullLogger } from '../../src/logger';
+import type { QueuedRecord } from '../../src/storage/records';
 
 let ctx: PostgresContext;
 let holds: LegalHolds;
@@ -430,6 +431,128 @@ describe('report-triggered extension survives a deletion pass', () => {
     // The report extended it to the reported period, and the worker honours
     // the stamp rather than recomputing anything (D17).
     expect(await ctx.count('conversations')).toBe(1);
+  });
+});
+
+describe('§10.19 — the deletion worker racing a report', () => {
+  /** A conversation whose ordinary deadline has already passed. */
+  async function expiredConversation(): Promise<string> {
+    const conversationId = newMatchId();
+    await ctx.repositories.insertConversations(
+      ctx.db,
+      [
+        {
+          kind: 'conversation_started',
+          conversationId,
+          sessionA: 's_a',
+          sessionB: 's_b',
+          segment: 'default',
+          startedAt: new Date().toISOString(),
+        },
+      ],
+      Date.now() - ctx.config.retention.days.conversation * 24 * 3600 * 1000 - 1000,
+    );
+    return conversationId;
+  }
+
+  function reportFor(conversationId: string): QueuedRecord {
+    return {
+      priority: 'p0',
+      sessionId: 's_a',
+      enqueuedAtMs: Date.now(),
+      record: {
+        kind: 'report',
+        reportId: newMessageId(),
+        conversationId,
+        reporterSessionId: 's_a',
+        reportedSessionId: 's_b',
+        category: 'threats',
+        note: null,
+        createdAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  it('never leaves a report stored against a conversation the pass removed', async () => {
+    for (let round = 0; round < 10; round += 1) {
+      const conversationId = await expiredConversation();
+
+      // The two orderings §10.19 argues about, fired at each other rather than
+      // reasoned about. The report's extension is in the same transaction as
+      // its insert, so there is no instant where the report is committed and
+      // the conversation is still selectable for deletion.
+      const [written] = await Promise.allSettled([
+        ctx.repositories.writeBatch(ctx.db, [reportFor(conversationId)]),
+        worker(new FakeLock()).runUntilDrained(),
+      ]);
+
+      const conversations = await ctx.count('conversations');
+      const reports = await ctx.count('reports');
+
+      if (written.status === 'rejected') {
+        // The pass committed first: the insert lost its foreign key. That is a
+        // rejection, not an outage — the conversation is gone and nothing
+        // references it.
+        expect(conversations).toBe(0);
+        expect(reports).toBe(0);
+      } else {
+        // The report committed, so the conversation it references must still
+        // be here, and re-protected rather than merely lucky.
+        expect(reports).toBe(1);
+        expect(conversations).toBe(1);
+        const { rows } = await ctx.db.query<{ expired: boolean }>(
+          'select retention_expires_at < now() as expired from conversations where conversation_id = $1',
+          [conversationId],
+        );
+        expect(rows[0]?.expired).toBe(false);
+      }
+
+      await ctx.db.query('truncate conversations, messages, reports cascade');
+    }
+  });
+
+  it('rejects a report for a conversation the pass already collected', async () => {
+    const conversationId = await expiredConversation();
+    expect((await worker(new FakeLock()).runUntilDrained()).conversations).toBe(1);
+
+    // The other ordering, forced rather than waited for. The foreign key
+    // refuses the report: a rejection proves the database is available, so the
+    // pipeline discards the record instead of opening the breaker (§14.5).
+    await expect(ctx.repositories.writeBatch(ctx.db, [reportFor(conversationId)])).rejects.toMatchObject(
+      { code: '23503' },
+    );
+    expect(await ctx.count('reports')).toBe(0);
+    expect(await ctx.count('conversations')).toBe(0);
+  });
+
+  it('re-protects before the next pass, not eventually', async () => {
+    const conversationId = await expiredConversation();
+
+    // Pass one is prevented from running by the lock, standing in for another
+    // instance holding it — the conversation is past its deadline and simply
+    // waiting to be collected.
+    const held = new FakeLock();
+    held.granted = false;
+    expect(await worker(held).runPass()).toMatchObject({ ran: false });
+
+    await ctx.repositories.writeBatch(ctx.db, [reportFor(conversationId)]);
+
+    // The very next pass, with the lock free, must already see the extension.
+    const deleted = await worker(new FakeLock()).runUntilDrained();
+    expect(deleted.conversations).toBe(0);
+    expect(await ctx.count('conversations')).toBe(1);
+    expect(await ctx.count('reports')).toBe(1);
+  });
+
+  it('is idempotent: repeated passes over the same protected row change nothing', async () => {
+    const conversationId = await expiredConversation();
+    await ctx.repositories.writeBatch(ctx.db, [reportFor(conversationId)]);
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      await worker(new FakeLock()).runUntilDrained();
+    }
+    expect(await ctx.count('conversations')).toBe(1);
+    expect(await ctx.count('reports')).toBe(1);
   });
 });
 

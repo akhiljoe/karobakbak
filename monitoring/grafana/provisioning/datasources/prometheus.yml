@@ -2,6 +2,10 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    # Pinned, and referenced by that uid from every panel in the dashboard.
+    # Without it a provisioned dashboard resolves to whatever Grafana happens to
+    # consider default, which is not a property this repository controls.
+    uid: karobakbak-prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090

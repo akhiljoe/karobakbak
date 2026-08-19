@@ -20,6 +20,27 @@
  * do with the code. What is thresholded is what the server actually controls:
  * whether connections are accepted, whether messages are acknowledged, and how
  * long an acknowledgement takes.
+ *
+ * ---------------------------------------------------------------------------
+ * THE PER-IP CEILING, WHICH IS THE REAL LIMIT ON THIS FILE
+ * ---------------------------------------------------------------------------
+ * Every VU shares the load generator's single IP, and the abuse controls are
+ * per IP: `CONN_RATE_LIMIT` connection attempts per `CONN_RATE_WINDOW_SECONDS`,
+ * and `MAX_CONNECTIONS_PER_IP` concurrent sockets. A load generator is exactly
+ * the traffic shape those controls exist to refuse, so the defaults here stay
+ * inside them — `VUS × (DURATION / iteration)` must not exceed the connection
+ * budget, or the run measures the limiter rather than the server.
+ *
+ * The fix is never to weaken the shipped defaults. For a real capacity run,
+ * raise the ceiling on the target stack for the duration of the test:
+ *
+ *   CONN_RATE_LIMIT=100000 MAX_CONNECTIONS_PER_IP=100000 docker compose up -d
+ *   k6 run -e VUS=200 -e DURATION=2m load-test/websocket.js
+ *
+ * A throttled upgrade is therefore counted as its own thing, not as a connect
+ * failure: the server refusing it is correct behaviour. But a run that spends
+ * most of its connections being throttled has measured nothing, so that has a
+ * threshold of its own.
  */
 import ws from 'k6/ws';
 import { check, sleep } from 'k6';
@@ -27,8 +48,10 @@ import { Counter, Rate, Trend } from 'k6/metrics';
 import { randomString } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
 
 const WS_URL = __ENV.WS_URL || 'ws://localhost:8081/ws';
-const VUS = Number(__ENV.VUS || 50);
-const DURATION = __ENV.DURATION || '30s';
+// The profile the shipped per-IP limits permit from one host. Raise both the
+// limits and these together; raising these alone measures the limiter.
+const VUS = Number(__ENV.VUS || 20);
+const DURATION = __ENV.DURATION || '20s';
 const MESSAGES_PER_CHAT = Number(__ENV.MESSAGES_PER_CHAT || 5);
 
 const matched = new Counter('kbb_matched');
@@ -37,6 +60,12 @@ const messagesReceived = new Counter('kbb_messages_received');
 const ackLatency = new Trend('kbb_ack_latency_ms', true);
 const matchLatency = new Trend('kbb_match_latency_ms', true);
 const connectFailures = new Rate('kbb_connect_failures');
+/**
+ * Upgrades refused by a per-IP abuse control (HTTP 429). Separate from
+ * `kbb_connect_failures` because the server is working: it is refusing a single
+ * address that asked for too many sockets too quickly, which is its job.
+ */
+const upgradeThrottled = new Rate('kbb_upgrade_throttled');
 const protocolErrors = new Counter('kbb_protocol_errors');
 /**
  * Errors that are the *correct* answer under load, counted separately so they
@@ -55,10 +84,16 @@ export const options = {
   thresholds: {
     // What the server controls.
     kbb_connect_failures: ['rate<0.01'],
+    // Not a server fault, but a run mostly spent being throttled has measured
+    // the limiter instead of the system. Fails loudly so the profile gets
+    // resized rather than the result being read as a capacity number.
+    kbb_upgrade_throttled: ['rate<0.10'],
     // An ack is one Redis round trip plus a socket write. If this degrades,
     // something on the hot path has started doing work it should not.
     kbb_ack_latency_ms: ['p(95)<250'],
     kbb_protocol_errors: ['count<1'],
+    // A run that connected cleanly and never paired proves nothing at all.
+    kbb_matched: ['count>0'],
   },
 };
 
@@ -173,8 +208,16 @@ export default function run() {
     socket.setTimeout(() => socket.close(), 25_000);
   });
 
-  const ok = check(response, { 'upgrade accepted': (r) => r && r.status === 101 });
-  connectFailures.add(!ok);
+  // 101 is success; 429 is an abuse control doing its job; anything else is a
+  // genuine failure to connect.
+  const status = response ? response.status : 0;
+  const throttled = status === 429;
+  upgradeThrottled.add(throttled);
+  connectFailures.add(!throttled && status !== 101);
+  if (throttled) expectedRefusals.add(1);
+  check(response, {
+    'upgrade accepted, or refused by a per-IP limit': () => status === 101 || throttled,
+  });
 
   function sendNext(socket) {
     if (!matchId) return;

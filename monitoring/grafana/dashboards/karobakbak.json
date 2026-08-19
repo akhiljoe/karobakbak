@@ -1,38 +1,102 @@
 {
   "uid": "karobakbak-overview",
-  "title": "karobakbak — overview",
-  "tags": ["karobakbak"],
+  "title": "karobakbak \u2014 overview",
+  "tags": [
+    "karobakbak"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "10s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "panels": [
     {
       "type": "row",
       "title": "Conversations",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
     },
     {
       "type": "timeseries",
       "title": "Connections and matches",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
-        { "expr": "sum(chat_connections_active)", "legendFormat": "connected" },
-        { "expr": "max(chat_active_matches)", "legendFormat": "conversations" },
-        { "expr": "max(chat_queue_depth)", "legendFormat": "waiting" }
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(chat_connections_active)",
+          "legendFormat": "connected"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "max(chat_active_matches)",
+          "legendFormat": "conversations"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "max(chat_queue_depth)",
+          "legendFormat": "waiting"
+        }
       ]
     },
     {
       "type": "timeseries",
       "title": "Message throughput",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
-        { "expr": "sum(rate(chat_messages_received_total[1m]))", "legendFormat": "received/s" },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_messages_received_total[1m]))",
+          "legendFormat": "received/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (route) (rate(chat_messages_delivered_total[1m]))",
           "legendFormat": "delivered {{route}}/s"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (reason) (rate(chat_messages_rejected_total[1m]))",
           "legendFormat": "rejected {{reason}}/s"
         }
@@ -42,13 +106,30 @@
       "type": "timeseries",
       "title": "Matchmaking latency",
       "description": "Time from joining the queue to being matched. Dominated by how many other people are waiting, not by the server.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chat_matchmaking_latency_seconds_bucket[5m])))",
           "legendFormat": "p50"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chat_matchmaking_latency_seconds_bucket[5m])))",
           "legendFormat": "p95"
         }
@@ -57,13 +138,30 @@
     {
       "type": "timeseries",
       "title": "Refusals",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (reason) (rate(chat_connections_rejected_total[5m]))",
           "legendFormat": "upgrade {{reason}}"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (command) (rate(chat_rate_limited_total[5m]))",
           "legendFormat": "rate limited {{command}}"
         }
@@ -72,17 +170,49 @@
     {
       "type": "row",
       "title": "Safety",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      }
     },
     {
       "type": "timeseries",
       "title": "Reports, blocks and moderation",
       "description": "Moderation flags are rule outcomes by action. No panel here can show what a rule matched: flags carry rule ids only (I8).",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
-        { "expr": "sum(rate(chat_reports_total[15m]))", "legendFormat": "reports/s" },
-        { "expr": "sum(rate(chat_blocks_total[15m]))", "legendFormat": "blocks/s" },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_reports_total[15m]))",
+          "legendFormat": "reports/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_blocks_total[15m]))",
+          "legendFormat": "blocks/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (action) (rate(chat_moderation_flags_total[15m]))",
           "legendFormat": "{{action}}/s"
         }
@@ -91,24 +221,58 @@
     {
       "type": "row",
       "title": "Retention",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
     },
     {
       "type": "timeseries",
       "title": "Write-behind queue by class",
       "description": "Capacity is per class and is not shared: a full P3 cannot consume P0's budget (D26).",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
-        { "expr": "sum by (class) (chat_retention_queue_depth)", "legendFormat": "{{class}}" }
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum by (class) (chat_retention_queue_depth)",
+          "legendFormat": "{{class}}"
+        }
       ]
     },
     {
       "type": "timeseries",
       "title": "Dropped records",
       "description": "Every drop is counted. P0 dropping is page-worthy: it means safety evidence is being lost.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (class, reason) (rate(chat_retention_dropped_total[15m]))",
           "legendFormat": "{{class}} {{reason}}"
         }
@@ -117,50 +281,139 @@
     {
       "type": "stat",
       "title": "Database circuit breaker",
-      "description": "0 closed · 1 half-open · 2 open. Open means chat is fine and retention is degraded (D25).",
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 35 },
-      "targets": [{ "expr": "max(chat_db_breaker_state)" }]
+      "description": "0 closed \u00b7 1 half-open \u00b7 2 open. Open means chat is fine and retention is degraded (D25).",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "max(chat_db_breaker_state)"
+        }
+      ]
     },
     {
       "type": "timeseries",
       "title": "Outage spool",
       "description": "Bounded tolerance for a database outage. Not durable storage (D28).",
-      "gridPos": { "h": 5, "w": 9, "x": 6, "y": 35 },
+      "gridPos": {
+        "h": 5,
+        "w": 9,
+        "x": 6,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
-        { "expr": "sum(chat_spool_records)", "legendFormat": "records" },
-        { "expr": "sum(rate(chat_spool_drained_total[5m]))", "legendFormat": "drained/s" },
-        { "expr": "sum(rate(chat_spool_corrupt_records_total[5m]))", "legendFormat": "corrupt/s" }
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(chat_spool_records)",
+          "legendFormat": "records"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_spool_drained_total[5m]))",
+          "legendFormat": "drained/s"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_spool_corrupt_records_total[5m]))",
+          "legendFormat": "corrupt/s"
+        }
       ]
     },
     {
       "type": "timeseries",
       "title": "Rows deleted by retention",
       "description": "Expiry is enforced, not intended (I10). A flat line with data in the database is the failure.",
-      "gridPos": { "h": 5, "w": 9, "x": 15, "y": 35 },
+      "gridPos": {
+        "h": 5,
+        "w": 9,
+        "x": 15,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "sum by (table) (rate(chat_retention_deleted_total[30m]))",
           "legendFormat": "{{table}}/s"
         },
-        { "expr": "sum(rate(chat_deletion_failures_total[30m]))", "legendFormat": "failures/s" }
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_deletion_failures_total[30m]))",
+          "legendFormat": "failures/s"
+        }
       ]
     },
     {
       "type": "row",
       "title": "Process",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      }
     },
     {
       "type": "timeseries",
       "title": "Event-loop lag and memory",
       "description": "Event-loop lag is the first thing to move when a socket fan-out costs more than it should.",
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 41 },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "chat_process_nodejs_eventloop_lag_p99_seconds",
           "legendFormat": "lag p99 {{instance}}"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
           "expr": "chat_process_process_resident_memory_bytes",
           "legendFormat": "rss {{instance}}"
         }

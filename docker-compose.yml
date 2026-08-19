@@ -66,6 +66,12 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # A core dump of this process is a file full of plaintext message bodies —
+    # the queue, the spool buffers and every socket's in-flight frame. It is
+    # exactly the artefact §2.1 says must not exist outside the boundary, so
+    # the kernel is told not to write one.
+    ulimits:
+      core: 0
     # No published port. The only way in is through nginx.
     expose:
       - "8080"
@@ -93,6 +99,8 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    ulimits:
+      core: 0
 
   redis:
     image: redis:7-alpine

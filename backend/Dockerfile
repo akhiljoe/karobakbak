@@ -24,6 +24,11 @@ ENV NODE_ENV=production
 # Node's default heap is sized for the machine, not the container. An explicit
 # limit is what makes the process fail predictably rather than being OOM-killed
 # by the kernel with no log line.
+# It also pins the flag set: no `--inspect` and no `--heapsnapshot-signal`, so
+# there is no supported way to ask this process for a heap snapshot. A snapshot
+# is a file full of plaintext message bodies, which is the one artefact §2.1
+# says must never exist outside the boundary. Core dumps are refused by the
+# `ulimits: core: 0` on the compose service, for the same reason.
 ENV NODE_OPTIONS="--max-old-space-size=384"
 
 COPY --from=build /app/node_modules ./node_modules

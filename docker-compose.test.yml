@@ -6,6 +6,12 @@
 #
 # Deliberately published on non-default ports so a running development stack is
 # never the thing the tests wipe. Phase 7 adds a PostgreSQL service here.
+#
+# Its own project name, for the same reason in the other direction: both files
+# would otherwise default to the directory name, and `npm run down` on the
+# development stack would take the test services with it.
+name: karobakbak-test
+
 services:
   redis-test:
     image: redis:7-alpine
