@@ -21,8 +21,13 @@
     "redis:test:up": "docker compose -f docker-compose.test.yml up -d",
     "redis:test:down": "docker compose -f docker-compose.test.yml down -v",
     "up": "docker compose up --build -d",
+    "up:inspect": "docker compose -f docker-compose.yml -f docker-compose.dev-ports.yml up -d",
+    "psql": "docker compose exec postgres psql -U karobakbak -d karobakbak",
+    "redis-cli": "docker compose exec redis redis-cli",
     "down": "docker compose down -v",
     "logs": "docker compose logs -f backend backend-2",
-    "loadtest": "k6 run load-test/websocket.js"
+    "loadtest": "npm run loadtest:up && k6 run -e WS_URL=ws://localhost:8090/ws load-test/websocket.js",
+    "loadtest:up": "docker compose -p karobakbak-loadtest -f docker-compose.yml -f docker-compose.loadtest.yml up --build -d",
+    "loadtest:down": "docker compose -p karobakbak-loadtest -f docker-compose.yml -f docker-compose.loadtest.yml down -v"
   }
 }

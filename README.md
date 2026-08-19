@@ -91,7 +91,11 @@ npm run test:frontend    # frontend unit tests
 npm run test:integration # needs redis:test:up — real Redis, Postgres, sockets
 npm run build            # tsc -> backend/dist, vite build -> frontend/dist
 npm run up / down / logs # the compose stack
-npm run loadtest         # k6 against the running stack
+npm run up:inspect       # the stack, plus PostgreSQL and Redis on 127.0.0.1
+npm run psql             # a shell in the running database
+npm run redis-cli        # a shell in the running Redis
+npm run loadtest         # k6 against an isolated load-test stack
+npm run loadtest:down    # destroy that stack, volumes and all
 
 # integration dependencies
 npm run redis:test:up    # Redis :6380 and PostgreSQL :5433, both tmpfs-backed
@@ -102,6 +106,42 @@ npm run redis:test:down
 `frontend/src/protocol/types.ts` has drifted from the backend copy. That file is
 generated: edit the backend one, then run `node scripts/verify-protocol.mjs
 --fix`. Never hand-edit the frontend copy.
+
+### Looking inside a running stack
+
+`docker-compose.yml` publishes no host port for PostgreSQL or Redis on purpose
+(§8.1) — PostgreSQL holds plaintext conversation content. To inspect them with
+a client, ask for the opt-in override:
+
+```bash
+npm run up:inspect        # adds 127.0.0.1:5434 (PostgreSQL) and 127.0.0.1:6381 (Redis)
+```
+
+DBeaver, or any PostgreSQL client: host `localhost`, port **5434**, database
+`karobakbak`, user `karobakbak`, password `karobakbak`. Both are bound to
+loopback rather than every interface, which matters on a laptop that is also
+serving the app to a phone on the same network.
+
+Redis holds only live state — sessions, the queue, rate-limit buckets — and has
+persistence off (D12), so it is small and empties itself. `npm run redis-cli --
+monitor` while chatting in a browser is the quickest way to watch matchmaking
+happen.
+
+### Load testing
+
+`npm run loadtest` builds and runs a **separate stack** (compose project
+`karobakbak-loadtest`, port 8090, its own volumes) and points k6 at it. Its
+traffic never reaches the development database.
+
+Retention stays enabled there deliberately: the write-behind path is where load
+actually hurts, and a run that skipped it would prove much less. The per-IP
+abuse limits are raised in that override only — a single generator is one
+address, which is exactly the traffic shape those controls exist to refuse.
+
+```bash
+npm run loadtest         # bring the stack up and run k6 against it
+npm run loadtest:down    # destroy it, volumes and all
+```
 
 ## Configuration
 

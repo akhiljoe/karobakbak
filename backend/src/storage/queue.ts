@@ -125,6 +125,24 @@ export class RetentionQueue {
    * Put entries back at the front of their lanes, for a batch that failed to
    * write. Order within a lane is restored, because a batch is taken in order.
    */
+  /**
+   * Return records to the **back** of their lane.
+   *
+   * For records waiting on something outside their own validity — a parent row
+   * another instance has not flushed yet. They go behind whatever is already
+   * queued rather than in front of it: a record that is waiting has no claim on
+   * the next batch, and putting it at the front lets a small number of waiting
+   * records starve fresh work at small batch sizes.
+   */
+  defer(entries: readonly QueuedRecord[]): void {
+    for (const priority of PRIORITIES) {
+      const returning = entries.filter((entry) => entry.priority === priority);
+      if (returning.length === 0) continue;
+      this.laneFor(priority).push(...returning);
+      for (const entry of returning) this.retain(entry);
+    }
+  }
+
   requeue(entries: readonly QueuedRecord[]): void {
     for (const priority of PRIORITIES) {
       const returning = entries.filter((entry) => entry.priority === priority);

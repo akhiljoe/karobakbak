@@ -154,6 +154,13 @@ export interface Config {
   readonly retention: {
     readonly enabled: boolean;
     readonly batchSize: number;
+    /**
+     * How many flush cycles a record may wait for a parent row another instance
+     * has not written yet. Five at the default one-second interval is five
+     * seconds, which is enormous next to the sub-millisecond gap this actually
+     * covers, and still bounded.
+     */
+    readonly missingParentRetries: number;
     readonly flushIntervalMs: number;
     /**
      * Hard capacity per priority class. Deliberately NOT shared: a full P3
@@ -457,6 +464,7 @@ export function loadConfig(env: Env = process.env): Config {
     retention: {
       enabled: bool(env, 'RETENTION_ENABLED', true),
       batchSize: int(env, 'RETENTION_BATCH_SIZE', 100, 1, 10_000),
+      missingParentRetries: int(env, 'RETENTION_MISSING_PARENT_RETRIES', 5, 0, 100),
       flushIntervalMs: int(env, 'RETENTION_FLUSH_INTERVAL_MS', 1000, 10, 600_000),
       queueMax: {
         p0: int(env, 'RETENTION_QUEUE_MAX_P0', 2000, 1, 1_000_000),

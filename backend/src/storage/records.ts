@@ -130,6 +130,13 @@ export interface QueuedRecord {
    */
   readonly sessionId: string;
   readonly enqueuedAtMs: number;
+  /**
+   * How many times this record has been deferred waiting for a parent row that
+   * another instance had not written yet (`isMissingParentError`). Absent means
+   * zero. Bounded by `RETENTION_MISSING_PARENT_RETRIES`, so a genuinely orphaned
+   * record is dropped and counted rather than retried forever.
+   */
+  readonly parentWaits?: number;
 }
 
 /** Signals available when a message is enqueued. All server-side. */

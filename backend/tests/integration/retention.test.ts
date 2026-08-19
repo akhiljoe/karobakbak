@@ -248,17 +248,27 @@ describe('a database outage', () => {
 
 describe('a record the database will never accept', () => {
   it('is discarded rather than retried forever, and does not open the breaker', async () => {
-    const writer = ctx.writer();
+    const retries = 2;
+    const writer = ctx.writer({ RETENTION_MISSING_PARENT_RETRIES: String(retries) });
     // A message whose conversation row does not exist and never will. The
     // foreign key refuses it every time.
     writer.enqueue(message(newMatchId()));
-    await writer.flush();
+
+    // A missing parent is waited on first, because across instances it usually
+    // *is* just late — the conversation row is written by whichever backend won
+    // the match, and the message by whichever owns the sender's socket.
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      await writer.flush();
+    }
 
     // Proof the database is *available* — it parsed the statement and rejected
     // the data. Counting that as a breaker failure would report a healthy
     // database as down and stall everything behind it.
     expect(writer.snapshot().breaker).toBe('CLOSED');
+    // Bounded: once the parent has demonstrably never arrived, it is dropped
+    // and counted rather than circulating for good.
     expect(Object.keys(writer.counters.dropped).some((key) => key.endsWith(':rejected'))).toBe(true);
+    expect(writer.snapshot().queue.total).toBe(0);
   });
 
   it('does not block the records queued behind it', async () => {
@@ -273,7 +283,10 @@ describe('a record the database will never accept', () => {
     await writer.flush();
     await writer.flush();
 
-    // One poison record used to stall the whole pipeline behind it.
+    // One poison record used to stall the whole pipeline behind it. It is now
+    // deferred to the *back* of its lane rather than the front, so waiting on a
+    // parent cannot starve records that are ready — which at a batch size of
+    // one is the difference between progress and none.
     expect(await ctx.count('conversations')).toBe(1);
     expect(await ctx.count('messages')).toBe(1);
   });
@@ -293,6 +306,92 @@ describe('a record the database will never accept', () => {
 
     expect(recovered.snapshot().spool.records).toBe(0);
     expect(recovered.snapshot().breaker).toBe('CLOSED');
+  });
+});
+
+describe('a parent row another instance has not written yet', () => {
+  /**
+   * The shape of the bug this exists to prevent.
+   *
+   * A conversation row is written by whichever backend won `tryMatch`, but each
+   * participant's messages are flushed by whichever backend owns their socket,
+   * on its own timer. So one instance can hold messages for a conversation that
+   * is still sitting in another instance's queue. Two writers over one database
+   * reproduce it exactly.
+   */
+  function twoInstances() {
+    return { a: ctx.writer(), b: ctx.writer() };
+  }
+
+  it('waits for the parent instead of discarding the message', async () => {
+    const { a, b } = twoInstances();
+    const id = conversationId();
+
+    // Instance B holds the messages; instance A holds the conversation and has
+    // not flushed yet.
+    b.enqueue(message(id, 's_b'));
+    await b.flush();
+
+    // Nothing written, nothing lost, and emphatically not an outage.
+    expect(await ctx.count('messages')).toBe(0);
+    expect(b.snapshot().breaker).toBe('CLOSED');
+    expect(b.snapshot().queue.total).toBe(1);
+
+    // A flushes; B's next cycle now finds the parent.
+    a.enqueue(conversation(id));
+    await a.flush();
+    await b.flush();
+
+    expect(await ctx.count('conversations')).toBe(1);
+    expect(await ctx.count('messages')).toBe(1);
+  });
+
+  it('does not let one late message discard the safety records beside it', async () => {
+    const { a, b } = twoInstances();
+    const late = conversationId();
+    const known = conversationId();
+
+    // The conversation the report belongs to is already durable.
+    a.enqueue(conversation(known));
+    await a.flush();
+
+    // One batch, mixed: a message whose parent is late, and a report that is
+    // perfectly writable. A batch is one transaction, so before this fix the
+    // foreign key took the report down with it — evidence lost to an ordering
+    // detail between two instances.
+    b.enqueue(message(late));
+    b.enqueue({
+      kind: 'report',
+      reportId: newMessageId(),
+      conversationId: known,
+      reporterSessionId: 's_a',
+      reportedSessionId: 's_b',
+      category: 'threats',
+      note: null,
+      createdAt: new Date().toISOString(),
+    });
+    await b.flush();
+
+    // The report survived its neighbour.
+    expect(await ctx.count('reports')).toBe(1);
+    // And the message is waiting, not discarded.
+    expect(b.snapshot().queue.total).toBe(1);
+    expect(Object.keys(b.counters.dropped).some((key) => key.endsWith(':rejected'))).toBe(false);
+  });
+
+  it('counts a drop only once the parent has genuinely never arrived', async () => {
+    const retries = 2;
+    const writer = ctx.writer({ RETENTION_MISSING_PARENT_RETRIES: String(retries) });
+    writer.enqueue(message(newMatchId()));
+
+    for (let attempt = 0; attempt < retries; attempt += 1) {
+      await writer.flush();
+      // Still waiting, still not counted as lost.
+      expect(Object.keys(writer.counters.dropped).some((k) => k.endsWith(':rejected'))).toBe(false);
+    }
+
+    await writer.flush();
+    expect(Object.keys(writer.counters.dropped).some((k) => k.endsWith(':rejected'))).toBe(true);
   });
 });
 

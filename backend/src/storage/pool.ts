@@ -90,9 +90,37 @@ export function assertTlsWhereRequired(config: Config): void {
 const PERMANENT_SQLSTATE_CLASSES = ['22', '23', '42'];
 
 export function isPermanentWriteError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  if (typeof code !== 'string' || code.length < 2) return false;
+  const code = sqlState(err);
+  if (code === null) return false;
   return PERMANENT_SQLSTATE_CLASSES.includes(code.slice(0, 2));
+}
+
+/**
+ * `23503 foreign_key_violation` — a row whose parent is not there **yet**.
+ *
+ * This is the one member of class 23 that is not permanent in this system, and
+ * the reason is the architecture. A conversation row is written by whichever
+ * instance won `tryMatch`, but the two participants' sockets live on different
+ * instances, and each instance flushes its own retention queue on its own
+ * timer. So an instance can perfectly well hold a message for a conversation
+ * whose parent row is still sitting in another instance's queue.
+ *
+ * Treating that as permanent is wrong twice over: the record is discarded
+ * although it would have been writable a second later, and — because a batch is
+ * one transaction — it takes every other record in the batch with it, including
+ * the reports and blocks that are the whole point of retention.
+ *
+ * The caller retries these a bounded number of times and only then gives up.
+ * Every other class-23 violation (unique, check, not-null) stays permanent:
+ * those describe the row itself, and waiting will not change them.
+ */
+export function isMissingParentError(err: unknown): boolean {
+  return sqlState(err) === '23503';
+}
+
+function sqlState(err: unknown): string | null {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && code.length >= 2 ? code : null;
 }
 
 function poolConfig(config: Config): PoolConfig {

@@ -1,0 +1,92 @@
+# An isolated stack for load testing.
+#
+#   npm run loadtest          # bring it up, run k6 against it, leave it running
+#   npm run loadtest:down     # destroy it, volumes and all
+#
+# Used with a separate compose **project name**, which is what makes it
+# isolated:
+#
+#   docker compose -p karobakbak-loadtest -f docker-compose.yml \
+#     -f docker-compose.loadtest.yml up -d
+#
+# ---------------------------------------------------------------------------
+# WHY A WHOLE STACK AND NOT JUST "TURN RETENTION OFF"
+# ---------------------------------------------------------------------------
+# `RETENTION_ENABLED=false` would stop the writes in one line — and would stop
+# the load test proving the thing most worth proving. The write-behind path is
+# where load actually hurts: the bounded queue, the per-session quota, the
+# batch flush, the circuit breaker. A run that skips it measures a system
+# nobody deploys.
+#
+# So retention stays on and the writes stay real; they just land in a database
+# created by this project, which no one opens in a client. A separate project
+# name gives separate containers, separate networks and — the point —
+# **separate volumes**, so `postgres` here is a different database from the
+# development one even though the service definition is identical.
+#
+# The alternative considered and rejected was tagging load-test rows and
+# deleting them afterwards. That leaves the cleanup one crashed run away from
+# never happening, and it puts a "recognise the test traffic" concept into
+# production data. Isolation has neither problem.
+#
+# ---------------------------------------------------------------------------
+# PORTS
+# ---------------------------------------------------------------------------
+# Shifted so this can run beside the development stack rather than fighting it
+# for a port. The origin allowlist has to move with the port: the browser — and
+# k6 — send the origin they were served from, and an allowlist that still named
+# 8081 would refuse every upgrade with 403.
+
+services:
+  frontend:
+    # `!override`, not a plain list: compose *merges* sequences, so without it
+    # this stack would publish 8081 as well and collide with development.
+    ports: !override
+      - "127.0.0.1:8090:80"
+
+  backend: &loadtest-backend
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-warn}"
+      BACKEND_PORT: "8080"
+      BACKEND_HOST: "0.0.0.0"
+      TRUST_PROXY_HOPS: "1"
+      ALLOWED_ORIGINS: "http://localhost:8090"
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      IP_HASH_SALT: "loadtest-salt-not-a-secret"
+      SPOOL_DIR: "/var/lib/karobakbak/spool"
+      METRICS_ENABLED: "true"
+      # A single generator is one IP, and the per-IP abuse controls exist to
+      # refuse exactly that traffic shape (see the header of
+      # `load-test/websocket.js`). Raised here, and only here, so a run measures
+      # the server rather than the limiter. The development stack keeps the
+      # shipped defaults.
+      CONN_RATE_LIMIT: "100000"
+      CONN_RATE_WINDOW_SECONDS: "60"
+      MAX_CONNECTIONS_PER_IP: "100000"
+
+  backend-2:
+    <<: *loadtest-backend
+    volumes:
+      - spool2:/var/lib/karobakbak/spool
+
+  migrate:
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-warn}"
+      ALLOWED_ORIGINS: "http://localhost:8090"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      REDIS_URL: "redis://redis:6379"
+
+  # Monitoring is not published here. Load results come from k6's own summary
+  # and from `/metrics` on the private network; a second Grafana competing for
+  # port 3000 would only be in the way.
+  prometheus:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []

@@ -21,9 +21,14 @@
 import type { Config, RetentionPriority } from '../config';
 import { dbErrorFields, type Logger } from '../logger';
 import { CircuitBreaker, DrainPacer, type BreakerState } from './breaker';
-import { isPermanentWriteError, type Database } from './pool';
+import { isMissingParentError, isPermanentWriteError, type Database } from './pool';
 import { RetentionQueue, type QueueStats } from './queue';
-import type { MessagePriorityContext, QueuedRecord, RetentionRecord } from './records';
+import type {
+  MessagePriorityContext,
+  QueuedRecord,
+  RecordKind,
+  RetentionRecord,
+} from './records';
 import { priorityFor } from './records';
 import { Repositories } from './repositories';
 import type { RetentionSink } from './sink';
@@ -47,6 +52,23 @@ export type EnqueueResult =
    * be a lie to a user asking for help (§14.3).
    */
   | { accepted: false; priority: RetentionPriority };
+
+/**
+ * The order tables must be written in, matching `Repositories.writeBatch`.
+ * `messages` and `reports` carry foreign keys into `conversations`, so the
+ * parent has to go first or the salvage pass recreates the problem it exists
+ * to solve.
+ */
+const KIND_WRITE_ORDER: readonly RecordKind[] = [
+  'conversation_started',
+  'conversation_ended',
+  'message',
+  'report',
+  'block',
+  'moderation_event',
+  'enforcement',
+  'admin_audit',
+];
 
 export class RetentionWriter implements RetentionSink {
   private readonly queue: RetentionQueue;
@@ -210,34 +232,129 @@ export class RetentionWriter implements RetentionSink {
       await this.repositories.writeBatch(this.db, batch, nowMs);
       this.breaker.recordSuccess();
       this.counters.written += batch.length;
+      return;
     } catch (err) {
       // Never the error object: the driver echoes the parameters of the failing
       // statement, and those parameters are message bodies (I8).
-      if (isPermanentWriteError(err)) {
-        // The database is up — it read the statement and refused the data. This
-        // batch will never be writable, so retrying it forever would stall
-        // every record behind it, and counting it as a breaker failure would
-        // report a healthy database as down.
-        this.logger.error('discarding a retention batch the database rejected', {
+      if (!isPermanentWriteError(err)) {
+        this.logger.error('retention batch failed', {
           batchSize: batch.length,
           ...dbErrorFields(err),
         });
-        this.breaker.recordSuccess();
-        for (const entry of batch) {
-          this.countDrop(entry.priority, 'rejected');
-          this.reportDrop(entry.priority, entry.record);
-        }
+        this.breaker.recordFailure(nowMs);
+        // Put them back rather than dropping: if the breaker has now opened,
+        // the next cycle spools them; if not, the next cycle retries.
+        this.queue.requeue(batch);
         return;
       }
 
-      this.logger.error('retention batch failed', {
-        batchSize: batch.length,
+      // The database is up — it read the statement and refused the data, so
+      // this is not a breaker event. But a batch is one transaction, and one
+      // refused row has just rolled back every other record in it. Salvage the
+      // rest rather than discarding all of them, which is how a single
+      // out-of-order message used to destroy a hundred reports and blocks.
+      this.breaker.recordSuccess();
+      await this.salvage(batch, nowMs, err);
+    }
+  }
+
+  /**
+   * Rescue what a rejected batch was carrying.
+   *
+   * Written per kind, in the same dependency order `writeBatch` uses, each in
+   * its own transaction — so a table the database refuses cannot take the other
+   * tables down with it. The kinds that fail are then handled on their own
+   * terms: a missing parent is waited on, anything else is narrowed to the
+   * individual rows actually at fault.
+   */
+  private async salvage(batch: QueuedRecord[], nowMs: number, err: unknown): Promise<void> {
+    this.logger.warn('a retention batch was rejected; salvaging it per table', {
+      batchSize: batch.length,
+      ...dbErrorFields(err),
+    });
+
+    const groups = new Map<RecordKind, QueuedRecord[]>();
+    for (const entry of batch) {
+      const group = groups.get(entry.record.kind);
+      if (group) group.push(entry);
+      else groups.set(entry.record.kind, [entry]);
+    }
+
+    for (const kind of KIND_WRITE_ORDER) {
+      const group = groups.get(kind);
+      if (group !== undefined) await this.writeGroup(group, nowMs);
+    }
+  }
+
+  /** One kind, one transaction. Narrows further only when it has to. */
+  private async writeGroup(group: QueuedRecord[], nowMs: number): Promise<void> {
+    try {
+      await this.repositories.writeBatch(this.db, group, nowMs);
+      this.counters.written += group.length;
+      return;
+    } catch (err) {
+      if (!isPermanentWriteError(err)) {
+        this.breaker.recordFailure(nowMs);
+        this.queue.requeue(group);
+        return;
+      }
+
+      if (isMissingParentError(err)) {
+        this.deferForParent(group, err);
+        return;
+      }
+
+      if (group.length === 1) {
+        this.discard(group, err);
+        return;
+      }
+
+      // A genuinely bad row somewhere in here. Isolate it so the rest survive.
+      for (const entry of group) await this.writeGroup([entry], nowMs);
+    }
+  }
+
+  /**
+   * Hold records whose parent row has not been written yet.
+   *
+   * Not an error: the conversation is created by whichever instance won the
+   * match, and both participants' messages are flushed by whichever instances
+   * own their sockets. The parent lands within a cycle or so. Bounded, so a row
+   * whose parent genuinely never arrives is eventually dropped and counted
+   * rather than circulating forever.
+   */
+  private deferForParent(group: QueuedRecord[], err: unknown): void {
+    const waiting: QueuedRecord[] = [];
+    const exhausted: QueuedRecord[] = [];
+
+    for (const entry of group) {
+      const waits = (entry.parentWaits ?? 0) + 1;
+      if (waits > this.config.retention.missingParentRetries) exhausted.push(entry);
+      else waiting.push({ ...entry, parentWaits: waits });
+    }
+
+    if (waiting.length > 0) this.queue.defer(waiting);
+    if (exhausted.length > 0) {
+      this.logger.error('discarding retention records whose parent row never arrived', {
+        count: exhausted.length,
         ...dbErrorFields(err),
       });
-      this.breaker.recordFailure(nowMs);
-      // Put them back rather than dropping: if the breaker has now opened, the
-      // next cycle spools them; if not, the next cycle retries.
-      this.queue.requeue(batch);
+      for (const entry of exhausted) {
+        this.countDrop(entry.priority, 'rejected');
+        this.reportDrop(entry.priority, entry.record);
+      }
+    }
+  }
+
+  /** Give up on records the database will never accept. */
+  private discard(group: QueuedRecord[], err: unknown): void {
+    this.logger.error('discarding retention records the database rejected', {
+      count: group.length,
+      ...dbErrorFields(err),
+    });
+    for (const entry of group) {
+      this.countDrop(entry.priority, 'rejected');
+      this.reportDrop(entry.priority, entry.record);
     }
   }
 
