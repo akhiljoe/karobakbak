@@ -446,6 +446,16 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         return;
       }
 
+      case 'leave_chat': {
+        const outcome = await lifecycle.leaveChat(connection.sessionId);
+        if (outcome.kind === 'session_gone') return sessionGone(connection);
+        // Both 'left' and 'idle' end in the same place, and the client asked to
+        // be there. Reporting them differently would describe the server's
+        // bookkeeping rather than the user's situation.
+        connection.sendEvent('queue_status', { state: 'IDLE', waiting: 0 });
+        return;
+      }
+
       case 'skip': {
         metrics.skips.inc();
         const outcome = await lifecycle.skip(connection.sessionId);

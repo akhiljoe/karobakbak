@@ -404,6 +404,7 @@ export function loadConfig(env: Env = process.env): Config {
         typing: rateLimit(env, 'TYPING', 4, 8),
         join_queue: rateLimit(env, 'JOIN_QUEUE', 0.2, 5), //     12/min
         leave_queue: rateLimit(env, 'LEAVE_QUEUE', 0.333, 6), // 20/min
+        leave_chat: rateLimit(env, 'LEAVE_CHAT', 0.333, 6), //   20/min
         skip: rateLimit(env, 'SKIP', 0.333, 6), //               20/min
         report: rateLimit(env, 'REPORT', 0.00278, 3), //         10/hour
         block: rateLimit(env, 'BLOCK', 0.00556, 3), //           20/hour

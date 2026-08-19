@@ -75,6 +75,7 @@ export function App(): JSX.Element {
     <div className="flex min-h-[100dvh] flex-col">
       <AppHeader
         state={state}
+        onHome={chat.leave}
         onOpenFilters={() => setFiltersOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
       />
@@ -89,9 +90,9 @@ export function App(): JSX.Element {
               onSend={chat.send}
               onTyping={chat.typing}
               onSkip={chat.skip}
-              onCancelSearch={chat.stop}
+              onCancelSearch={chat.leave}
               onOpenSafety={() => setSafetyOpen(true)}
-              onBack={chat.stop}
+              onBack={chat.leave}
             />
           ) : (
             <LandingScreen state={state} ended={phase === 'ended'} onStart={chat.start} />

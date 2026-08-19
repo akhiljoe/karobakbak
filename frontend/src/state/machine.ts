@@ -73,6 +73,16 @@ export interface ChatState {
   /** A short, developer-authored line to show. Never raw server internals. */
   readonly notice: string | null;
   readonly reportSent: boolean;
+  /**
+   * The user asked to go home and the server has not confirmed it yet.
+   *
+   * Leaving a conversation is two commands — `skip` ends the match, then
+   * `leave_queue` stops the search it starts. Between them the server sends a
+   * perfectly correct `queue_status: SEARCHING`, which is the echo of our own
+   * skip rather than news. Without this flag the screen would bounce through
+   * the searching layout on the way to the landing one.
+   */
+  readonly leaving: boolean;
 }
 
 /**
@@ -103,6 +113,7 @@ export const initialState: ChatState = {
   endReason: null,
   notice: null,
   reportSent: false,
+  leaving: false,
 };
 
 export type Action =
@@ -123,6 +134,7 @@ export type Action =
   | { type: 'send_pending'; id: string; text: string; at: string }
   | { type: 'user_searching' }
   | { type: 'user_skipped' }
+  | { type: 'user_left' }
   | { type: 'user_blocked' }
   | { type: 'dismiss_notice' };
 
@@ -166,14 +178,20 @@ export function reduce(state: ChatState, action: Action): ChatState {
         notice: 'Connection lost. Reconnecting…',
       };
 
-    case 'queue_status':
+    case 'queue_status': {
+      const searching = action.payload.state === 'SEARCHING';
+      // While a leave is in flight, a SEARCHING status is our own skip coming
+      // back. The IDLE that follows it is the confirmation, and clears the flag.
+      if (state.leaving && searching) return { ...state, waiting: action.payload.waiting };
       return {
         ...state,
-        screen: action.payload.state === 'SEARCHING' ? 'searching' : 'idle',
+        screen: searching ? 'searching' : 'idle',
         waiting: action.payload.waiting,
+        leaving: false,
         // A queue_status is the end of whatever came before it.
-        ...(action.payload.state === 'SEARCHING' ? {} : { matchId: null }),
+        ...(searching ? {} : { matchId: null }),
       };
+    }
 
     case 'presence':
       return {
@@ -259,10 +277,28 @@ export function reduce(state: ChatState, action: Action): ChatState {
       };
 
     case 'user_searching':
-      return { ...state, screen: 'searching', endReason: null, notice: null };
+      return { ...state, screen: 'searching', leaving: false, endReason: null, notice: null };
 
     case 'user_skipped':
-      return { ...clearedConversation(state), screen: 'searching', endReason: 'you_skipped', notice: null };
+      return {
+        ...clearedConversation(state),
+        screen: 'searching',
+        leaving: false,
+        endReason: 'you_skipped',
+        notice: null,
+      };
+
+    case 'user_left':
+      // Optimistic, and safe: the server cannot refuse this. `skip` is
+      // idempotent and `leave_queue` converges, so the worst case is that the
+      // confirming queue_status says what this already says.
+      return {
+        ...clearedConversation(state),
+        screen: 'idle',
+        leaving: true,
+        endReason: null,
+        notice: null,
+      };
 
     case 'user_blocked':
       return {

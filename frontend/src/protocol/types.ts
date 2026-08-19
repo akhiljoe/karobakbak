@@ -26,6 +26,7 @@ export const PROTOCOL_VERSION = 1;
 export const CLIENT_EVENTS = [
   'join_queue',
   'leave_queue',
+  'leave_chat',
   'message',
   'typing',
   'skip',
@@ -202,6 +203,21 @@ export type JoinQueuePayload = Record<string, never>;
 /** Leave matchmaking without disconnecting. Idempotent. Changes state. */
 export type LeaveQueuePayload = Record<string, never>;
 
+/**
+ * End the current match and return to IDLE, without searching again.
+ *
+ * The difference from `skip` is the whole point. `skip` re-enters the queue, so
+ * a user who wanted to stop is dropped straight into another conversation —
+ * which is the same reasoning that already makes `block` land in IDLE rather
+ * than back in the queue. Leaving is a statement about wanting to stop, and the
+ * protocol has to be able to express it, or a client has to fake it with
+ * `skip` + `leave_queue` and lose the race whenever the skip re-matches first.
+ *
+ * Idempotent: leaving when not matched is "ensure I am idle", never an error.
+ * Changes state.
+ */
+export type LeaveChatPayload = Record<string, never>;
+
 /** End the current match and immediately search again. Idempotent. Changes state. */
 export type SkipPayload = Record<string, never>;
 
@@ -271,6 +287,7 @@ export interface ReportPayload {
 export interface ClientEventPayloads {
   join_queue: JoinQueuePayload;
   leave_queue: LeaveQueuePayload;
+  leave_chat: LeaveChatPayload;
   message: MessagePayload;
   typing: TypingPayload;
   skip: SkipPayload;

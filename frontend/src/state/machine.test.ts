@@ -304,6 +304,60 @@ describe('sending is only possible inside a conversation', () => {
   });
 });
 
+describe('leaving a conversation (the back button)', () => {
+  it('goes straight to the landing screen, not into another search', () => {
+    const left = reduce(matched(), { type: 'user_left' });
+    expect(left.screen).toBe('idle');
+    expect(left.matchId).toBeNull();
+    expect(left.partner).toBeNull();
+    expect(left.messages).toEqual([]);
+  });
+
+  it('ignores the SEARCHING status that its own skip produces', () => {
+    // `leave_chat` is one server-side transition, but a queue_status can still
+    // be in flight from whatever came before. While a leave is pending, a
+    // SEARCHING status is not news and must not bounce the screen.
+    const left = reduce(matched(), { type: 'user_left' });
+    const echoed = reduce(left, {
+      type: 'queue_status',
+      payload: { state: 'SEARCHING', waiting: 3 },
+    });
+    expect(echoed.screen).toBe('idle');
+    // The count is still worth taking; only the screen change is suppressed.
+    expect(echoed.waiting).toBe(3);
+  });
+
+  it('settles when the server confirms IDLE', () => {
+    const left = reduce(matched(), { type: 'user_left' });
+    const settled = reduce(left, {
+      type: 'queue_status',
+      payload: { state: 'IDLE', waiting: 0 },
+    });
+    expect(settled.screen).toBe('idle');
+    expect(settled.leaving).toBe(false);
+  });
+
+  it('stops suppressing once the user deliberately searches again', () => {
+    const left = reduce(matched(), { type: 'user_left' });
+    const searching = reduce(left, { type: 'user_searching' });
+    expect(searching.leaving).toBe(false);
+    expect(searching.screen).toBe('searching');
+
+    // A SEARCHING status now means what it says.
+    const status = reduce(searching, {
+      type: 'queue_status',
+      payload: { state: 'SEARCHING', waiting: 2 },
+    });
+    expect(status.screen).toBe('searching');
+  });
+
+  it('is not confused with a skip, which does re-enter the queue', () => {
+    const skipped = reduce(matched(), { type: 'user_skipped' });
+    expect(skipped.screen).toBe('searching');
+    expect(skipped.leaving).toBe(false);
+  });
+});
+
 describe('the rendering boundary (§23.4)', () => {
   it('renders text through the text branch', () => {
     expect(messageKindFor('text')).toBe('text');

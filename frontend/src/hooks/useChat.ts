@@ -51,6 +51,8 @@ export interface ChatApi {
   start(): void;
   stop(): void;
   skip(): void;
+  /** End the conversation (or the search) and return to the landing screen. */
+  leave(): void;
   block(): void;
   report(category: ReportCategory, note?: string): void;
   send(text: string): void;
@@ -179,6 +181,15 @@ export function useChat(): ChatApi {
     if (sendCommand('skip')) dispatch({ type: 'user_skipped' });
   }, [sendCommand, stopTyping]);
 
+  const leave = useCallback(() => {
+    stopTyping();
+    // Deliberately not `skip` + `leave_queue`: `skip` re-enters the queue and
+    // can be matched again before the second frame is read, so the user would
+    // land in a new conversation instead of on the landing screen. `leave_chat`
+    // ends the match and stops, in one server-side transition.
+    if (sendCommand('leave_chat')) dispatch({ type: 'user_left' });
+  }, [sendCommand, stopTyping]);
+
   const block = useCallback(() => {
     stopTyping();
     if (sendCommand('block')) dispatch({ type: 'user_blocked' });
@@ -212,7 +223,7 @@ export function useChat(): ChatApi {
 
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
 
-  return { state, start, stop, skip, block, report, send, typing, dismissNotice };
+  return { state, start, stop, skip, leave, block, report, send, typing, dismissNotice };
 }
 
 /**

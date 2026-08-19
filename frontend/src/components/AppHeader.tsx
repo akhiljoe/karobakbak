@@ -17,24 +17,41 @@ import type { ChatState } from '../state/machine';
 
 interface AppHeaderProps {
   state: ChatState;
+  onHome(): void;
   onOpenFilters(): void;
   onOpenAuth(): void;
 }
 
-export function AppHeader({ state, onOpenFilters, onOpenAuth }: AppHeaderProps): JSX.Element {
+export function AppHeader({
+  state,
+  onHome,
+  onOpenFilters,
+  onOpenAuth,
+}: AppHeaderProps): JSX.Element {
   const presence = state.features.presence ? state.presence : null;
 
   return (
     <header className="safe-pt sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur-md">
       <div className="flex h-12 items-center gap-2 px-3 sm:gap-3 sm:px-6">
-        <div className="flex items-center gap-2">
+        {/*
+          The brand is the way home, which is what a logo is everywhere else.
+          A button rather than an <a href="/">: a reload would drop the socket
+          and start a whole new session for what the user thinks of as "go
+          back". `onHome` leaves the conversation properly and keeps the
+          connection.
+        */}
+        <button
+          onClick={onHome}
+          aria-label="karobakbak — home"
+          className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition-opacity hover:opacity-80 active:scale-95"
+        >
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ink-900 ring-1 ring-ink-700">
             <MessageCircle className="h-4 w-4 text-amber-400" strokeWidth={2.2} />
           </span>
           <span className="font-display text-base font-semibold tracking-tight text-ink-50">
             karobakbak
           </span>
-        </div>
+        </button>
 
         <div className="flex-1" />
 

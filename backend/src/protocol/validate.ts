@@ -39,6 +39,7 @@ import {
 export type ValidatedCommand =
   | { type: 'join_queue'; clientId: string | null }
   | { type: 'leave_queue'; clientId: string | null }
+  | { type: 'leave_chat'; clientId: string | null }
   | { type: 'skip'; clientId: string | null }
   | { type: 'block'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
@@ -295,6 +296,7 @@ export function parseClientFrame(
   switch (type) {
     case 'join_queue':
     case 'leave_queue':
+    case 'leave_chat':
     case 'skip':
     case 'block':
     case 'ping':

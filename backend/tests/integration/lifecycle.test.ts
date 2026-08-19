@@ -273,6 +273,78 @@ describe('block across two instances (D18)', () => {
   });
 });
 
+describe('leave_chat — end the conversation without re-queueing', () => {
+  it('lands the leaver in IDLE, not back in the queue', async () => {
+    const a = await connect(one);
+    const b = await connect(two);
+    await two.lifecycle.joinQueue(b.sessionId);
+    const matched = await one.lifecycle.joinQueue(a.sessionId);
+    if (matched.kind !== 'matched') throw new Error('expected a match');
+
+    expect(await one.lifecycle.leaveChat(a.sessionId)).toEqual({ kind: 'left' });
+
+    // The whole point of the command: `skip` would have re-queued them here.
+    expect((await one.ctx.store.readSession(a.sessionId))?.state).toBe('IDLE');
+    expect(await one.ctx.store.currentMatchId(a.sessionId)).toBeNull();
+  });
+
+  it('cannot be re-matched by the partner it just left', async () => {
+    const a = await connect(one);
+    const b = await connect(two);
+    await two.lifecycle.joinQueue(b.sessionId);
+    const matched = await one.lifecycle.joinQueue(a.sessionId);
+    if (matched.kind !== 'matched') throw new Error('expected a match');
+
+    await one.lifecycle.leaveChat(a.sessionId);
+    // The partner is released and searches again. With `skip` the leaver would
+    // still be in the queue and these two would pair straight back up, which is
+    // precisely the bug this command exists to avoid.
+    const partnerAgain = await two.lifecycle.joinQueue(b.sessionId);
+    expect(partnerAgain).toMatchObject({ kind: 'searching' });
+    expect(await one.ctx.store.currentMatchId(a.sessionId)).toBeNull();
+  });
+
+  it('tells the partner exactly what a skip would have (security §32)', async () => {
+    const a = await connect(one);
+    const b = await connect(two);
+    const heard = await listen(two, b.sessionId);
+    try {
+      await two.lifecycle.joinQueue(b.sessionId);
+      const matched = await one.lifecycle.joinQueue(a.sessionId);
+      if (matched.kind !== 'matched') throw new Error('expected a match');
+      await delay(60);
+      heard.events.length = 0;
+
+      await one.lifecycle.leaveChat(a.sessionId);
+      await delay(60);
+      expect(heard.events).toEqual([{ event: 'partner_skipped', matchId: matched.matchId }]);
+    } finally {
+      heard.stop();
+    }
+  });
+
+  it('stops a search when there is no conversation to leave', async () => {
+    const a = await connect(one);
+    await one.lifecycle.joinQueue(a.sessionId);
+    expect(await one.ctx.store.queueDepth(one.ctx.segment)).toBe(1);
+
+    expect(await one.lifecycle.leaveChat(a.sessionId)).toEqual({ kind: 'left' });
+    expect(await one.ctx.store.queueDepth(one.ctx.segment)).toBe(0);
+    expect((await one.ctx.store.readSession(a.sessionId))?.state).toBe('IDLE');
+  });
+
+  it('is idempotent — leaving twice converges instead of erroring', async () => {
+    const a = await connect(one);
+    const b = await connect(two);
+    await two.lifecycle.joinQueue(b.sessionId);
+    await one.lifecycle.joinQueue(a.sessionId);
+
+    await one.lifecycle.leaveChat(a.sessionId);
+    expect(await one.lifecycle.leaveChat(a.sessionId)).toEqual({ kind: 'idle' });
+    expect((await one.ctx.store.readSession(a.sessionId))?.state).toBe('IDLE');
+  });
+});
+
 describe('disconnect across two instances (§13)', () => {
   it('ends the match and tells the survivor', async () => {
     const a = await connect(one);

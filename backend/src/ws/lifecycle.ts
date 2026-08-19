@@ -105,6 +105,12 @@ export type LeaveOutcome =
   | { kind: 'already_matched'; matchId: string }
   | { kind: 'session_gone' };
 
+export type LeaveChatOutcome =
+  | { kind: 'left' }
+  /** Was not in a conversation. Idempotent, so this is a success, not a fault. */
+  | { kind: 'idle' }
+  | { kind: 'session_gone' };
+
 export type BlockOutcome =
   | {
       kind: 'blocked';
@@ -249,6 +255,46 @@ export class SessionLifecycle {
 
     await this.endMatchAndNotify(sessionId, state.matchId, 'partner_skipped');
     return this.joinQueue(sessionId);
+  }
+
+  /**
+   * End the current match and stop, without searching again.
+   *
+   * The counterpart to `skip`, and the difference is deliberate: `skip` calls
+   * `joinQueue` and can re-match before the caller's next frame is even read,
+   * so a client trying to leave with `skip` + `leave_queue` loses the race
+   * whenever somebody is waiting. This is the same reasoning that already puts
+   * `block` in IDLE rather than back in the queue — a user who says stop is not
+   * asking for the next stranger.
+   *
+   * Also removes the session from the queue, so leaving while SEARCHING does
+   * what it says too. Idempotent: leaving when idle is a no-op that reports
+   * IDLE (rule 4).
+   *
+   * The partner is told `partner_skipped`, exactly as for a skip or a block. A
+   * distinct "they left rather than skipped" signal would be a behavioural
+   * detail about another user that nothing needs (security §32).
+   */
+  async leaveChat(sessionId: string): Promise<LeaveChatOutcome> {
+    const state = await this.store.heartbeat(sessionId);
+    if (state.status === 'session_gone') return { kind: 'session_gone' };
+
+    if (state.matchId !== null) {
+      await this.endMatchAndNotify(sessionId, state.matchId, 'partner_skipped');
+      // `endMatch` already reset both sessions to IDLE and pulled them from the
+      // queue, so there is nothing left to undo here.
+      return { kind: 'left' };
+    }
+
+    // Not matched. Leaving still means "stop looking", so a session that was
+    // SEARCHING comes out of the queue.
+    if (state.state === 'SEARCHING') {
+      const result = await this.store.leaveQueue(sessionId, this.segment);
+      if (result.status === 'session_gone') return { kind: 'session_gone' };
+      return { kind: 'left' };
+    }
+
+    return { kind: 'idle' };
   }
 
   /**

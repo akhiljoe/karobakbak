@@ -160,6 +160,7 @@ describe('loadConfig — per-command rate limits (R7)', () => {
     expect(Object.keys(rates).sort()).toEqual([
       'block',
       'join_queue',
+      'leave_chat',
       'leave_queue',
       'message',
       'report',
