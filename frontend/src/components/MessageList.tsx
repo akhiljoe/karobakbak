@@ -22,6 +22,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
+import { clientConfig } from '../config';
 import type { ChatMessage } from '../state/machine';
 import { SystemMessage } from './SystemMessage';
 
@@ -41,9 +42,6 @@ interface MessageListProps {
   /** This conversation has been reported. Shown once, at the end. */
   reported: boolean;
 }
-
-/** Two messages from the same side within this window are visually grouped. */
-const GROUPING_WINDOW_MS = 60_000;
 
 export function MessageList({
   messages,
@@ -94,7 +92,8 @@ export function MessageList({
             const grouped =
               previous !== undefined &&
               previous.from === message.from &&
-              Date.parse(message.at) - Date.parse(previous.at) < GROUPING_WINDOW_MS;
+              Date.parse(message.at) - Date.parse(previous.at) <
+                clientConfig.timings.messageGroupingMs;
             return (
               <Bubble
                 key={message.id}

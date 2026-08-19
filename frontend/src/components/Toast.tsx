@@ -7,18 +7,17 @@
 import { useEffect } from 'react';
 import { Info, X } from 'lucide-react';
 
+import { clientConfig } from '../config';
+
 interface ToastProps {
   message: string | null;
   onDismiss(): void;
 }
 
-/** Long enough to read a short line, short enough not to sit in the way. */
-const VISIBLE_MS = 4000;
-
 export function Toast({ message, onDismiss }: ToastProps): JSX.Element | null {
   useEffect(() => {
     if (message === null) return;
-    const id = window.setTimeout(onDismiss, VISIBLE_MS);
+    const id = window.setTimeout(onDismiss, clientConfig.timings.toastVisibleMs);
     return () => window.clearTimeout(id);
   }, [message, onDismiss]);
 

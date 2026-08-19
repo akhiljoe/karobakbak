@@ -8,8 +8,9 @@
  * cannot.
  */
 import { adsEnabled, providerFrom, type AdPlacement } from '../ads/provider';
+import { clientConfig } from '../config';
 
-const provider = providerFrom(import.meta.env.VITE_ADS_PROVIDER);
+const provider = providerFrom(clientConfig.ads.provider);
 
 export function AdSlot({ slot }: AdPlacement): JSX.Element | null {
   if (!adsEnabled()) return null;

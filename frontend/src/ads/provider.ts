@@ -15,6 +15,8 @@
  * derived from a conversation.
  */
 
+import { clientConfig } from '../config';
+
 export interface AdPlacement {
   /** Where on the page. The only context a provider receives. */
   readonly slot: 'landing' | 'between-chats';
@@ -56,5 +58,5 @@ export function providerFrom(name: string | undefined): AdProvider {
 
 /** Whether ads are enabled at all, from the build-time flag. */
 export function adsEnabled(): boolean {
-  return import.meta.env.VITE_ADS_ENABLED === 'true';
+  return clientConfig.ads.enabled;
 }

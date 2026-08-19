@@ -21,17 +21,12 @@ import {
   type ClientEventType,
   type ReportCategory,
 } from '../protocol/types';
+import { clientConfig } from '../config';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
-/** Backoff between reconnection attempts, in milliseconds. */
-const BACKOFF_MS = [500, 1000, 2000, 5000, 10_000] as const;
-
-/** How long after the last keystroke a typing indicator is withdrawn. */
-const TYPING_IDLE_MS = 3000;
-
 function socketUrl(): string {
-  const configured = import.meta.env.VITE_WS_URL;
-  if (typeof configured === 'string' && configured.length > 0) return configured;
+  const configured = clientConfig.wsUrl;
+  if (configured.length > 0) return configured;
   // Derived from the page origin, which is what the nginx container and the
   // Vite dev proxy both serve — and what keeps the block-token cookie
   // same-site.
@@ -116,7 +111,8 @@ export function useChat(): ChatApi {
         if (disposed || closedByUsRef.current) return;
         dispatch({ type: 'socket_closed', code: event.code });
 
-        const delay = BACKOFF_MS[Math.min(attemptRef.current, BACKOFF_MS.length - 1)] ?? 10_000;
+        const backoff = clientConfig.timings.reconnectBackoffMs;
+        const delay = backoff[Math.min(attemptRef.current, backoff.length - 1)] ?? 10_000;
         attemptRef.current += 1;
         reconnectRef.current = window.setTimeout(connect, delay);
       });
@@ -161,7 +157,7 @@ export function useChat(): ChatApi {
         sendCommand('typing', { active: true });
       }
       if (typingTimerRef.current !== null) window.clearTimeout(typingTimerRef.current);
-      typingTimerRef.current = window.setTimeout(stopTyping, TYPING_IDLE_MS);
+      typingTimerRef.current = window.setTimeout(stopTyping, clientConfig.timings.typingIdleMs);
     },
     [sendCommand, state.features.typing, stopTyping],
   );

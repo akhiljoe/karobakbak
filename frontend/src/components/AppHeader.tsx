@@ -10,7 +10,7 @@
  * than no button. The filters control is the opposite case, and the reasoning
  * for the asymmetry is in `features.ts`.
  */
-import { MessageCircle, SlidersHorizontal, Users } from 'lucide-react';
+import { MessageCircle, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
 import { ACCOUNTS_ENABLED } from '../features';
 import type { ChatState } from '../state/machine';
@@ -19,6 +19,7 @@ interface AppHeaderProps {
   state: ChatState;
   onHome(): void;
   onOpenFilters(): void;
+  onOpenSettings(): void;
   onOpenAuth(): void;
 }
 
@@ -26,6 +27,7 @@ export function AppHeader({
   state,
   onHome,
   onOpenFilters,
+  onOpenSettings,
   onOpenAuth,
 }: AppHeaderProps): JSX.Element {
   const presence = state.features.presence ? state.presence : null;
@@ -83,6 +85,14 @@ export function AppHeader({
           className="inline-flex h-9 items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 px-2.5 text-sm text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          onClick={onOpenSettings}
+          aria-label="Settings"
+          className="inline-flex h-9 items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 px-2.5 text-sm text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
+        >
+          <Settings className="h-3.5 w-3.5" />
         </button>
 
         {ACCOUNTS_ENABLED && (

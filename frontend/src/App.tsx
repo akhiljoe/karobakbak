@@ -19,17 +19,21 @@ import { FiltersModal } from './components/FiltersModal';
 import { LandingScreen } from './components/LandingScreen';
 import { ReportDialog } from './components/ReportDialog';
 import { SafetySheet } from './components/SafetySheet';
+import { SettingsSheet } from './components/SettingsSheet';
 import { Toast } from './components/Toast';
 import { ACCOUNTS_ENABLED } from './features';
 import { useChat } from './hooks/useChat';
+import { usePreferences } from './hooks/usePreferences';
 import type { ReportCategory } from './protocol/types';
 import { connectionOf, phaseOf } from './view/presentation';
 
 export function App(): JSX.Element {
   const chat = useChat();
   const { state } = chat;
+  const { preferences, set: setPreference } = usePreferences();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -77,6 +81,7 @@ export function App(): JSX.Element {
         state={state}
         onHome={chat.leave}
         onOpenFilters={() => setFiltersOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
       />
 
@@ -87,6 +92,7 @@ export function App(): JSX.Element {
               state={state}
               connection={connection}
               searching={phase === 'searching'}
+              icebreakersEnabled={preferences.icebreakers}
               onSend={chat.send}
               onTyping={chat.typing}
               onSkip={chat.skip}
@@ -101,6 +107,13 @@ export function App(): JSX.Element {
       </main>
 
       <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
+
+      <SettingsSheet
+        open={settingsOpen}
+        preferences={preferences}
+        onClose={() => setSettingsOpen(false)}
+        onChange={setPreference}
+      />
 
       {/*
         Mounted only when accounts are enabled, which they are not. The modal

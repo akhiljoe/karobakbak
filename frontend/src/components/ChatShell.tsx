@@ -32,6 +32,8 @@ interface ChatShellProps {
   state: ChatState;
   connection: ConnectionView;
   searching: boolean;
+  /** The person asked for conversation starters. Off unless they did. */
+  icebreakersEnabled: boolean;
   onSend(text: string): void;
   onTyping(active: boolean): void;
   onSkip(): void;
@@ -44,6 +46,7 @@ export function ChatShell({
   state,
   connection,
   searching,
+  icebreakersEnabled,
   onSend,
   onTyping,
   onSkip,
@@ -60,7 +63,8 @@ export function ChatShell({
     setIcebreakerDismissed(false);
   }, [state.matchId]);
 
-  const showIcebreaker = chatting && !icebreakerDismissed && state.messages.length === 0;
+  const showIcebreaker =
+    icebreakersEnabled && chatting && !icebreakerDismissed && state.messages.length === 0;
   const safetyAvailable = state.features.report || state.features.block;
 
   return (
