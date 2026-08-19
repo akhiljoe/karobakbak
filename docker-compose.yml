@@ -45,7 +45,13 @@ services:
       TRUST_PROXY_HOPS: "1"
       # An empty allowlist is a startup failure in production (R9), so the
       # origin the browser will actually send is named here.
-      ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-8081}"
+      #
+      # Overridable, because the default only admits a browser on this machine:
+      # testing from a phone or a second laptop means the browser sends
+      # `http://<lan-ip>:8081`, which is a different origin and is refused with
+      # 403. Set ALLOWED_ORIGINS in .env to the full comma-separated list —
+      # every entry must match scheme, host *and* port exactly.
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
       REDIS_URL: "redis://redis:6379"
       DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
       # Local only. Real deployments require TLS to the database and get their
@@ -91,7 +97,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: "${LOG_LEVEL:-info}"
-      ALLOWED_ORIGINS: "http://localhost:${FRONTEND_PORT:-8081}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
       DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       REDIS_URL: "redis://redis:6379"
