@@ -1,0 +1,19 @@
+# A4 sends these. Same rule as links.txt: every line must fire something, and
+# the lint refuses the run otherwise.
+#
+# All contact details are fictional and unroutable by construction: 555 numbers
+# are the reserved fictional range, and example.com / example.net are reserved
+# by RFC 2606. A corpus with a real phone number in it is a corpus that sends a
+# stranger to a real person every time somebody runs a load test.
+add me on instagram @realusername
+my email is someone@example.com message me
+whatsapp me on +1 555 0134 2266
+my snap is coolperson2020 add me
+text me on 555 0199 4471 i am always free
+find me on telegram @somehandle
+add me on kik with the username in my profile
+my number is 555 0175 3309 call any time
+send me an email at contact@example.net
+follow me on tiktok @thisaccount
+lets move this to whatsapp my number is 555 0142 8890
+i am on snapchat as thatusername add me there

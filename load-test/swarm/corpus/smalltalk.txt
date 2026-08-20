@@ -1,0 +1,57 @@
+# Statements: the bulk of an ordinary conversation. Mixed length on purpose —
+# think time scales with length, so a corpus of uniform lines produces uniform
+# traffic and hides exactly the bursts a real population creates.
+#
+# Nothing here may fire a moderation rule. The lint in corpus.ts enforces that,
+# because one stray "insta" would flag a few hundred bots and corrupt every
+# precision number in the report.
+i just got back from a long walk and my legs are completely done
+the weather here has been miserable all week
+i am supposed to be working but here i am instead
+just finished dinner and now i am too full to move
+my cat has decided that three in the morning is playtime
+i have been trying to learn to cook properly and it is going badly
+work was fine today nothing exciting happened
+i spent the whole afternoon reorganising my room for no reason
+been listening to the same album on repeat for four days
+i really should go to sleep soon
+my flatmate keeps leaving dishes in the sink and it is driving me mad
+i finally finished that series everyone kept talking about
+today was one of those days where nothing went wrong but nothing went right either
+i am trying to drink more water and failing
+just moved to a new city and i do not know anyone here yet
+the coffee shop near me closed down and i am taking it personally
+i have a huge exam next week and i have done almost nothing
+my phone battery lasts about four hours now which is great
+i went for a run this morning and immediately regretted it
+i keep saying i will start reading more and then i do not
+the bus was twenty minutes late again
+i made bread yesterday and it came out like a brick
+my sister just got a puppy and it is chaos over there
+i am absolutely terrible at keeping plants alive
+been thinking about learning an instrument but i say that every year
+today i walked past a bakery and the smell nearly killed me
+i cannot sleep when it is too quiet
+my neighbours had a party until four in the morning
+i am saving up for a trip but i keep buying nonsense instead
+the food here is genuinely good and i did not expect that
+i have been meaning to call my parents for two weeks
+i tried to fix my bike and now it is worse
+honestly i just needed to talk to someone outside my usual circle
+it is far too hot to do anything productive
+i started a new job last month and it is still strange
+i have watched the same film three times this month
+my desk is a disaster and i refuse to deal with it
+i love thunderstorms as long as i am inside
+the gym was packed today so i left immediately
+i am bad at remembering names and it is embarrassing
+i have not been outside all day which is not great
+someone left a whole box of biscuits in the kitchen at work
+i think i am getting a cold
+my headphones broke and everything is worse now
+the queue at the post office was somehow forty minutes long
+i finally cleaned the kitchen and i want a medal for it
+my train was cancelled so i walked half the way home
+i have three unfinished projects and i started a fourth today
+the radiator in my room makes a noise like a small animal
+i bought a plant that is supposed to be unkillable and we will see

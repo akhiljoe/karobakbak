@@ -1,0 +1,38 @@
+# Questions draw an answer, which is what actually keeps a conversation alive.
+# A corpus of only statements produces two people talking past each other, and
+# conversations that die after two turns — which would quietly make every
+# session-duration number in the run wrong.
+what do you do when you are not here
+how has your day been so far
+do you have any plans for the weekend
+what is the weather like where you are
+are you a morning person or a night person
+what have you been watching lately
+do you cook or do you mostly order in
+what is something you are looking forward to
+do you have any pets
+how long have you been up
+what kind of music do you listen to
+do you prefer summer or winter
+what did you have for dinner
+are you working or studying at the moment
+what is the last good book you read
+do you travel much
+what is your favourite way to waste an afternoon
+are you usually this chatty
+what would you be doing right now if you could pick anything
+do you like where you live
+what is something small that made you happy this week
+are you any good at cooking
+what do you usually do to relax
+have you been anywhere interesting recently
+what is the best meal you have had this month
+do you play any games
+what time is it where you are
+how do you usually spend your evenings
+do you have siblings
+what is something you have always wanted to try
+what is the weirdest job you have ever had
+how did you end up here tonight
+do you like your neighbourhood
+what is your idea of a perfect day off

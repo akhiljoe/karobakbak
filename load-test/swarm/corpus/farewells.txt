@@ -1,0 +1,21 @@
+# How a conversation actually ends, as opposed to how a load test usually ends
+# one. N1, N8 and S4 send one of these before leaving, so a clean teardown has
+# a shape a human would recognise and the partner has something to react to.
+anyway i should get going
+this was nice thanks for the chat
+alright i am off take care
+i need to sleep it is very late here
+have a good one
+nice talking to you
+i have to run but this was fun
+take care of yourself
+alright my food is ready bye
+thanks for the conversation have a good night
+i should probably do some actual work now
+good chat see you around
+that is my cue to leave enjoy your day
+i am getting called away sorry
+right i am off good luck with everything
+bye then have a nice evening
+lovely talking to you all the best
+i am falling asleep at this point goodnight

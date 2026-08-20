@@ -53,6 +53,21 @@ services:
         VITE_ADS_PROVIDER: "${VITE_ADS_PROVIDER:-noop}"
     ports:
       - "${FRONTEND_PORT:-8081}:80"
+    environment:
+      # nginx's per-worker connection ceiling, applied by the entrypoint script
+      # in the image. The stock 1024 sounds generous and is not: a proxied
+      # WebSocket costs two connections, one downstream and one upstream, so it
+      # caps this edge at about 512 concurrent conversations per worker — a
+      # limit that is reached long before any backend limit and that fails as
+      # refused upgrades, which look like a backend fault. `.env.loadtest`
+      # raises it for a run with thousands of bots.
+      NGINX_WORKER_CONNECTIONS: "${NGINX_WORKER_CONNECTIONS:-1024}"
+    ulimits:
+      # A file-descriptor limit below the connection limit turns an accept()
+      # into EMFILE, which reads as an unexplained refusal rather than a limit.
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       backend:
         condition: service_healthy

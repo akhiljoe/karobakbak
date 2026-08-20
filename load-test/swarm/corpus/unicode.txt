@@ -1,0 +1,26 @@
+# N4 sends these. Emoji, CJK, Cyrillic, Arabic, Hebrew, Greek, combining marks
+# and a zero-width space.
+#
+# Every line is a length-counting trap. A family emoji is one grapheme and
+# eleven UTF-16 code units; a server that counts the wrong unit either rejects
+# a legal message or accepts one twice the size it believes it accepted. The
+# oracle is byte-exactness: what the sender typed, what the partner received
+# and what PostgreSQL stored must be identical.
+that was hilarious 😂😂😂 i cannot stop laughing at this
+今日はとてもいい天気ですね散歩に行きたいです
+привет как дела у тебя сегодня всё хорошо
+مرحبا كيف حالك اليوم أتمنى أن تكون بخير
+안녕하세요 오늘 하루는 어땠나요 좋은 하루 보내세요
+this is fine 🔥🔥 everything is completely fine 🔥
+我今天吃了很好吃的面条你呢吃了什么
+café naïve résumé jalapeño über straße
+👨‍👩‍👧‍👦 a family emoji is one character and also eleven
+ありがとうございます、とても助かりました
+🎉 congratulations 🎊 that is genuinely great news 🥳
+γειά σου τι κάνεις σήμερα όλα καλά
+שלום מה שלומך היום הכל בסדר
+this sentence has a zero​width​space hiding inside it
+🇮🇳 🇯🇵 🇧🇷 🇳🇱 flags are two code points each which is fun
+ผมชอบอาหารไทยมากโดยเฉพาะต้มยำกุ้ง
+mixed script test 你好 hello привет مرحبا all in one line
+🙂🙃😊😄😁😆🥲 an entire row of faces and nothing else

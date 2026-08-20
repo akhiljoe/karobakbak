@@ -1,0 +1,15 @@
+# A3 sends these. Every line here MUST fire a moderation rule, and the lint
+# fails the run if one does not — a link dropper that trips nothing is not
+# testing anything, and its silence would read as a passing moderation check.
+check this out https://example.com/deal
+go to www.freestuffnow.xyz right now
+visit shadysite.biz for details
+my portfolio is at portfolio.dev take a look
+join discord.gg/abcdefg
+click here http://192.168.1.44/promo
+see it at bit.ly/3xample
+everything is on t.me/somechannel
+find me at myshop.store cheap prices
+the file is at http://download.site/free
+have a look at thisplace.online before it goes
+mirror is up at backup.link/files

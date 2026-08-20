@@ -1,0 +1,19 @@
+# A1 and A2 campaigns. One line per campaign: a copy-paste spammer picks one
+# and sends only that, to hundreds of strangers, forever.
+#
+# Deliberately innocuous in content. That is the entire point of the scenario:
+# repetition is invisible to a rule engine that only ever looks at one message
+# in one conversation, so these lines fire nothing and the bot is caught by
+# cross-conversation analysis or not at all.
+hey wanna see something cool
+hi im bored wanna talk somewhere else
+hey check my profile
+free money method message me back
+hi are you interested in earning from home
+hey i have something to show you
+wanna make easy cash today
+hi there interested in a business opportunity
+hey there wanna chat privately instead
+join my group we have great content
+hello friend i have an offer for you
+quick question are you free to talk business

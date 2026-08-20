@@ -1,0 +1,34 @@
+# First lines. This product's real opening move, minus anything that would
+# trip a moderation rule — see corpus.ts for why that matters.
+hey
+hi there
+hello
+yo
+hey how are you
+hi how is it going
+good evening
+sup
+anyone there
+hey whats up
+hello stranger
+hi hi
+hey there how are you doing today
+good morning
+hey you
+whats going on
+hello anyone awake
+hi bored here
+hey random person
+so what brings you here
+hi from a rainy place
+hello how was your day
+hey looking for someone to talk to
+hi i am new here
+good afternoon
+hey how is your week going
+hello is anyone actually here
+hi there hope you are well
+hey what are you up to
+morning
+evening
+hi whats new with you

@@ -36,6 +36,9 @@ junit.xml
 # load test output
 load-test/results/
 *.k6-summary.json
+# Swarm run artefacts: ledgers hold no message text (hashes only), but they are
+# large and they are evidence about one run, not about the code.
+load-test/swarm/runs/
 
 # runtime volumes
 data/
