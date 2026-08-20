@@ -16,6 +16,7 @@ import type { Preferences } from '../preferences';
 import type { Profile } from '../protocol/types';
 import { Button } from './Button';
 import { ProfileFields } from './ProfileFields';
+import { requestNotificationPermission } from '../notify';
 
 interface SettingsSheetProps {
   open: boolean;
@@ -89,6 +90,31 @@ export function SettingsSheet({
             />
           </div>
         </section>
+
+        <Toggle
+          label="Alert me when I match"
+          description="A sound and a tab badge if you are looking at another tab. Never while you are watching the page."
+          checked={preferences.notifyOnMatch}
+          onChange={(value) => {
+            onChange('notifyOnMatch', value);
+            // Permission is requested here, on a deliberate opt-in, and never
+            // on page load: an unprompted dialog from a site somebody has used
+            // for ten seconds is the one everybody dismisses, and a denial is
+            // permanent.
+            if (value) void requestNotificationPermission();
+          }}
+        />
+
+        <div className="h-2" />
+
+        <Toggle
+          label="Find the next stranger automatically"
+          description="When someone leaves, start looking again after a moment. Never after you block someone."
+          checked={preferences.autoSearch}
+          onChange={(value) => onChange('autoSearch', value)}
+        />
+
+        <div className="h-2" />
 
         <Toggle
           label="Conversation starters"

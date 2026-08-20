@@ -346,7 +346,10 @@ export class SessionLifecycle {
           blockerKey,
           blockedKey,
           dimension,
-          conversationId: result.matchId,
+          // Null, not the empty string, when the match had already ended: the
+          // column is a nullable foreign key, and '' is neither a conversation
+          // nor an honest "there wasn't one".
+          conversationId: result.matchId === '' ? null : result.matchId,
           createdAt: nowIso(),
           expiresAt,
         });
@@ -362,6 +365,13 @@ export class SessionLifecycle {
         sessionId,
         matchId: result.matchId,
       });
+    }
+
+    if (result.matchId === '') {
+      // The partner had already gone. Worth its own line: this is the case that
+      // silently recorded nothing before the late window existed, so a count of
+      // it is how anyone would notice the window being too short.
+      this.logger.info('blocked a partner who had already left', { sessionId });
     }
 
     return { kind: 'blocked', matchId: result.matchId, recorded: result.recorded };

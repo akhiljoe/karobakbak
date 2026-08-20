@@ -40,10 +40,37 @@ export interface Preferences {
    * asked for". It is discoverable in settings rather than absent.
    */
   readonly icebreakers: boolean;
+  /**
+   * Look for the next stranger automatically when this one leaves.
+   *
+   * **Off by default**, on the same reasoning as `icebreakers` and for a
+   * sharper reason: auto-advancing puts somebody into a conversation with a
+   * new stranger without them asking. That is the mechanic that turns a chat
+   * product into an endless feed, and the moment where a person decides to
+   * stop is worth preserving unless they have said otherwise.
+   *
+   * Only ever applies when the *partner* left. Blocking somebody and then
+   * being dropped into a fresh conversation three seconds later contradicts
+   * what blocking meant, which is why `block` lands in IDLE rather than back
+   * in the queue.
+   */
+  readonly autoSearch: boolean;
+  /**
+   * Alert me when I match and I am looking at another tab.
+   *
+   * **On by default**, unlike the other two, because it exists to prevent a
+   * loss rather than to add something. Finding a stranger takes long enough
+   * that people tab away, and coming back to a conversation the stranger
+   * already abandoned reads as a broken product. Every channel is gated on the
+   * tab being hidden, so somebody watching the screen is never interrupted.
+   */
+  readonly notifyOnMatch: boolean;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
   icebreakers: false,
+  autoSearch: false,
+  notifyOnMatch: true,
 };
 
 /**
@@ -78,6 +105,14 @@ export function loadPreferences(storage: Storage | undefined = safeStorage()): P
       typeof stored.icebreakers === 'boolean'
         ? stored.icebreakers
         : DEFAULT_PREFERENCES.icebreakers,
+    autoSearch:
+      typeof stored.autoSearch === 'boolean'
+        ? stored.autoSearch
+        : DEFAULT_PREFERENCES.autoSearch,
+    notifyOnMatch:
+      typeof stored.notifyOnMatch === 'boolean'
+        ? stored.notifyOnMatch
+        : DEFAULT_PREFERENCES.notifyOnMatch,
   };
 }
 

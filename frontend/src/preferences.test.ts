@@ -47,7 +47,7 @@ describe('preferences', () => {
 
   it('round-trips a change', () => {
     const storage = fakeStorage();
-    savePreferences({ icebreakers: true }, storage);
+    savePreferences({ icebreakers: true, autoSearch: false, notifyOnMatch: true }, storage);
     expect(loadPreferences(storage).icebreakers).toBe(true);
   });
 
@@ -64,7 +64,7 @@ describe('preferences', () => {
     // failing to load must never be the reason a conversation cannot happen.
     expect(() => loadPreferences(hostileStorage())).not.toThrow();
     expect(loadPreferences(hostileStorage())).toEqual(DEFAULT_PREFERENCES);
-    expect(() => savePreferences({ icebreakers: true }, hostileStorage())).not.toThrow();
+    expect(() => savePreferences({ icebreakers: true, autoSearch: false, notifyOnMatch: true }, hostileStorage())).not.toThrow();
     expect(() => loadPreferences(undefined)).not.toThrow();
   });
 
@@ -73,8 +73,16 @@ describe('preferences', () => {
     // identifiers — localStorage long outlives the socket, and the product is
     // anonymous.
     const storage = fakeStorage();
-    savePreferences({ icebreakers: true }, storage);
-    expect(Object.keys(JSON.parse(storage.getItem(KEY) ?? '{}'))).toEqual(['icebreakers']);
+    savePreferences({ icebreakers: true, autoSearch: false, notifyOnMatch: true }, storage);
+    // An exact list, not a subset check: the point is that a field added here
+    // has to be a deliberate act, so that a name, a country or anything else
+    // identifying cannot arrive by habit. Those live in `profile.ts`, which is
+    // a separate store for exactly this reason.
+    expect(Object.keys(JSON.parse(storage.getItem(KEY) ?? '{}')).sort()).toEqual([
+      'autoSearch',
+      'icebreakers',
+      'notifyOnMatch',
+    ]);
   });
 });
 

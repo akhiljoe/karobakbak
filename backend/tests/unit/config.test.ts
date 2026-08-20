@@ -230,6 +230,7 @@ describe('loadConfig — Redis layer settings', () => {
       ttlSeconds: 2_592_000,
       ipDimensionEnabled: true,
       clientDimensionEnabled: true,
+      lateBlockSeconds: 120,
     });
   });
 

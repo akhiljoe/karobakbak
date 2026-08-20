@@ -57,6 +57,7 @@ local function kMatches()      return P .. ':matches' end
 local function kUserMatch(sid) return P .. ':user_match:' .. sid end
 local function kDedupe(mid)    return P .. ':dedupe:' .. mid end
 local function kBlocks(b)      return P .. ':blocks:' .. b end
+local function kLastPartner(sid) return P .. ':last_partner:' .. sid end
 local function kInstance(iid)  return P .. ':instance:' .. iid end
 local function kConn(ip)       return P .. ':conn:' .. ip end
 
@@ -101,7 +102,7 @@ end
 -- deleted match can never deliver again): the match record, both user_match
 -- keys and the dedupe set all go in the same atomic script.
 -- Returns nil if the match was already gone, else { a, b, segment }.
-local function endMatchInline(mid, sessionTtl)
+local function endMatchInline(mid, sessionTtl, lateTtl)
   local mkey = kMatch(mid)
   local flat = redis.call('HGETALL', mkey)
   if #flat == 0 then
@@ -116,6 +117,31 @@ local function endMatchInline(mid, sessionTtl)
   redis.call('DEL', kDedupe(mid))
   local seg = m['segment'] or ''
   local sides = { m['a'], m['b'] }
+
+  -- Remember, briefly, who each side was just talking to.
+  --
+  -- Blocking races teardown constantly: an abuser sends something and skips,
+  -- and the victim's block arrives after the match is already gone. Without
+  -- this the block finds no match, records nothing, and the user is told
+  -- nothing went wrong — they believe they blocked somebody they did not.
+  --
+  -- Only the departed party's two salted hashes, only for lateTtl seconds,
+  -- and only to honour an intent the user has already formed. The
+  -- pairing it records was already implied by the match row it replaces.
+  lateTtl = tonumber(lateTtl) or 0
+  if lateTtl > 0 then
+    local ha = redis.call('HMGET', kSession(m['a'] or ''), 'ipHash', 'clientHash')
+    local hb = redis.call('HMGET', kSession(m['b'] or ''), 'ipHash', 'clientHash')
+    if m['a'] and m['a'] ~= '' and (hb[1] or hb[2]) then
+      redis.call('HSET', kLastPartner(m['a']), 'ipHash', hb[1] or '', 'clientHash', hb[2] or '')
+      redis.call('EXPIRE', kLastPartner(m['a']), lateTtl)
+    end
+    if m['b'] and m['b'] ~= '' and (ha[1] or ha[2]) then
+      redis.call('HSET', kLastPartner(m['b']), 'ipHash', ha[1] or '', 'clientHash', ha[2] or '')
+      redis.call('EXPIRE', kLastPartner(m['b']), lateTtl)
+    end
+  end
+
   for i = 1, #sides do
     local sid = sides[i]
     if sid and sid ~= '' then
@@ -425,9 +451,9 @@ return { 'MATCHED', mid, best, cleaned, blockedSkipped }
 const endMatch = define(
   'endMatch',
   1,
-  3,
+  4,
   `
-local r = endMatchInline(ARGV[2], tonumber(ARGV[3]))
+local r = endMatchInline(ARGV[2], tonumber(ARGV[3]), tonumber(ARGV[4]))
 if not r then return { 'ALREADY_ENDED' } end
 return { 'ENDED', r[1], r[2], r[3] }
 `,
@@ -635,25 +661,44 @@ return { n }
 const blockPartner = define(
   'blockPartner',
   1,
-  6,
+  7,
   `
 local sid = ARGV[2]
-local mid = redis.call('GET', KEYS[1])
-if not mid then return { 'NOT_MATCHED' } end
-local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
-if not m[1] then return { 'NOT_MATCHED' } end
-local partner
-if m[1] == sid then
-  partner = m[2]
-elseif m[2] == sid then
-  partner = m[1]
-else
-  return { 'NOT_MATCHED' }
-end
-
 local ttl = tonumber(ARGV[3])
 local mine = redis.call('HMGET', kSession(sid), 'ipHash', 'clientHash')
-local theirs = redis.call('HMGET', kSession(partner), 'ipHash', 'clientHash')
+
+local mid = redis.call('GET', KEYS[1])
+local partner
+local theirs
+local live = false
+
+if mid then
+  local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
+  if m[1] then
+    if m[1] == sid then
+      partner = m[2]
+    elseif m[2] == sid then
+      partner = m[1]
+    end
+  end
+end
+
+if partner then
+  live = true
+  theirs = redis.call('HMGET', kSession(partner), 'ipHash', 'clientHash')
+else
+  -- The match is already gone: the partner skipped, disconnected or was
+  -- reaped between the user deciding to block and the frame arriving. Their
+  -- hashes were kept for exactly this window by endMatchInline.
+  --
+  -- Recording it is the point. A block that finds no match and silently does
+  -- nothing tells the user they are protected when they are not, and the
+  -- people most likely to leave first are the ones most worth blocking.
+  local last = redis.call('HMGET', kLastPartner(sid), 'ipHash', 'clientHash')
+  if not last[1] and not last[2] then return { 'NOT_MATCHED' } end
+  theirs = last
+  partner = ''
+end
 local recorded = 0
 if ARGV[4] == '1' and mine[1] and theirs[1] then
   redis.call('SADD', kBlocks(mine[1]), theirs[1])
@@ -667,11 +712,22 @@ if ARGV[5] == '1' and mine[2] and theirs[2] then
 end
 
 local ended = 0
-if endMatchInline(mid, tonumber(ARGV[6])) then ended = 1 end
+if live and endMatchInline(mid, tonumber(ARGV[6]), tonumber(ARGV[7])) then ended = 1 end
+
+-- Spent, either way: one decision records one block.
+--
+-- The live branch matters as much as the late one. Blocking ends the match,
+-- and that teardown writes a late-block record for *both* sides — including
+-- the blocker, who would then be able to block the same person again for the
+-- whole window, recording twice and spending two of their twenty hourly
+-- blocks on somebody already blocked. The blocked party keeps theirs: they
+-- may want to block back, and that is a separate decision by a different
+-- person.
+redis.call('DEL', kLastPartner(sid))
 -- The blocked party's hashes are returned so the caller can write a truthful
 -- database row. They are salted hashes the server computed itself, and they
 -- never reach a client.
-return { 'BLOCKED', mid, partner, recorded, ended, theirs[1] or '', theirs[2] or '' }
+return { 'BLOCKED', mid or '', partner, recorded, ended, theirs[1] or '', theirs[2] or '' }
 `,
 );
 
@@ -717,10 +773,11 @@ return { removed, redis.call('SCARD', KEYS[1]) }
 const janitorMatches = define(
   'janitorMatches',
   1,
-  3,
+  4,
   `
 local mids = redis.call('SRANDMEMBER', KEYS[1], tonumber(ARGV[2]))
 local sessionTtl = tonumber(ARGV[3])
+local lateTtl = tonumber(ARGV[4]) or 0
 local dropped = 0
 local ended = 0
 local survivors = {}
@@ -735,7 +792,7 @@ for i = 1, #mids do
     local aAlive = redis.call('EXISTS', kSession(m[1])) == 1
     local bAlive = redis.call('EXISTS', kSession(m[2])) == 1
     if not (aAlive and bAlive) then
-      if endMatchInline(mid, sessionTtl) then
+      if endMatchInline(mid, sessionTtl, lateTtl) then
         ended = ended + 1
         if aAlive then
           survivors[#survivors + 1] = m[1]
@@ -765,10 +822,11 @@ return out
 const janitorSessions = define(
   'janitorSessions',
   1,
-  3,
+  4,
   `
 local sids = redis.call('SRANDMEMBER', KEYS[1], tonumber(ARGV[2]))
 local sessionTtl = tonumber(ARGV[3])
+local lateTtl = tonumber(ARGV[4]) or 0
 local reaped = 0
 local ended = 0
 local survivors = {}
@@ -796,7 +854,7 @@ for i = 1, #sids do
       elseif m[2] == sid then
         survivor = m[1] or ''
       end
-      if endMatchInline(mid, sessionTtl) then
+      if endMatchInline(mid, sessionTtl, lateTtl) then
         ended = ended + 1
         if survivor ~= '' and redis.call('EXISTS', kSession(survivor)) == 1 then
           survivors[#survivors + 1] = survivor

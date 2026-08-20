@@ -20,6 +20,9 @@ interface LandingScreenProps {
   state: ChatState;
   ended: boolean;
   onStart(): void;
+  /** Seconds until auto-search fires, or null when it is not running. */
+  autoSearchIn: number | null;
+  onCancelAutoSearch(): void;
   profile: Profile;
   onProfileChange(profile: Profile): void;
   onProfileClear(): void;
@@ -29,6 +32,8 @@ export function LandingScreen({
   state,
   ended,
   onStart,
+  autoSearchIn,
+  onCancelAutoSearch,
   profile,
   onProfileChange,
   onProfileClear,
@@ -95,8 +100,28 @@ export function LandingScreen({
         <div className="mt-5 w-full max-w-xs">
           <Button size="lg" onClick={onStart} disabled={connecting} className="w-full">
             <Sparkles className="h-5 w-5" />
-            {connecting ? 'Connecting…' : ended ? 'Find someone else' : 'Start chatting'}
+            {connecting
+              ? 'Connecting…'
+              : autoSearchIn !== null
+                ? `Finding someone in ${autoSearchIn}…`
+                : ended
+                  ? 'Find someone else'
+                  : 'Start chatting'}
           </Button>
+
+          {/*
+            A countdown that cannot be stopped is not a convenience. The cancel
+            is the whole reason this is acceptable to have on by choice.
+          */}
+          {autoSearchIn !== null && (
+            <button
+              type="button"
+              onClick={onCancelAutoSearch}
+              className="mt-2 w-full text-xs text-ink-400 underline underline-offset-2 transition-colors hover:text-amber-300"
+            >
+              Stay here instead
+            </button>
+          )}
         </div>
 
         <div className="mt-6 flex items-center justify-center gap-2 text-xs text-ink-500">

@@ -122,6 +122,22 @@ export interface Config {
     readonly ipDimensionEnabled: boolean;
     /** Precise but trivially rotated by clearing browser storage (D18). */
     readonly clientDimensionEnabled: boolean;
+    /**
+     * How long after a conversation ends a departed partner can still be
+     * blocked.
+     *
+     * Blocking races teardown constantly: an abuser sends something and skips,
+     * and the victim's block arrives after the match is already gone. Before
+     * this window existed the block found no match, recorded nothing, and the
+     * user was told nothing had gone wrong — believing they had blocked
+     * somebody they had not.
+     *
+     * The cost is that each side's two salted hashes are held against the
+     * other's session id for this long. That pairing was already implied by the
+     * match row it replaces, and it expires on its own. Set to 0 to disable the
+     * record entirely.
+     */
+    readonly lateBlockSeconds: number;
   };
 
   /**
@@ -525,6 +541,7 @@ export function loadConfig(env: Env = process.env): Config {
       ttlSeconds: int(env, 'BLOCK_TTL_SECONDS', 2_592_000, 60, 31_536_000),
       ipDimensionEnabled: bool(env, 'BLOCK_DIMENSION_IP_ENABLED', true),
       clientDimensionEnabled: bool(env, 'BLOCK_DIMENSION_CLIENT_ENABLED', true),
+      lateBlockSeconds: int(env, 'BLOCK_LATE_WINDOW_SECONDS', 120, 0, 3600),
     },
 
     enforcement: {

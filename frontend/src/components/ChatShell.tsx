@@ -36,6 +36,11 @@ interface ChatShellProps {
   searching: boolean;
   /** The person asked for conversation starters. Off unless they did. */
   icebreakersEnabled: boolean;
+  /** Auto-find the next stranger when this one leaves. Same preference as Settings. */
+  autoSearch: boolean;
+  onToggleAutoSearch(value: boolean): void;
+  /** Block the current partner and move on, in one action. */
+  onBlockAndNext(): void;
   onSend(text: string): void;
   onTyping(active: boolean): void;
   onSkip(): void;
@@ -49,6 +54,9 @@ export function ChatShell({
   connection,
   searching,
   icebreakersEnabled,
+  autoSearch,
+  onToggleAutoSearch,
+  onBlockAndNext,
   onSend,
   onTyping,
   onSkip,
@@ -177,8 +185,12 @@ export function ChatShell({
       {chatting && (
         <ActionBar
           safetyAvailable={safetyAvailable}
+          blockAvailable={state.features.block}
+          autoSearch={autoSearch}
           onSkip={onSkip}
           onOpenSafety={onOpenSafety}
+          onBlockAndNext={onBlockAndNext}
+          onToggleAutoSearch={onToggleAutoSearch}
         />
       )}
     </div>

@@ -72,6 +72,15 @@ export interface ChatState {
   readonly endReason: EndReason | null;
   /** A short, developer-authored line to show. Never raw server internals. */
   readonly notice: string | null;
+  /**
+   * When the server last refused a command for rate limiting.
+   *
+   * Only auto-search reads it, to lengthen its countdown rather than retrying
+   * into the same refusal. The server knows the exact wait and does not send
+   * it — adding that to the error payload is a protocol change worth making if
+   * a second caller ever needs it, and guessing is fine for one.
+   */
+  readonly rateLimitedAt: number | null;
   readonly reportSent: boolean;
   /**
    * The user asked to go home and the server has not confirmed it yet.
@@ -112,6 +121,7 @@ export const initialState: ChatState = {
   presence: null,
   endReason: null,
   notice: null,
+  rateLimitedAt: null,
   reportSent: false,
   leaving: false,
 };
@@ -346,7 +356,7 @@ export function reduce(state: ChatState, action: Action): ChatState {
 function applyError(state: ChatState, error: ErrorPayload): ChatState {
   switch (error.code) {
     case 'RATE_LIMITED':
-      return { ...state, notice: 'Slow down a moment.' };
+      return { ...state, notice: 'Slow down a moment.', rateLimitedAt: Date.now() };
     case 'MESSAGE_TOO_LONG':
       return { ...state, notice: 'That message is too long.' };
     case 'EMPTY_MESSAGE':

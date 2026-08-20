@@ -187,6 +187,122 @@ describe('blockPartner', () => {
   });
 });
 
+describe('blocking a partner who already left', () => {
+  /**
+   * The race this exists for: an abuser sends something and immediately skips,
+   * so the block arrives after the match is already gone. Before the late
+   * window, that block recorded nothing and told the user nothing was wrong.
+   */
+  it('records the block after the partner ended the match', async () => {
+    const alice = await party(ctx, 'alice');
+    const mallory = await party(ctx, 'mallory');
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const matched = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+
+    // Mallory leaves first.
+    await ctx.store.endMatch(matched.matchId);
+
+    const result = await ctx.store.blockPartner(alice.sessionId);
+    expect(result).toMatchObject({ status: 'blocked', recorded: 2, endedByUs: false });
+
+    // And the block is real: both dimensions are in Alice's block sets.
+    expect(await ctx.client.sismember(ctx.keys.blocks(alice.ipHash), mallory.ipHash)).toBe(1);
+    expect(await ctx.client.sismember(ctx.keys.blocks(alice.clientHash), mallory.clientHash)).toBe(1);
+  });
+
+  it('keeps them unmatchable afterwards (I12)', async () => {
+    // The whole point. A recorded block that still let the pair meet again
+    // would be bookkeeping, not protection.
+    const alice = await party(ctx, 'alice');
+    const mallory = await party(ctx, 'mallory');
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const matched = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+    await ctx.store.endMatch(matched.matchId);
+    await ctx.store.blockPartner(alice.sessionId);
+
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const again = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    expect(again.status).toBe('waiting');
+    if (again.status === 'waiting') expect(again.blockedSkipped).toBeGreaterThan(0);
+  });
+
+  it('is spent once used, so one departure costs one block', async () => {
+    // The block budget is 20 an hour. Letting the same departed partner be
+    // blocked repeatedly for the whole window would spend it on somebody
+    // already blocked.
+    const alice = await party(ctx, 'alice');
+    const mallory = await party(ctx, 'mallory');
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const matched = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+    await ctx.store.endMatch(matched.matchId);
+
+    expect((await ctx.store.blockPartner(alice.sessionId)).status).toBe('blocked');
+    expect(await ctx.store.blockPartner(alice.sessionId)).toEqual({ status: 'not_matched' });
+  });
+
+  it('expires, so a block minutes later still finds nothing', async () => {
+    const alice = await party(ctx, 'alice');
+    const mallory = await party(ctx, 'mallory');
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const matched = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+    await ctx.store.endMatch(matched.matchId);
+
+    const ttl = await ctx.client.ttl(`${ctx.keys.prefix}:last_partner:${alice.sessionId}`);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(ctx.config.blocks.lateBlockSeconds);
+
+    // Simulate the window passing.
+    await ctx.client.del(`${ctx.keys.prefix}:last_partner:${alice.sessionId}`);
+    expect(await ctx.store.blockPartner(alice.sessionId)).toEqual({ status: 'not_matched' });
+  });
+
+  it('records nothing at all when the window is disabled', async () => {
+    const off = await createTestContext({ BLOCK_LATE_WINDOW_SECONDS: '0' });
+    try {
+      const alice = await party(off, 'alice');
+      const mallory = await party(off, 'mallory');
+      await enqueue(off, mallory.sessionId);
+      await enqueue(off, alice.sessionId);
+      const matched = await off.store.tryMatch(alice.sessionId, off.segment, newMatchId());
+      if (matched.status !== 'matched') throw new Error('expected a match');
+      await off.store.endMatch(matched.matchId);
+
+      expect(await off.store.blockPartner(alice.sessionId)).toEqual({ status: 'not_matched' });
+    } finally {
+      await off.flush();
+      await off.close();
+    }
+  });
+
+  it('does not resurrect a match: nothing is ended and nobody is notified', async () => {
+    // `endedByUs` drives whether the caller notifies a peer. A late block must
+    // report false, or the server sends a partner_left about a match that
+    // ended minutes ago to whoever now holds that session id.
+    const alice = await party(ctx, 'alice');
+    const mallory = await party(ctx, 'mallory');
+    await enqueue(ctx, mallory.sessionId);
+    await enqueue(ctx, alice.sessionId);
+    const matched = await ctx.store.tryMatch(alice.sessionId, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+    await ctx.store.endMatch(matched.matchId);
+
+    const result = await ctx.store.blockPartner(alice.sessionId);
+    if (result.status !== 'blocked') throw new Error('expected a block');
+    expect(result.endedByUs).toBe(false);
+    expect(result.partnerSessionId).toBe('');
+    expect(await ctx.client.exists(ctx.keys.userMatch(alice.sessionId))).toBe(0);
+  });
+});
+
 describe('tryMatch honours blocks (I12)', () => {
   it('refuses the pair in the blocker → blocked direction', async () => {
     const alice = await party(ctx, 'alice');

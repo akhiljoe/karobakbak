@@ -239,6 +239,13 @@ function profileFromFields(raw: unknown): Profile | null {
 
 export class RedisStore {
   private readonly sessionTtl: number;
+  /**
+   * How long a departed partner stays blockable after the match ends.
+   *
+   * Zero disables the record entirely, and the teardown then behaves exactly as
+   * it did before this existed.
+   */
+  private readonly lateBlockTtl: number;
   private readonly matchTtl: number;
 
   constructor(
@@ -249,6 +256,7 @@ export class RedisStore {
   ) {
     this.sessionTtl = config.ttl.sessionSeconds;
     this.matchTtl = config.ttl.matchSeconds;
+    this.lateBlockTtl = config.blocks.lateBlockSeconds;
   }
 
   /* --- session lifecycle -------------------------------------------------- */
@@ -412,7 +420,7 @@ export class RedisStore {
     const reply = await this.runner.run(
       'endMatch',
       [this.keys.match(matchId)],
-      [this.keys.prefix, matchId, this.sessionTtl],
+      [this.keys.prefix, matchId, this.sessionTtl, this.lateBlockTtl],
     );
     if (str(reply, 0) === 'ALREADY_ENDED') return { status: 'already_ended' };
     return { status: 'ended', a: str(reply, 1), b: str(reply, 2), segment: str(reply, 3) };
@@ -576,6 +584,7 @@ export class RedisStore {
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
         this.sessionTtl,
+        this.lateBlockTtl,
       ],
     );
     if (str(reply, 0) === 'NOT_MATCHED') return { status: 'not_matched' };
@@ -729,7 +738,7 @@ export class RedisStore {
     const reply = await this.runner.run(
       'janitorMatches',
       [this.keys.matches()],
-      [this.keys.prefix, this.config.janitor.batch, this.sessionTtl],
+      [this.keys.prefix, this.config.janitor.batch, this.sessionTtl, this.lateBlockTtl],
     );
     return {
       dropped: num(reply, 0),
@@ -742,7 +751,7 @@ export class RedisStore {
     const reply = await this.runner.run(
       'janitorSessions',
       [this.keys.sessions()],
-      [this.keys.prefix, this.config.janitor.batch, this.sessionTtl],
+      [this.keys.prefix, this.config.janitor.batch, this.sessionTtl, this.lateBlockTtl],
     );
     return {
       reaped: num(reply, 0),

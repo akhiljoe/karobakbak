@@ -13,6 +13,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AppHeader } from './components/AppHeader';
+import { useAutoSearch } from './hooks/useAutoSearch';
+import { useMatchNotification } from './hooks/useMatchNotification';
+import { unlockSound } from './notify';
 import { EMPTY_PROFILE, clearProfile, loadProfile, saveProfile } from './profile';
 import type { Profile } from './protocol/types';
 import { AuthModal } from './components/AuthModal';
@@ -81,6 +84,39 @@ export function App(): JSX.Element {
 
   const showShell = phase === 'searching' || phase === 'chatting';
 
+  useMatchNotification({ state, enabled: preferences.notifyOnMatch });
+
+  // Browsers refuse to start audio without a user gesture. Starting a search is
+  // the one gesture guaranteed to precede any match, so the context is unlocked
+  // there rather than on load, where it would be refused.
+  const startSearch = useCallback(() => {
+    unlockSound();
+    chat.start(profile);
+  }, [chat, profile]);
+
+  /**
+   * Block this person and move on, in one action.
+   *
+   * Auto-search deliberately refuses to fire after a block — being dropped into
+   * a new conversation seconds after blocking someone contradicts what blocking
+   * meant. This is not that: the button says "next", so the person asked. An
+   * explicit request and an automatic behaviour are different things, and only
+   * the automatic one needs protecting against.
+   *
+   * Both frames go out on the same socket in order, so the server ends the
+   * match and then queues the join; no wait is needed between them.
+   */
+  const blockAndNext = useCallback(() => {
+    chat.block();
+    startSearch();
+  }, [chat, startSearch]);
+
+  const autoSearch = useAutoSearch({
+    state,
+    enabled: preferences.autoSearch,
+    onSearch: startSearch,
+  });
+
   // Held in the browser, re-sent on every join. The server keeps nothing
   // between sessions, so this is the only place the declaration lives.
   const updateProfile = useCallback((next: Profile) => {
@@ -111,6 +147,9 @@ export function App(): JSX.Element {
               connection={connection}
               searching={phase === 'searching'}
               icebreakersEnabled={preferences.icebreakers}
+              autoSearch={preferences.autoSearch}
+              onToggleAutoSearch={(value) => setPreference('autoSearch', value)}
+              onBlockAndNext={blockAndNext}
               onSend={chat.send}
               onTyping={chat.typing}
               onSkip={chat.skip}
@@ -122,7 +161,9 @@ export function App(): JSX.Element {
             <LandingScreen
               state={state}
               ended={phase === 'ended'}
-              onStart={() => chat.start(profile)}
+              onStart={startSearch}
+              autoSearchIn={autoSearch.secondsLeft}
+              onCancelAutoSearch={autoSearch.cancel}
               profile={profile}
               onProfileChange={updateProfile}
               onProfileClear={resetProfile}
