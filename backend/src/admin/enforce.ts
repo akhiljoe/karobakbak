@@ -49,6 +49,16 @@ const REFUSING_ACTIONS: ReadonlySet<EnforcementAction> = new Set(['ban', 'suspen
 export interface BanRequest {
   /** The report this came from. Carried into the audit row as the case id. */
   readonly reportId: string;
+  /**
+   * The subject's identity hashes.
+   *
+   * **Never taken from a request body.** `issueBanForReport` derives these
+   * from the report itself; this shape exists for that caller and for tests.
+   * A route that accepted hashes from the client would let anyone holding a
+   * console session ban an arbitrary third party — including, with a guessed
+   * or observed hash, someone who was never reported at all — and the audit
+   * row would faithfully record a decision nobody could tell was forged.
+   */
   readonly ipHash: string | null;
   readonly clientHash: string | null;
   readonly reason: string;
@@ -169,6 +179,53 @@ export class EnforcementService {
       seconds,
     });
     return { status: 'applied', enforcementId, dimensions: subjects.length, expiresAt };
+  }
+
+  /**
+   * Ban the party a report names, resolving the subject on the server.
+   *
+   * This is the only entry point a route may use. The caller supplies a report
+   * id, a duration and a reason; **which identity is sanctioned is decided
+   * here**, from the block rows that report's own conversation produced.
+   *
+   * The alternative — letting the request body carry the hashes — is the same
+   * mistake the chat protocol refuses on every frame (the server is
+   * authoritative; identity never comes from the client). Here it would be
+   * worse than in chat: a console session could ban any hash it could observe
+   * or guess, and the audit row would record a well-formed decision with no
+   * way to tell it was forged.
+   */
+  async issueBanForReport(
+    input: {
+      reportId: string;
+      seconds: number;
+      reason: string;
+      justification: string;
+      identity: AdminIdentity;
+    },
+    nowMs = Date.now(),
+  ): Promise<BanResult> {
+    const { rows } = await this.db.query<{ dimension: string; blocked_key: string }>(
+      `select b.dimension, b.blocked_key
+         from reports r
+         join blocks b on b.conversation_id = r.conversation_id
+        where r.report_id = $1`,
+      [input.reportId],
+    );
+    if (rows.length === 0) return { status: 'no_subject' };
+
+    return this.issueBan(
+      {
+        reportId: input.reportId,
+        ipHash: rows.find((row) => row.dimension === 'ip')?.blocked_key ?? null,
+        clientHash: rows.find((row) => row.dimension === 'client')?.blocked_key ?? null,
+        reason: input.reason,
+        seconds: input.seconds,
+        justification: input.justification,
+        identity: input.identity,
+      },
+      nowMs,
+    );
   }
 
   /**

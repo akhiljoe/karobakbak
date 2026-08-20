@@ -1,0 +1,526 @@
+/*
+ * Moderation console.
+ *
+ * Same palette as the product — warm ink, amber accent — in a plainer, denser
+ * register. This is a tool somebody reads carefully while making a decision
+ * about a person, not a surface that needs to charm anyone: information
+ * density and legibility win every trade against atmosphere.
+ *
+ * System fonts, deliberately. The page is served with `default-src 'none'` and
+ * no `font-src`, so a web font would be blocked — and an internal tool has no
+ * business spending requests on typography.
+ */
+
+:root {
+  --ink-950: #13100b;
+  --ink-900: #1c1812;
+  --ink-800: #2a241c;
+  --ink-700: #3d352a;
+  --ink-500: #6b5f4d;
+  --ink-400: #8a7d68;
+  --ink-300: #b8ab97;
+  --ink-100: #ede9e3;
+  --amber-400: #ffb420;
+  --amber-500: #f59e0b;
+  --danger: #e2643c;
+  --sage: #6f9a63;
+
+  --radius: 8px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * `hidden` beats layout.
+ *
+ * The browser's own rule for [hidden] is `display: none`, but it loses to any
+ * class that sets `display` — so `.console { display: grid }` renders a hidden
+ * section anyway. The visible symptom was a sign-out button and the report
+ * queue both showing on the sign-in screen: not a cosmetic bug, since the
+ * whole point of the gate is that nothing behind it is on the page yet.
+ */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--ink-950);
+  color: var(--ink-100);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 20px;
+}
+h2 {
+  font-size: 16px;
+}
+h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-400);
+}
+
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--ink-400);
+}
+.small {
+  font-size: 12px;
+}
+
+/* --- top bar ------------------------------------------------------------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--ink-800);
+  background: var(--ink-900);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.brand-mark {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.brand-sub {
+  color: var(--amber-500);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.who-role {
+  padding: 1px 7px;
+  border: 1px solid var(--ink-700);
+  border-radius: 999px;
+  color: var(--ink-400);
+  font-size: 11px;
+}
+
+/* --- login --------------------------------------------------------------- */
+
+.gate {
+  display: flex;
+  justify-content: center;
+  padding: 80px 20px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 340px;
+  padding: 24px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: var(--ink-900);
+}
+
+.card h1 {
+  margin-bottom: 2px;
+}
+
+.card .muted {
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+label {
+  color: var(--ink-300);
+  font-size: 12px;
+}
+
+input,
+textarea,
+select {
+  padding: 8px 10px;
+  border: 1px solid var(--ink-700);
+  border-radius: 6px;
+  background: var(--ink-950);
+  color: var(--ink-100);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--amber-400);
+  outline-offset: 1px;
+}
+
+#code {
+  font-family: var(--mono);
+  letter-spacing: 0.3em;
+}
+
+/* --- buttons ------------------------------------------------------------- */
+
+button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary {
+  margin-top: 8px;
+  padding: 9px 14px;
+  background: var(--amber-500);
+  color: #24170a;
+  font-weight: 600;
+}
+
+.danger,
+.neutral {
+  padding: 9px 14px;
+  font-weight: 600;
+}
+
+.danger {
+  border-color: var(--danger);
+  background: rgba(226, 100, 60, 0.12);
+  color: #f0a288;
+}
+
+.neutral {
+  border-color: var(--ink-700);
+  background: transparent;
+  color: var(--ink-300);
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-400);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  color: var(--amber-400);
+}
+
+/* --- layout -------------------------------------------------------------- */
+
+.console {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  height: calc(100dvh - 45px);
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-right: 1px solid var(--ink-800);
+  overflow-y: auto;
+}
+
+.queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue-item {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: var(--ink-900);
+  color: inherit;
+  text-align: left;
+}
+
+.queue-item:hover {
+  border-color: var(--ink-700);
+}
+
+.queue-item[aria-current='true'] {
+  border-color: var(--amber-500);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.queue-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.category {
+  font-weight: 600;
+}
+
+.age {
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.chip {
+  padding: 1px 6px;
+  border: 1px solid var(--ink-700);
+  border-radius: 4px;
+  color: var(--ink-300);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.chip.withheld {
+  border-color: var(--danger);
+  color: #f0a288;
+}
+
+/* --- case pane ----------------------------------------------------------- */
+
+.case {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 22px;
+  overflow-y: auto;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 46ch;
+  margin: auto;
+  text-align: center;
+}
+
+.open-gate,
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 60ch;
+}
+
+.open-gate {
+  margin: auto;
+  padding: 22px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: var(--ink-900);
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 6px 0 12px;
+  font-size: 12px;
+}
+
+.meta dt {
+  color: var(--ink-500);
+}
+
+.meta dd {
+  margin: 0;
+  color: var(--ink-300);
+  font-family: var(--mono);
+}
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.note {
+  padding: 12px 14px;
+  border-left: 2px solid var(--amber-500);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.note p {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- transcript ---------------------------------------------------------- */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 62ch;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+}
+
+.line.reported {
+  align-self: flex-start;
+  border: 1px solid rgba(226, 100, 60, 0.35);
+  background: rgba(226, 100, 60, 0.07);
+}
+
+.line.reporter {
+  align-self: flex-end;
+  border: 1px solid var(--ink-800);
+  background: var(--ink-900);
+}
+
+.line.unknown {
+  align-self: flex-start;
+  border: 1px dashed var(--ink-700);
+}
+
+.line-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ink-500);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.line-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.line-flags {
+  display: flex;
+  gap: 4px;
+}
+
+.withheld-mark {
+  color: var(--danger);
+}
+
+/* --- verdict ------------------------------------------------------------- */
+
+.verdict {
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ink-800);
+}
+
+.verdict-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.error,
+.ok {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.error {
+  border: 1px solid rgba(226, 100, 60, 0.4);
+  background: rgba(226, 100, 60, 0.1);
+  color: #f0a288;
+}
+
+.ok {
+  border: 1px solid rgba(111, 154, 99, 0.4);
+  background: rgba(111, 154, 99, 0.1);
+  color: #a8c79c;
+}
+
+@media (max-width: 860px) {
+  .console {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .queue {
+    border-right: 0;
+    border-bottom: 1px solid var(--ink-800);
+  }
+}

@@ -37,6 +37,10 @@ COPY --from=build /app/package.json ./package.json
 # The migrations are .sql files the compiler does not emit, and the migration
 # runner reads them from disk beside the compiled output.
 COPY --from=build /app/src/storage/migrations ./dist/storage/migrations
+# Same reason for the console's three static files. It has no build step and no
+# bundle on purpose: this is the one origin in the system that can read every
+# retained conversation, so it carries no toolchain and no third-party script.
+COPY --from=build /app/src/admin/public ./dist/admin/public
 
 # The spool holds plaintext message bodies. It is owned by the non-root user
 # and created 0700 by the application; the volume behind it is where encryption

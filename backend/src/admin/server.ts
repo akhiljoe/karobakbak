@@ -21,7 +21,9 @@
  * rows arrive next; this is the door, the session cookie and the guard that
  * later routes are mounted behind.
  */
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { join } from 'node:path';
 
 import type { Config } from '../config';
 import type { Logger } from '../logger';
@@ -52,6 +54,42 @@ const MAX_BODY_BYTES = 16 * 1024;
  * the chat's cache — exactly when someone needs to look at a report.
  */
 const LOGIN_WINDOW_MS = 60_000;
+
+/**
+ * The console's own three files.
+ *
+ * An explicit map rather than a directory served by path, so there is no
+ * traversal to get wrong: a request can only ever name one of these three
+ * keys, and `..` resolves to nothing because the path is never joined with
+ * caller input. A static server that takes the URL as a filename is the
+ * classic way an admin origin ends up serving `/etc/passwd`.
+ */
+const STATIC_FILES = new Map<string, { file: string; type: string }>([
+  ['/', { file: 'index.html', type: 'text/html; charset=utf-8' }],
+  ['/console.css', { file: 'console.css', type: 'text/css; charset=utf-8' }],
+  ['/console.js', { file: 'console.js', type: 'text/javascript; charset=utf-8' }],
+]);
+
+/** Read once at first request and kept: three small files that never change. */
+const staticCache = new Map<string, Buffer>();
+
+function serveStatic(res: ServerResponse, path: string): void {
+  const entry = STATIC_FILES.get(path);
+  if (entry === undefined) {
+    res.writeHead(404).end();
+    return;
+  }
+  let body = staticCache.get(entry.file);
+  if (body === undefined) {
+    body = readFileSync(join(__dirname, 'public', entry.file));
+    staticCache.set(entry.file, body);
+  }
+  res.writeHead(200, {
+    'content-type': entry.type,
+    'content-length': body.length,
+  });
+  res.end(body);
+}
 
 export interface AdminServer {
   listen(): Promise<number>;
@@ -107,6 +145,14 @@ export function createAdminServer(deps: {
 
     if (path === '/health') {
       json(res, 200, { status: 'ok' });
+      return;
+    }
+
+    // The console itself, before the guard: the sign-in page is by definition
+    // reachable without a session. These three files contain no data — the
+    // page is empty until it fetches, and every fetch is guarded.
+    if (method === 'GET' && STATIC_FILES.has(path)) {
+      serveStatic(res, path);
       return;
     }
 

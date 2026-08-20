@@ -283,6 +283,72 @@ describe('request hygiene', () => {
   });
 });
 
+/**
+ * Strip comments before scanning for forbidden constructs.
+ *
+ * Without this, the prose explaining *why* a construct is banned trips the
+ * check that bans it — and the obvious "fix" is to stop writing the
+ * explanation, which is exactly backwards.
+ */
+function code(source: string): string {
+  return source
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+describe('the static console', () => {
+  it('serves the sign-in page without a session', async () => {
+    // The page has to be reachable before login by definition. It carries no
+    // data: it is empty until it fetches, and every fetch is guarded.
+    const response = await fetch(`${base}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    const html = code(await response.text());
+    expect(html).toContain('karobakbak');
+    // No inline script or style: the CSP would block them, and a page that
+    // depends on a header surviving a refactor is one refactor from broken.
+    expect(html).not.toMatch(/<script(?![^>]*src=)/);
+    expect(html).not.toContain('<style');
+    expect(html).not.toMatch(/\son[a-z]+=/);
+  });
+
+  it('serves the script and stylesheet it references', async () => {
+    for (const [path, type] of [
+      ['/console.js', 'text/javascript'],
+      ['/console.css', 'text/css'],
+    ] as const) {
+      const response = await fetch(`${base}${path}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain(type);
+    }
+  });
+
+  it('renders user text through textContent, never innerHTML', async () => {
+    // This origin holds a session that can read every retained conversation,
+    // so a script injected through a message body could walk the whole queue.
+    const script = code(await (await fetch(`${base}/console.js`)).text());
+    expect(script).not.toContain('innerHTML');
+    expect(script).not.toContain('outerHTML');
+    expect(script).not.toContain('insertAdjacentHTML');
+    expect(script).not.toContain('document.write');
+  });
+
+  it('has no path traversal to get wrong', async () => {
+    // Requests can only name one of three fixed keys; the URL is never joined
+    // with a filename.
+    for (const path of [
+      '/../package.json',
+      '/console.js/../../package.json',
+      '/index.html',
+      '/public/console.js',
+    ]) {
+      const response = await fetch(`${base}${path}`, { redirect: 'manual' });
+      expect(response.status).not.toBe(200);
+    }
+  });
+});
+
 describe('/api/session', () => {
   it('reports who is logged in, without the token', async () => {
     const cookie = await loginCookie();

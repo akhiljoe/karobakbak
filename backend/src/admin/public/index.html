@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      No robots, no referrer, no caching. The console is not published, but a
+      page that reads conversations should not rely on that being remembered.
+    -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="referrer" content="no-referrer" />
+    <title>karobakbak · moderation</title>
+    <!--
+      External stylesheet and script, not inline. The Content-Security-Policy
+      this page is served with is `script-src 'self'; style-src 'self'`, so an
+      inline <style> or onclick would simply be blocked — which is the point:
+      this origin can read every retained conversation, so an injected script
+      here is the worst outcome in the system.
+    -->
+    <link rel="stylesheet" href="/console.css" />
+    <script src="/console.js" defer></script>
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="brand-mark">karobakbak</span>
+        <span class="brand-sub">moderation</span>
+      </div>
+      <div class="who" id="who" hidden>
+        <span id="who-name"></span>
+        <span class="who-role" id="who-role"></span>
+        <button type="button" id="logout" class="link">Sign out</button>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- Login -->
+      <section class="gate" id="gate" hidden>
+        <form class="card" id="login-form" autocomplete="off">
+          <h1>Sign in</h1>
+          <p class="muted">
+            Every conversation you open is recorded against your account, with the reason you gave.
+          </p>
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text" autocomplete="username" required />
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <label for="code">Authenticator code</label>
+          <input
+            id="code"
+            name="code"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="6"
+            autocomplete="one-time-code"
+            required
+          />
+          <button type="submit" class="primary" id="login-button">Sign in</button>
+          <p class="error" id="login-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <!-- Console -->
+      <section class="console" id="console" hidden>
+        <aside class="queue">
+          <div class="queue-head">
+            <h2>Open reports</h2>
+            <button type="button" class="link" id="refresh">Refresh</button>
+          </div>
+          <p class="muted small" id="queue-empty" hidden>Nothing waiting. That is the good outcome.</p>
+          <ol class="queue-list" id="queue-list"></ol>
+        </aside>
+
+        <section class="case" id="case">
+          <div class="placeholder" id="placeholder">
+            <p>Select a report to review.</p>
+            <p class="muted small">
+              The list above carries no message text. Opening a case is what discloses the
+              conversation, and that is the moment it is written to the audit log.
+            </p>
+          </div>
+
+          <!-- Step one: state a reason, then open. -->
+          <form class="open-gate" id="open-gate" hidden>
+            <h2 id="open-title">Report</h2>
+            <dl class="meta" id="open-meta"></dl>
+            <label for="open-reason">Why are you opening this conversation?</label>
+            <textarea
+              id="open-reason"
+              rows="2"
+              maxlength="500"
+              placeholder="e.g. triaging a spam report"
+              required
+            ></textarea>
+            <p class="muted small">
+              Recorded in the audit log with your name and the time. Minimum eight characters.
+            </p>
+            <button type="submit" class="primary" id="open-button">Open conversation</button>
+            <p class="error" id="open-error" role="alert" hidden></p>
+          </form>
+
+          <!-- Step two: the transcript and the verdict. -->
+          <div class="review" id="review" hidden>
+            <div class="review-head">
+              <h2 id="review-title">Conversation</h2>
+              <dl class="meta" id="review-meta"></dl>
+            </div>
+
+            <div class="note" id="note-block" hidden>
+              <h3>What the reporter wrote</h3>
+              <p id="note-text"></p>
+            </div>
+
+            <ol class="transcript" id="transcript"></ol>
+
+            <form class="verdict" id="verdict-form">
+              <h3>Decision</h3>
+              <label for="verdict-reason">Reason</label>
+              <textarea
+                id="verdict-reason"
+                rows="2"
+                maxlength="500"
+                placeholder="e.g. same advert sent to eleven strangers"
+                required
+              ></textarea>
+
+              <div class="verdict-row">
+                <label for="ban-length">Ban length</label>
+                <select id="ban-length">
+                  <option value="86400">24 hours</option>
+                  <option value="604800">7 days</option>
+                  <option value="2592000" selected>30 days</option>
+                  <option value="7776000">90 days</option>
+                </select>
+              </div>
+
+              <div class="actions">
+                <button type="button" class="danger" id="verdict-bot">
+                  Bot or abuser — ban and action
+                </button>
+                <button type="button" class="neutral" id="verdict-human">
+                  Genuine person — allow and dismiss
+                </button>
+              </div>
+              <p class="muted small">
+                A ban attaches to a salted hash of the address and the browser token, both
+                directions. It is a speed bump, not a wall: a new network and a cleared cookie
+                defeat it.
+              </p>
+              <p class="error" id="verdict-error" role="alert" hidden></p>
+              <p class="ok" id="verdict-ok" role="status" hidden></p>
+            </form>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
