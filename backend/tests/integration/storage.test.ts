@@ -95,7 +95,9 @@ describe('migrations', () => {
       [ctx.schema],
     );
     expect(tables.map((row) => row.table_name).sort()).toEqual([
+      'admin_accounts',
       'admin_audit',
+      'admin_sessions',
       'blocks',
       'conversations',
       'enforcement',
@@ -105,6 +107,47 @@ describe('migrations', () => {
       'reports',
       'schema_migrations',
     ]);
+  });
+
+  it('keeps operator credentials out of the chat role', async () => {
+    // The chat backend has no reason to read a password hash or a TOTP secret,
+    // and a grant here would let a compromised chat process mint itself an
+    // operator session and then read every conversation through the audited
+    // path — writing plausible audit rows on the way (I11).
+    const grants = await ctx.rows<{ table_name: string; privilege_type: string }>(
+      `select table_name, privilege_type from information_schema.role_table_grants
+        where grantee = 'karobakbak_app'
+          and table_name in ('admin_accounts', 'admin_sessions')`,
+    );
+    expect(grants).toEqual([]);
+  });
+
+  it('leaves the audit log append-only for both roles', async () => {
+    // Enforced by the grant rather than by convention: an audit log the writer
+    // can rewrite is not evidence of anything.
+    const grants = await ctx.rows<{ grantee: string; privilege_type: string }>(
+      `select grantee, privilege_type from information_schema.role_table_grants
+        where table_name = 'admin_audit'
+          and grantee in ('karobakbak_app', 'karobakbak_console')`,
+    );
+    const privileges = new Set(grants.map((row) => row.privilege_type));
+    expect(privileges.has('SELECT')).toBe(true);
+    expect(privileges.has('INSERT')).toBe(true);
+    expect(privileges.has('UPDATE')).toBe(false);
+    expect(privileges.has('DELETE')).toBe(false);
+  });
+
+  it('denies the console the ability to delete retained content', async () => {
+    // A console that could delete a conversation could destroy the evidence in
+    // the case it was opened for. Deletion belongs to the retention worker,
+    // driven by deadlines stamped at insert time (D17).
+    const grants = await ctx.rows<{ privilege_type: string }>(
+      `select privilege_type from information_schema.role_table_grants
+        where grantee = 'karobakbak_console'
+          and table_name in ('conversations', 'messages')`,
+    );
+    const privileges = new Set(grants.map((row) => row.privilege_type));
+    expect(privileges).toEqual(new Set(['SELECT']));
   });
 
   it('constrains the content type to what the application implements (§23.3)', async () => {

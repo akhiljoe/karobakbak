@@ -74,6 +74,27 @@ const FORBIDDEN_FIELDS = new Set([
   'remoteAddr',
   'clientIp',
   'userAgent',
+  // credentials (phase 13). Until the moderation console there was nothing in
+  // this process worth stealing from a log line — no password, no shared
+  // secret, no bearer value. There is now, and a leaked TOTP secret is worse
+  // than a leaked message: the message is one conversation, the secret is
+  // every future login. `clientToken` stays absent on purpose, because it is
+  // already only ever handled as `clientHash`.
+  'password',
+  'passwordHash',
+  'secret',
+  'totpSecret',
+  'otp',
+  'code',
+  'token',
+  'sessionToken',
+  'credential',
+  'authorization',
+  'cookie',
+  // The moderator's own words on an enforcement action. Not user content, but
+  // it is free text typed while reading a conversation, so the most natural
+  // thing to write in it is a quote from the conversation (I8).
+  'justification',
 ]);
 
 /** Guards against pathological structures during recursive redaction. */
