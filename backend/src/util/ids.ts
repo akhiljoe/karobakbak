@@ -51,6 +51,25 @@ export function newClientToken(): string {
   return randomToken();
 }
 
+/** Identifies one operator account. Opaque, so it can appear in an audit row. */
+export function newAdminAccountId(): string {
+  return `adm_${randomToken()}`;
+}
+
+/**
+ * A console session cookie.
+ *
+ * 256 bits rather than the 128 used elsewhere. This value alone authorises
+ * reading every retained conversation, and unlike a session id it is a bearer
+ * token — whoever holds it is the moderator. The extra sixteen bytes cost
+ * nothing and remove any argument about the margin.
+ *
+ * Only its SHA-256 is stored, so the database never holds a usable token.
+ */
+export function newAdminSessionToken(): string {
+  return randomToken(32);
+}
+
 /**
  * Identifies one enforcement decision — a ban, a suspension, a revocation.
  *

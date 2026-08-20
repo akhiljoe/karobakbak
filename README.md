@@ -169,6 +169,10 @@ The ones you will actually change:
 | `MAX_MESSAGE_LENGTH` | 500 by default (security §11, cost §19). |
 | `CONVERSATION_RETENTION_DAYS` and friends | retention periods. Stamped **at insert time**, so a change never retroactively extends the life of data already stored (D17). |
 | `MODERATION_DEFAULT_ACTION` | `flag` by default: local rules flag for review rather than block. |
+| `ENFORCEMENT_ENABLED` | moderator-issued bans, checked at the upgrade before a session exists. Off means ban keys are neither read nor written. |
+| `ENFORCEMENT_MAX_BAN_SECONDS` | 365 days. A permanent ban is deliberately not expressible — an anonymous product has no appeals channel, so long sanctions are re-issued rather than eternal. |
+| `ADMIN_CONSOLE_ENABLED` | off by default. The console listens on **its own port** (`ADMIN_CONSOLE_PORT`), bound to loopback, and is never proxied by the public edge. |
+| `ADMIN_ALLOWED_ORIGINS` | **empty is fatal in production when the console is enabled.** It authenticates with a cookie, so an empty allowlist is CSRF against a live moderator session. |
 | `VITE_ADS_*` | the ad slots are real; the provider is a no-op until one is chosen. |
 
 ## Operating it

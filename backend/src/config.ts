@@ -125,6 +125,51 @@ export interface Config {
   };
 
   /**
+   * The moderation console (§29, I11).
+   *
+   * It listens on its **own port**, not on the chat server's. The public edge
+   * proxies one port and one path; a console route hanging off the same
+   * listener would be one nginx misconfiguration away from the internet,
+   * whereas a separate listener that is simply never published cannot be
+   * reached by a routing mistake at all. Authentication is the second layer,
+   * not the only one.
+   */
+  readonly admin: {
+    /** Off by default. A deployment that does not moderate opens no port. */
+    readonly enabled: boolean;
+    readonly port: number;
+    /**
+     * Loopback by default, so the console is reachable through an SSH tunnel
+     * and from nowhere else until someone deliberately widens it.
+     */
+    readonly host: string;
+    /**
+     * Absolute session lifetime, never extended on activity. A sliding window
+     * keeps a stolen cookie alive exactly as long as it is being used, which
+     * is the case it most needs to expire in.
+     */
+    readonly sessionTtlSeconds: number;
+    /** Consecutive failures before an account locks. */
+    readonly maxFailedAttempts: number;
+    readonly lockoutSeconds: number;
+    /**
+     * Login attempts per address per minute, refused before any database work.
+     *
+     * The per-account lockout bounds guessing at one account; this bounds the
+     * *cost* of guessing at many, since each attempt otherwise buys an scrypt
+     * verification from the process.
+     */
+    readonly loginAttemptsPerMinute: number;
+    /**
+     * Origins allowed to call the console API. Separate from the chat
+     * allowlist because they are different services on different ports, and
+     * sharing one list would mean widening the chat's origins to reach the
+     * console.
+     */
+    readonly allowedOrigins: readonly string[];
+  };
+
+  /**
    * Moderator-issued enforcement, checked at upgrade (I11).
    *
    * Separate from `blocks` because the two answer different questions. A block
@@ -477,6 +522,17 @@ export function loadConfig(env: Env = process.env): Config {
       maxBanSeconds: int(env, 'ENFORCEMENT_MAX_BAN_SECONDS', 31_536_000, 60, 31_536_000),
     },
 
+    admin: {
+      enabled: bool(env, 'ADMIN_CONSOLE_ENABLED', false),
+      port: int(env, 'ADMIN_CONSOLE_PORT', 8088, 0, 65535),
+      host: str(env, 'ADMIN_CONSOLE_HOST', '127.0.0.1'),
+      sessionTtlSeconds: int(env, 'ADMIN_SESSION_TTL_SECONDS', 43_200, 300, 604_800),
+      maxFailedAttempts: int(env, 'ADMIN_MAX_FAILED_ATTEMPTS', 5, 1, 100),
+      lockoutSeconds: int(env, 'ADMIN_LOCKOUT_SECONDS', 900, 30, 86_400),
+      loginAttemptsPerMinute: int(env, 'ADMIN_LOGIN_ATTEMPTS_PER_MINUTE', 10, 1, 10_000),
+      allowedOrigins: list(env, 'ADMIN_ALLOWED_ORIGINS', ''),
+    },
+
     moderation: {
       enabled: bool(env, 'MODERATION_ENABLED', true),
       defaultAction: moderationAction(env, 'MODERATION_DEFAULT_ACTION', 'flag'),
@@ -580,6 +636,28 @@ function assertCoherent(config: Config): void {
     throw new ConfigError(
       'ALLOWED_ORIGINS must list at least one origin when NODE_ENV=production; ' +
         'an empty allowlist accepts WebSocket upgrades from any site',
+    );
+  }
+
+  // The whole point of the console having its own listener is that it is a
+  // different port from the one the public edge proxies. Sharing one would put
+  // the console's routes on the listener nginx forwards to, which is the
+  // failure this separation exists to make impossible.
+  if (config.admin.enabled && config.admin.port === config.http.port) {
+    throw new ConfigError(
+      `ADMIN_CONSOLE_PORT (${config.admin.port}) must differ from BACKEND_PORT: the console ` +
+        'listener is separate precisely so the public edge cannot route to it',
+    );
+  }
+
+  // The console authenticates with a cookie, so an empty origin allowlist is
+  // cross-site request forgery against a moderator's live session — the same
+  // argument as R9 for the chat, with a higher prize. Legal in development,
+  // fatal the moment the process claims to be production.
+  if (config.isProduction && config.admin.enabled && config.admin.allowedOrigins.length === 0) {
+    throw new ConfigError(
+      'ADMIN_ALLOWED_ORIGINS must list at least one origin when the console is enabled under ' +
+        'NODE_ENV=production; an empty allowlist accepts credentialed requests from any site',
     );
   }
 
