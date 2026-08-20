@@ -21,7 +21,7 @@ import { join, resolve } from 'node:path';
 import type { BotSpec } from './bot';
 import { loadCorpus } from './corpus';
 import { syntheticAddress } from './identity';
-import { expandMix, isProfileName, PROFILES, type ProfileName } from './personas';
+import { expandMix, isProfileName, personaFor, PROFILES, type ProfileName } from './personas';
 import { createRng } from './rng';
 import type { WorkerCommand, WorkerMessage } from './worker';
 import { runOracles, scrapeAll } from './oracles';
@@ -43,6 +43,11 @@ interface Options {
   metricsUrls: string[];
   /** Docker container names whose logs the leak oracle reads. Empty disables it. */
   logContainers: string[];
+  /** Container running Redis, for the residue oracle. */
+  redisContainer: string;
+  /** Must match REDIS_KEY_PREFIX and the matchmaking segment on the target. */
+  keyPrefix: string;
+  segment: string;
 }
 
 function parseArgs(argv: readonly string[]): Options {
@@ -96,6 +101,9 @@ function parseArgs(argv: readonly string[]): Options {
     settleSeconds: Math.max(5, Math.floor(num('settle', 40))),
     metricsUrls: list('metrics', ''),
     logContainers: list('containers', ''),
+    redisContainer: flags.get('redis') ?? '',
+    keyPrefix: flags.get('key-prefix') ?? 'chat',
+    segment: flags.get('segment') ?? 'default',
   };
 }
 
@@ -117,7 +125,11 @@ function buildRoster(options: Options): BotSpec[] {
     id: `b${String(index).padStart(width, '0')}`,
     scenario,
     address: syntheticAddress(index),
-    labels: [],
+    // The answer key, written before the run rather than inferred from it.
+    // Anything a persona does not claim is `benign`, stated rather than
+    // assumed — "everything unlabelled is innocent" is the assumption that
+    // turns a false positive into a silent one.
+    labels: personaFor(scenario).labels ?? ['benign'],
   }));
 }
 
@@ -290,6 +302,9 @@ async function main(): Promise<void> {
     runWindow: { from: startedAt, to: Date.now() },
     settleSeconds: options.settleSeconds,
     metricsBaseline,
+    redisContainer: options.redisContainer,
+    keyPrefix: options.keyPrefix,
+    segment: options.segment,
   });
 
   printReport({
@@ -304,6 +319,7 @@ async function main(): Promise<void> {
     },
     lag: { p99: worstLagP99, max: worstLagMax },
     result,
+    lostWorkers: lost.length,
   });
 
   const oraclesPassed = result.oracles.every((oracle) => oracle.status !== 'fail');

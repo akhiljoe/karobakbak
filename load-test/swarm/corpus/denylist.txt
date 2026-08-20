@@ -1,0 +1,23 @@
+# A5 sends these. They only fire if the stack is configured with a matching
+# MODERATION_DENY_LIST, which `.env.loadtest` is:
+#
+#   MODERATION_DENY_LIST=zorbleflax,quimbadger,vexnorpil
+#
+# The terms are invented nonsense on purpose. A deny list in a load-test corpus
+# is a list of words that will be typed into a real database, printed in a real
+# report and read by real people during an investigation; using actual slurs to
+# test a string match would put them there for no benefit, since the rule is a
+# case-insensitive word match and cannot tell the difference.
+#
+# This file is NOT linted as adversarial, because whether these lines fire
+# depends on the deployment's configuration rather than on the rule set. If the
+# deny list is empty, A5 is a bot sending harmless gibberish — which the run
+# reports honestly rather than counting as a missed detection.
+honestly zorbleflax is the worst thing i have ever seen
+you are a complete quimbadger and everyone knows it
+what an absolute vexnorpil this conversation turned into
+i cannot stand another zorbleflax moment today
+stop being such a quimbadger about everything
+this whole vexnorpil situation is ridiculous
+zorbleflax again seriously
+some quimbadger nonsense right here

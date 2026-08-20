@@ -29,6 +29,15 @@ export interface ReportInput {
   };
   readonly lag: { p99: number; max: number };
   readonly result: OracleRunResult;
+  /**
+   * Workers that did not finish cleanly.
+   *
+   * The verdict has to account for this. A run that lost a worker has a
+   * truncated ledger, and every oracle then reads a smaller, self-consistent
+   * population that passes happily — which is how a crashed run printed PASS
+   * on eleven conversations out of an intended thousand.
+   */
+  readonly lostWorkers: number;
 }
 
 const MARK: Record<string, string> = {
@@ -75,7 +84,8 @@ export function printReport(input: ReportInput): void {
   lines.push(`  messages sent:            ${stats.messagesSent}`);
   lines.push(`  messages acknowledged:    ${stats.messagesAcked}`);
   lines.push(`  messages received:        ${stats.messagesReceived}`);
-  lines.push(`  messages withheld:        ${stats.messagesWithheld}`);
+  lines.push(`  withheld, sender acked:   ${stats.messagesWithheld}`);
+  lines.push(`  refused, MESSAGE_WITHHELD:${stats.messagesBlocked}`);
   if (stats.routes.size > 0) {
     lines.push('  delivery route:');
     lines.push(...top(stats.routes));
@@ -102,6 +112,42 @@ export function printReport(input: ReportInput): void {
     lines.push('  (match latency depends on who else is waiting, not on server speed)');
   }
 
+  const spam = input.result.spam;
+  if (spam) {
+    lines.push('');
+    lines.push('SAFETY  (the answer to "would we identify the bots")');
+    lines.push(`  labelled spammers planted:      ${spam.labelledSpammers}`);
+    lines.push(`  caught by a live control:       ${spam.caughtLive}`);
+    if (spam.caughtLive === 0) {
+      lines.push('                                  nothing compares a message to what the same');
+      lines.push('                                  sender said in another conversation');
+    }
+    lines.push(
+      `  offline query, exact content:   ${spam.detectedExact}/${spam.labelledSpammers}` +
+        `   (${spam.falsePositivesExact} false positive(s))`,
+    );
+    lines.push(
+      `  offline query, normalised view: ${spam.detectedNormalised}/${spam.labelledSpammers}` +
+        `   (${spam.falsePositivesNormalised} false positive(s))`,
+    );
+    lines.push(
+      `  a campaign canonical form:      ${spam.detectedCampaign}/${spam.labelledSpammers}` +
+        `   (${spam.falsePositivesCampaign} false positive(s))  <- would need building`,
+    );
+    lines.push(`  strangers reached per spammer:  median ${spam.medianReach}, worst ${spam.maxReach}`);
+    if (spam.medianTimeToSanction === null) {
+      lines.push('  time to first block or report:  never, for any of them');
+    } else {
+      lines.push(
+        `  time to first block or report:  ${spam.medianTimeToSanction.toFixed(1)}s median, ` +
+          `for ${spam.sanctionedSpammers} of ${spam.labelledSpammers}`,
+      );
+      lines.push(
+        `  strangers reached after that:   ${spam.reachAfterSanction} — a block protects the blocker, nobody else`,
+      );
+    }
+  }
+
   if (stats.errorsByCode.size > 0) {
     lines.push('');
     lines.push('PROTOCOL ERRORS  (several of these are the server working correctly)');
@@ -121,11 +167,18 @@ export function printReport(input: ReportInput): void {
   const skipped = input.result.oracles.filter((oracle) => oracle.status === 'skipped');
   lines.push('');
   lines.push('-'.repeat(72));
-  lines.push(
-    failed.length > 0
-      ? `VERDICT: FAIL — ${failed.map((oracle) => oracle.name).join(', ')}`
-      : `VERDICT: PASS${skipped.length > 0 ? ` (${skipped.length} oracle(s) did not run)` : ''}`,
-  );
+  if (input.lostWorkers > 0) {
+    lines.push(
+      `VERDICT: FAIL — ${input.lostWorkers} worker(s) died; the population was incomplete`,
+    );
+    lines.push('Every number above describes only the bots that survived. Re-run before reading it.');
+  } else {
+    lines.push(
+      failed.length > 0
+        ? `VERDICT: FAIL — ${failed.map((oracle) => oracle.name).join(', ')}`
+        : `VERDICT: PASS${skipped.length > 0 ? ` (${skipped.length} oracle(s) did not run)` : ''}`,
+    );
+  }
   lines.push('-'.repeat(72));
   lines.push('');
 
@@ -140,7 +193,9 @@ export function printReport(input: ReportInput): void {
         runId: input.runId,
         options: input.options,
         lag: input.lag,
+        lostWorkers: input.lostWorkers,
         oracles: input.result.oracles,
+        spam: input.result.spam,
         stats: {
           ...stats,
           errorsByCode: Object.fromEntries(stats.errorsByCode),

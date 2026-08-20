@@ -36,8 +36,16 @@ export const BENIGN_FILES = [
 /** Files whose lines must fire at least one rule. */
 export const ADVERSARIAL_FILES = ['links.txt', 'contact.txt'] as const;
 
-/** Files with no expectation either way — repetition, not content, is their point. */
-export const NEUTRAL_FILES = ['spam.txt', 'hostile.txt'] as const;
+/**
+ * Files with no expectation either way.
+ *
+ * `spam.txt` and `hostile.txt` are neutral because repetition and tone, not
+ * content, are what they test — a rule engine is supposed to find nothing in
+ * them. `denylist.txt` is neutral for a different reason: whether its lines
+ * fire depends on the deployment's `MODERATION_DENY_LIST`, so asserting either
+ * way here would encode one configuration as the truth.
+ */
+export const NEUTRAL_FILES = ['spam.txt', 'hostile.txt', 'denylist.txt'] as const;
 
 export type CorpusFile =
   | (typeof BENIGN_FILES)[number]

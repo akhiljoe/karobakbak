@@ -43,6 +43,18 @@ export type LedgerEventType =
   | 'left_chat'
   | 'left_queue'
   | 'blocked'
+  /**
+   * The server refused a block, almost always because the match was already
+   * gone (`NOT_MATCHED`).
+   *
+   * Recorded separately because `blocked` is an *intent*: the bot logs it when
+   * it sends the frame, and a block that raced its own conversation's teardown
+   * was never written to Redis. Treating intent as fact makes the block
+   * durability check report violations that never happened.
+   */
+  | 'block_refused'
+  /** A block the server acknowledged by putting this session back in IDLE. */
+  | 'block_confirmed'
   | 'reported'
   | 'partner_gone'
   | 'protocol_error'
@@ -68,6 +80,24 @@ export interface LedgerEvent {
   messageId?: string;
   /** Content identity. See the note at the top of this file. */
   hash?: string;
+  /**
+   * Content identity **after** the server's normalisation view.
+   *
+   * Two messages that differ only by the evasions `moderationView` folds away —
+   * spacing, case, homoglyphs, zero-width characters — share this hash and not
+   * `hash`. The spam oracle groups by both and reports the difference, which is
+   * the measurement of how far a campaign gets by mutating itself.
+   */
+  nhash?: string;
+  /**
+   * Content identity under the harness's proposed *campaign* canonical form
+   * (`campaign.ts`) — case-folded, leetspeak folded, punctuation dropped.
+   *
+   * Not a form the server computes. It exists so the report can say what a
+   * purpose-built serial-spam detector would have caught, next to what the two
+   * canonical forms that actually exist would have caught.
+   */
+  chash?: string;
   /** Character count of the body, which is safe and occasionally diagnostic. */
   chars?: number;
   /** Per-match monotonic counter, so ordering survives a merge across workers. */

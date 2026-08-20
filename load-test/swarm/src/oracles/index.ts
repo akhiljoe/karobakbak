@@ -12,11 +12,14 @@ import type { BotSpec } from '../bot';
 import { analyseLedger, type LedgerStats } from './ledger';
 import { checkLogsForLeaks } from './logs';
 import { checkMetrics, type Sample } from './metrics';
+import { checkRedisResidue } from './redis';
+import { checkSpamDetection, type SpamSummary } from './spam';
 import type { OracleResult } from './types';
 
 export type { OracleResult, OracleStatus } from './types';
 export { percentile } from './ledger';
 export { scrapeAll } from './metrics';
+export type { SpamSummary } from './spam';
 
 export interface OracleInput {
   readonly ledgerPaths: readonly string[];
@@ -29,12 +32,18 @@ export interface OracleInput {
   readonly settleSeconds: number;
   /** Counter values taken before the first socket opened. */
   readonly metricsBaseline: readonly Sample[];
+  /** Container running Redis, for the residue oracle. Empty disables it. */
+  readonly redisContainer: string;
+  readonly keyPrefix: string;
+  readonly segment: string;
 }
 
 export interface OracleRunResult {
   readonly stats: LedgerStats;
   readonly matchedFrames: number;
   readonly oracles: readonly OracleResult[];
+  /** Null when the profile contained no labelled spammers. */
+  readonly spam: SpamSummary | null;
 }
 
 export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
@@ -49,22 +58,31 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     baseline: input.metricsBaseline,
   });
 
+  const spam = await checkSpamDetection({
+    ledgerPaths: input.ledgerPaths,
+    roster: input.roster,
+    // The same threshold as the SQL in the scenarios document, so the harness
+    // and the query somebody runs by hand cannot disagree about what counts as
+    // a campaign.
+    campaignThreshold: 5,
+  });
+
   const logs = await checkLogsForLeaks({
     containers: input.logContainers,
     corpusDir: input.corpusDir,
     since: input.runWindow.from,
   });
 
+  // After the metrics oracle, deliberately: that one waits out the settle
+  // window, so by the time this runs the janitor has had two passes and a queue
+  // entry still pointing at a dead session is genuinely abandoned.
+  const redis = await checkRedisResidue({
+    container: input.redisContainer,
+    keyPrefix: input.keyPrefix,
+    segment: input.segment,
+  });
+
   const notImplemented: OracleResult[] = [
-    {
-      name: 'redis residue',
-      status: 'skipped',
-      summary: 'not implemented in stage one',
-      details: [
-        'checks queue sets are empty and no session or match hash outlived its TTL',
-        'needs a Redis client in this package',
-      ],
-    },
     {
       name: 'database agreement',
       status: 'skipped',
@@ -81,6 +99,7 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
   return {
     stats,
     matchedFrames,
-    oracles: [pairing, metrics, logs, ...notImplemented],
+    spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
+    oracles: [pairing, metrics, redis, spam.oracle, logs, ...notImplemented],
   };
 }

@@ -30,6 +30,32 @@ import {
   settingsBrowser,
   tabCloser,
 } from './lifecycle';
+import {
+  blockSkipAttacker,
+  burstAndWait,
+  contactHarvester,
+  copyPasteSpammer,
+  denyListHitter,
+  flooder,
+  harasser,
+  linkDropper,
+  multiMatchSpammer,
+  mutatingSpammer,
+  reportSpammer,
+  slowSpammer,
+  templateRotator,
+} from './abusers';
+import {
+  blockRacer,
+  blocker,
+  grudgeHolder,
+  massBlocker,
+  mutualBlocker,
+  repeatedReporter,
+  reportRacer,
+  reporter,
+  reporterReconnect,
+} from './moderators';
 
 export const PERSONAS: readonly Persona[] = [
   talker,
@@ -52,6 +78,28 @@ export const PERSONAS: readonly Persona[] = [
   settingsBrowser,
   networkFlapper,
   cookieLoser,
+  copyPasteSpammer,
+  mutatingSpammer,
+  linkDropper,
+  contactHarvester,
+  denyListHitter,
+  flooder,
+  harasser,
+  slowSpammer,
+  burstAndWait,
+  multiMatchSpammer,
+  templateRotator,
+  reportSpammer,
+  blockSkipAttacker,
+  reporter,
+  blocker,
+  grudgeHolder,
+  massBlocker,
+  reportRacer,
+  blockRacer,
+  mutualBlocker,
+  reporterReconnect,
+  repeatedReporter,
 ];
 
 const BY_SCENARIO = new Map(PERSONAS.map((persona) => [persona.scenario, persona]));
@@ -67,7 +115,7 @@ export interface MixEntry {
   readonly weight: number;
 }
 
-export type ProfileName = 'realistic' | 'capacity' | 'lifecycle' | 'tiny';
+export type ProfileName = 'realistic' | 'adversarial' | 'capacity' | 'lifecycle' | 'tiny';
 
 /**
  * `realistic` — the default, and the only profile whose latency numbers are
@@ -95,6 +143,65 @@ const REALISTIC: readonly MixEntry[] = [
   { scenario: 'L4', weight: 1 },
   { scenario: 'L6', weight: 2 },
   { scenario: 'L9', weight: 1 },
+  // A small adversarial fraction even here. A "realistic" population with no
+  // spam in it is not realistic, and the M personas need something to react to
+  // or their reports and blocks measure nothing.
+  { scenario: 'A1', weight: 1 },
+  { scenario: 'A3', weight: 1 },
+  { scenario: 'A7', weight: 1 },
+  { scenario: 'M1', weight: 2 },
+  { scenario: 'M2', weight: 1 },
+];
+
+/**
+ * `adversarial` — the safety profile.
+ *
+ * A third of the population is abusive and a further eighth reacts to it. Match
+ * latency will be worse than `realistic` and that is correct rather than a
+ * regression: a large fraction of this population skips within seconds, so the
+ * queue churns constantly.
+ *
+ * The talkers are not decoration. Without a benign majority there is nobody for
+ * the spammers to spam, no control group for the precision numbers, and every
+ * conversation in the run is between two bots that were both trying to leave.
+ */
+const ADVERSARIAL: readonly MixEntry[] = [
+  { scenario: 'N1', weight: 18 },
+  { scenario: 'N3', weight: 4 },
+  { scenario: 'N8', weight: 3 },
+  { scenario: 'S1', weight: 12 },
+  { scenario: 'S2', weight: 5 },
+
+  // Pattern adversaries: invisible to the rule engine, detectable only across
+  // conversations. These are the ones the spam oracle is really about.
+  { scenario: 'A1', weight: 6 },
+  { scenario: 'A2', weight: 5 },
+  { scenario: 'A8', weight: 3 },
+  { scenario: 'A10', weight: 4 },
+  { scenario: 'A11', weight: 4 },
+
+  // Payload adversaries: the rule engine should see every one of these.
+  { scenario: 'A3', weight: 4 },
+  { scenario: 'A4', weight: 3 },
+  { scenario: 'A5', weight: 2 },
+
+  // Limit and teardown abuse.
+  { scenario: 'A6', weight: 2 },
+  { scenario: 'A9', weight: 2 },
+  { scenario: 'A7', weight: 4 },
+  { scenario: 'A12', weight: 2 },
+  { scenario: 'A13', weight: 2 },
+
+  // The live response, which is the only enforcement that exists today.
+  { scenario: 'M1', weight: 5 },
+  { scenario: 'M2', weight: 4 },
+  { scenario: 'M3', weight: 3 },
+  { scenario: 'M4', weight: 2 },
+  { scenario: 'M5', weight: 1 },
+  { scenario: 'M6', weight: 1 },
+  { scenario: 'M7', weight: 2 },
+  { scenario: 'M8', weight: 1 },
+  { scenario: 'M9', weight: 1 },
 ];
 
 /**
@@ -141,6 +248,7 @@ const TINY: readonly MixEntry[] = [
 
 export const PROFILES: Record<ProfileName, readonly MixEntry[]> = {
   realistic: REALISTIC,
+  adversarial: ADVERSARIAL,
   capacity: CAPACITY,
   lifecycle: LIFECYCLE,
   tiny: TINY,

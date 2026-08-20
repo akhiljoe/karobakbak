@@ -52,7 +52,16 @@ export interface LedgerStats {
   matches: number;
   messagesSent: number;
   messagesAcked: number;
+  /** Acked with `delivered: false` — moderation action `withhold` (D20). */
   messagesWithheld: number;
+  /**
+   * Refused with `MESSAGE_WITHHELD` — moderation action `block`, the hard rule
+   * set. A different code path from the one above and a different number: the
+   * sender gets an error rather than an ack, so it never appears in
+   * `messagesWithheld` and a report that printed only that one would claim
+   * nothing was withheld during a run where hundreds of messages were.
+   */
+  messagesBlocked: number;
   messagesReceived: number;
   ackLatency: number[];
   matchLatency: number[];
@@ -88,6 +97,7 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     messagesSent: 0,
     messagesAcked: 0,
     messagesWithheld: 0,
+    messagesBlocked: 0,
     messagesReceived: 0,
     ackLatency: [],
     matchLatency: [],
@@ -183,6 +193,7 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
           if (event.code !== undefined) {
             const code = String(event.code);
             stats.errorsByCode.set(code, (stats.errorsByCode.get(code) ?? 0) + 1);
+            if (code === 'MESSAGE_WITHHELD') stats.messagesBlocked += 1;
           }
           break;
 
@@ -259,7 +270,7 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     `message positions compared: ${comparedMessages}`,
     `messages sent but not received (partner left first): ${missingTail}`,
     `matches with only one side in the ledger: ${oneSidedMatches} (drain boundary)`,
-    `messages withheld by moderation: ${stats.messagesWithheld}`,
+    `messages withheld by moderation: ${stats.messagesWithheld} acked-undelivered, ${stats.messagesBlocked} refused outright`,
   ];
   for (const failure of failures.slice(0, 20)) details.push(failure);
   if (failures.length > 20) details.push(`... and ${failures.length - 20} more`);

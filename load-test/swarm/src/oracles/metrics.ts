@@ -11,9 +11,11 @@
  *      `matched` frames in the ledger should be twice `chat_matches_created_total`.
  *      A tolerance exists only for matches formed in the last instant of the
  *      run, where one side's frame never arrived before the drain.
- *   2. **Messages.** `chat_messages_received_total` should equal the ledger's
- *      acked messages plus its rejections. A gap means messages were accepted
- *      and never acknowledged, which a client experiences as a silent failure.
+ *   2. **Messages.** `received == accepted + rejected`, both counters read from
+ *      the server, with the ledger's ack count standing in for `accepted`. A
+ *      shortfall means messages were accepted and answered with nothing, which
+ *      a client experiences as a silent failure; an excess is impossible and
+ *      means the harness is miscounting.
  *   3. **Gauges return to zero.** After a drain, `chat_queue_depth` and
  *      `chat_active_matches` must reach zero. A value that stops shrinking is
  *      state that outlived every session that created it, which is exactly the
@@ -248,15 +250,43 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // THE MESSAGE IDENTITY, WHICH TOOK THREE TRIES TO STATE CORRECTLY
+  // ---------------------------------------------------------------------
+  // `chat_messages_received_total` increments for every `message` command
+  // before the pipeline runs — including ones the pipeline then refuses, since
+  // `message` checks its own bucket inside the pipeline rather than at the
+  // edge (`server.ts:382-400`). Every refusal, rate limiting included, lands in
+  // `chat_messages_rejected_total` with a reason label.
+  //
+  // So the law is entirely server-side:
+  //
+  //     received == accepted + rejected
+  //
+  // and the ledger's ack count is the client-observed value of `accepted`.
+  //
+  // Earlier attempts derived `rejected` by counting error codes in the ledger,
+  // which quietly over-counted: `RATE_LIMITED` is also returned for `skip`,
+  // `block`, `report` and `join_queue`, and those have nothing to do with the
+  // message counter. Reading the server's own rejection counter avoids having
+  // to classify a client-side error code by which command provoked it.
   const received = delta(samples, input.baseline, 'chat_messages_received_total');
+  const rejected = delta(samples, input.baseline, 'chat_messages_rejected_total');
+  const expectedAcks = received - rejected;
   const accounted = input.stats.messagesAcked;
-  details.push(`server accepted ${received} messages, ledger holds ${accounted} acks`);
-  if (input.baseline.length > 0 && received > 0 && accounted > received) {
-    failures.push(`ledger has ${accounted - received} more acks than the server accepted messages`);
+  details.push(
+    `messages: ${received} received - ${rejected} rejected = ${expectedAcks} accepted; ledger holds ${accounted} acks`,
+  );
+  const ackGap = expectedAcks - accounted;
+  // A message accepted in the last instant of the run can have its ack still in
+  // flight when the socket closes, so a small shortfall is ordinary. An excess
+  // is not: the ledger cannot hold acks the server never sent.
+  if (input.baseline.length > 0 && ackGap < 0) {
+    failures.push(`ledger holds ${-ackGap} more acks than the server accepted messages`);
   }
-  if (input.baseline.length > 0 && received - accounted > Math.max(10, Math.round(received * 0.01))) {
+  if (input.baseline.length > 0 && ackGap > Math.max(10, Math.round(received * 0.01))) {
     warnings.push(
-      `${received - accounted} accepted messages have no ack in the ledger — expected only for sockets that closed mid-flight`,
+      `${ackGap} accepted messages have no ack in the ledger — expected only for sockets that closed mid-flight`,
     );
   }
 
@@ -292,8 +322,14 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
       // reported rather than judged: how fast is a tuning question, not a
       // correctness one.
       if (queueAfter > 0 && queueAfter >= queueDepth) {
-        failures.push(
-          `queue depth stuck at ${queueAfter} across ${input.settleSeconds}s with no sessions left — entries have been abandoned`,
+        // A warning, not a failure, and the wording matters. `max` across
+        // instances returns the *stale* value whenever the follower's frozen
+        // gauge is the larger one, so a stuck reading here cannot distinguish
+        // an abandoned queue entry from an instance that last held the janitor
+        // lock a while ago. The Redis residue oracle asks the authority
+        // directly and owns the verdict; this only points at it.
+        warnings.push(
+          `queue depth reads ${queueAfter} and did not move in ${input.settleSeconds}s — see the redis residue oracle, which reads the queue itself`,
         );
       } else if (queueAfter > 0) {
         warnings.push(`queue depth still draining: ${queueDepth} to ${queueAfter}`);

@@ -20,6 +20,8 @@
  * bucket, which is exactly the mistake a naive client makes and not the one
  * this harness is here to make.
  */
+import { moderationView } from '../../../../backend/src/moderation/normalise';
+import { RULES } from '../../../../backend/src/moderation/rules';
 import type { Bot } from '../bot';
 import type { CorpusFile } from '../corpus';
 
@@ -86,4 +88,56 @@ export function requeue(bot: Bot, minPauseMs = 400, maxPauseMs = 2_500): void {
   bot.after(pause, () => {
     if (bot.state === 'IDLE') bot.joinQueue();
   });
+}
+
+/**
+ * Would a reasonable person report this?
+ *
+ * The M personas need a trigger, and a bot cannot judge tone. Two stand-ins are
+ * used, and both are deliberate approximations rather than pretending to be
+ * comprehension:
+ *
+ *   1. **The line is in the hostile or spam corpus.** This is knowledge a real
+ *      user does not have, and it is a cheat — but a faithful one: it fires
+ *      exactly when a human would have a reason to report, and it fires for no
+ *      other traffic, which is what keeps the report signal clean enough to
+ *      measure. A fuzzier trigger would mostly measure its own false positives.
+ *   2. **The message fires a moderation rule.** A link or a phone number from a
+ *      stranger is a reason people actually report, and this half needs no
+ *      inside knowledge at all — the client could compute it.
+ *
+ * The consequence worth stating: reports in this run are *better targeted than
+ * real ones would be*. Any conclusion of the form "reports caught the spammer
+ * in N conversations" is therefore an optimistic bound, and the report says so.
+ */
+export function looksAbusive(bot: Bot, text: string): boolean {
+  const view = moderationView(text);
+  if (RULES.some((rule) => rule.test(view, { detectContact: true, denyList: [] }))) return true;
+  return abusiveViews(bot.corpus).has(view);
+}
+
+/**
+ * The abusive corpora as the moderation view sees them, built once per corpus.
+ *
+ * Comparing normalised views rather than raw strings matters for A2 and A11: a
+ * campaign line with digits swapped for letters is not string-equal to anything
+ * in `spam.txt`, so a raw comparison would mean the reporters never react to
+ * the mutating spammer — and the run would then conclude that mutation defeats
+ * the *human* signal as well as the automated one. It does not. People read
+ * straight through leetspeak, and this is the closest cheap approximation of
+ * that. It also happens to be exactly what the offline detector does, which
+ * keeps the two halves of the measurement consistent.
+ */
+const VIEW_CACHE = new WeakMap<object, Set<string>>();
+
+function abusiveViews(corpus: Bot['corpus']): Set<string> {
+  const cached = VIEW_CACHE.get(corpus);
+  if (cached) return cached;
+
+  const views = new Set<string>();
+  for (const file of ['hostile.txt', 'spam.txt', 'denylist.txt'] as const) {
+    for (const entry of corpus.lines(file)) views.add(moderationView(entry));
+  }
+  VIEW_CACHE.set(corpus, views);
+  return views;
 }

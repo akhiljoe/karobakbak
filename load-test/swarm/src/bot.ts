@@ -36,6 +36,8 @@ import type {
   ServerLimits,
   SessionState,
 } from '../../../backend/src/protocol/types';
+import { moderationView } from '../../../backend/src/moderation/normalise';
+import { campaignView } from './campaign';
 import { contentHash, type Ledger, type LedgerEvent } from './ledger';
 import { CLIENT_TOKEN_COOKIE, readClientToken } from './identity';
 import type { Rng } from './rng';
@@ -49,6 +51,16 @@ export interface Persona {
   /** Scenario id from `docs/LOADTEST-SCENARIOS.md`, e.g. `N1`. */
   readonly scenario: string;
   readonly label: string;
+  /**
+   * Ground truth, declared before the run rather than inferred after it.
+   *
+   * A detection question only has an answer if the answer key exists first.
+   * `spammer` marks a bot whose behaviour a serial-spam detector should catch;
+   * `abusive` marks one that should attract reports; `benign` is stated
+   * explicitly rather than left implicit, because "everything unlabelled is
+   * innocent" is the assumption that turns a false positive into a silent one.
+   */
+  readonly labels?: readonly string[];
   /** The socket is up and the server has published its limits. */
   onConnected?(bot: Bot): void;
   onMatched?(bot: Bot, payload: MatchedPayload): void;
@@ -182,6 +194,17 @@ export class Bot {
   private hardStop = false;
   /** Set by `goSilent`: every outbound frame is dropped from here on. */
   private silent = false;
+  /**
+   * A block waiting for the server's answer.
+   *
+   * `block` has no acknowledgement of its own: success arrives as a
+   * `queue_status` putting this session in IDLE, and failure as a `NOT_MATCHED`
+   * error. Neither carries a correlation id, so the two are attributed to the
+   * most recent block within a short window — which is sound because a bot
+   * issues at most one block per conversation and the window is far longer than
+   * any round trip this server produces.
+   */
+  private pendingBlock: { matchId: string; at: number } | null = null;
 
   constructor(spec: BotSpec, deps: BotDeps) {
     this.spec = spec;
@@ -442,8 +465,16 @@ export class Bot {
     this.record({ type: 'left_queue' });
   }
 
-  skip(): void {
-    if (!this.spend('skip')) return;
+  /**
+   * `force` bypasses the local bucket mirror, not the server's.
+   *
+   * The mirror exists so an ordinary persona is never throttled by accident.
+   * The A group's whole purpose is to find out what happens at and past the
+   * limit, so those personas opt out of the mirror and take the server's answer
+   * — which is the measurement.
+   */
+  skip(options: { force?: boolean } = {}): void {
+    if (!options.force && !this.spend('skip')) return;
     const previous = this.matchId;
     this.endMatchLocally();
     this.queuedAt = Date.now();
@@ -461,17 +492,18 @@ export class Bot {
     this.record({ type: 'left_chat', matchId: previous ?? undefined });
   }
 
-  block(): void {
-    if (!this.spend('block')) return;
+  block(options: { force?: boolean } = {}): void {
+    if (!options.force && !this.spend('block')) return;
     const previous = this.matchId;
     this.endMatchLocally();
     this.state = 'IDLE';
     this.send('block', {});
     this.record({ type: 'blocked', matchId: previous ?? undefined });
+    if (previous) this.pendingBlock = { matchId: previous, at: Date.now() };
   }
 
-  report(category: ReportCategory, note?: string): void {
-    if (!this.spend('report')) return;
+  report(category: ReportCategory, note?: string, options: { force?: boolean } = {}): void {
+    if (!options.force && !this.spend('report')) return;
     this.send('report', note === undefined ? { category } : { category, note });
     this.record({ type: 'reported', matchId: this.matchId ?? undefined, reason: category });
   }
@@ -513,12 +545,21 @@ export class Bot {
     }
     const cid = `c${this.spec.index.toString(36)}_${(this.seq += 1).toString(36)}`;
     const hash = contentHash(trimmed);
+    // The same text as the moderation pipeline sees it. Two hashes rather than
+    // one is the entire point of the A2/A11 scenarios: an exact hash groups a
+    // copy-paste campaign and nothing else, while the normalised view survives
+    // the cheapest evasions there are. The gap between what the two detect is
+    // the finding, and it cannot be measured with only one of them.
+    const nhash = contentHash(moderationView(trimmed));
+    const chash = contentHash(campaignView(trimmed));
     this.pending.set(cid, { at: Date.now(), hash });
     this.record({
       type: 'sent',
       matchId: this.matchId ?? undefined,
       cid,
       hash,
+      nhash,
+      chash,
       chars: [...trimmed].length,
       seq: this.seq,
     });
@@ -591,6 +632,23 @@ export class Bot {
         // A refused message will never be acked, so its correlation is dead
         // weight — but which one was refused is not on the wire, and guessing
         // would be worse than waiting for `trimPending` to age it out.
+        this.expirePendingBlock();
+        if (this.pendingBlock !== null && (code === 'NOT_MATCHED' || code === 'RATE_LIMITED')) {
+          // Two ways a block writes nothing, and both were learnt from runs:
+          //
+          //   NOT_MATCHED  — the match was gone before the block reached the
+          //                  script. A13 produces this by racing a skip against
+          //                  its own block; a real client produces it by hitting
+          //                  Block as the partner leaves.
+          //   RATE_LIMITED — the block bucket is 3 burst, 20/hour. A bot that
+          //                  blocks several partners in a row is refused, and
+          //                  the refusal is the whole record of the attempt.
+          //
+          // Either way no block exists, so the pair may legitimately meet again
+          // and the durability check must not count it.
+          this.record({ type: 'block_refused', matchId: this.pendingBlock.matchId, code });
+          this.pendingBlock = null;
+        }
         if (code === 'NOT_MATCHED' || code === 'SESSION_GONE' || code === 'ALREADY_MATCHED') {
           // The server's view and this bot's view have diverged. The server is
           // authoritative, so the bot's view is the one that is wrong.
@@ -607,6 +665,13 @@ export class Bot {
 
       case 'queue_status':
         this.state = frame.payload.state;
+        this.expirePendingBlock();
+        if (this.pendingBlock !== null && frame.payload.state === 'IDLE') {
+          // A block puts the blocker in IDLE rather than back in the queue
+          // (§5), so this is the server confirming it recorded one.
+          this.record({ type: 'block_confirmed', matchId: this.pendingBlock.matchId });
+          this.pendingBlock = null;
+        }
         break;
 
       case 'server_shutdown':
@@ -669,6 +734,7 @@ export class Bot {
       matchId: payload.matchId,
       messageId: payload.messageId,
       hash: contentHash(payload.text),
+      nhash: contentHash(moderationView(payload.text)),
       chars: [...payload.text].length,
       seq: this.turnsReceived,
     });
@@ -715,7 +781,13 @@ export class Bot {
    * discarded, and a bot that talks for an hour does not accumulate a map of
    * every message it ever sent.
    */
+  private expirePendingBlock(): void {
+    if (this.pendingBlock === null) return;
+    if (Date.now() - this.pendingBlock.at > 5_000) this.pendingBlock = null;
+  }
+
   private trimPending(): void {
+    this.expirePendingBlock();
     const cutoff = Date.now() - 120_000;
     for (const [cid, entry] of this.pending) {
       if (entry.at < cutoff) this.pending.delete(cid);
