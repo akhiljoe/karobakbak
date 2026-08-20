@@ -124,6 +124,33 @@ export interface Config {
     readonly clientDimensionEnabled: boolean;
   };
 
+  /**
+   * Moderator-issued enforcement, checked at upgrade (I11).
+   *
+   * Separate from `blocks` because the two answer different questions. A block
+   * asks "will these two be matched"; a ban asks "does this connection happen
+   * at all". Sharing a TTL between them would tie a user-safety decision to a
+   * moderation decision, and the right durations are not the same number.
+   */
+  readonly enforcement: {
+    /**
+     * When false, ban keys are neither read nor written and the upgrade path
+     * keeps its previous shape. Present so a deployment can turn enforcement
+     * off without the console having to be uninstalled — and so the check has
+     * an off switch if it ever misfires at the edge.
+     */
+    readonly enabled: boolean;
+    /** What the console offers as the default ban length. */
+    readonly defaultBanSeconds: number;
+    /**
+     * Ceiling on any single ban. A permanent ban is deliberately not
+     * expressible: an anonymous product has no appeals channel, so an
+     * indefinite sanction against a hash nobody can identify is one that
+     * nobody can ever lift on evidence. Long bans are re-issued, not eternal.
+     */
+    readonly maxBanSeconds: number;
+  };
+
   readonly moderation: {
     readonly enabled: boolean;
     /**
@@ -444,6 +471,12 @@ export function loadConfig(env: Env = process.env): Config {
       clientDimensionEnabled: bool(env, 'BLOCK_DIMENSION_CLIENT_ENABLED', true),
     },
 
+    enforcement: {
+      enabled: bool(env, 'ENFORCEMENT_ENABLED', true),
+      defaultBanSeconds: int(env, 'ENFORCEMENT_DEFAULT_BAN_SECONDS', 2_592_000, 60, 31_536_000),
+      maxBanSeconds: int(env, 'ENFORCEMENT_MAX_BAN_SECONDS', 31_536_000, 60, 31_536_000),
+    },
+
     moderation: {
       enabled: bool(env, 'MODERATION_ENABLED', true),
       defaultAction: moderationAction(env, 'MODERATION_DEFAULT_ACTION', 'flag'),
@@ -547,6 +580,16 @@ function assertCoherent(config: Config): void {
     throw new ConfigError(
       'ALLOWED_ORIGINS must list at least one origin when NODE_ENV=production; ' +
         'an empty allowlist accepts WebSocket upgrades from any site',
+    );
+  }
+
+  // A default longer than the ceiling would mean the console's own default
+  // action is one the console must refuse to carry out — an operator meeting a
+  // validation error on the button they were told to press.
+  if (config.enforcement.defaultBanSeconds > config.enforcement.maxBanSeconds) {
+    throw new ConfigError(
+      `ENFORCEMENT_DEFAULT_BAN_SECONDS (${config.enforcement.defaultBanSeconds}s) must not exceed ` +
+        `ENFORCEMENT_MAX_BAN_SECONDS (${config.enforcement.maxBanSeconds}s)`,
     );
   }
 

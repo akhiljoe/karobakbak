@@ -97,6 +97,20 @@ export type BlockPartnerResult =
     }
   | { status: 'not_matched' };
 
+/** Which identity dimension a sanction was written against (D18). */
+export type EnforcementDimension = 'ip' | 'client';
+
+/**
+ * The upgrade path's answer to "may this connection exist".
+ *
+ * `dimension` is carried so the refusal can be counted by dimension without
+ * the hash itself ever reaching a metric label — a hash is still an identifier
+ * (I8), and a per-hash label would additionally be unbounded cardinality.
+ */
+export type BanCheck =
+  | { banned: false }
+  | { banned: true; dimension: EnforcementDimension; enforcementId: string };
+
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterMs: number;
@@ -544,6 +558,63 @@ export class RedisStore {
       blockedIpHash: str(reply, 5),
       blockedClientHash: str(reply, 6),
     };
+  }
+
+  /* --- enforcement -------------------------------------------------------- */
+
+  /**
+   * Whether either of a connection's two identity hashes is under a ban (I11).
+   *
+   * Plain commands rather than a Lua script, deliberately, and this is not an
+   * exception to the rule in `CLAUDE.md`. That rule exists for *state
+   * transitions*, which must not interleave across instances. This is a read of
+   * two independent keys that mutates nothing; there is no invariant spanning
+   * them and no write to lose. `MGET` keeps it to one round trip on the
+   * connection path, where a second one would be paid by every user.
+   *
+   * A ban racing a connection is settled by whichever reaches Redis first, and
+   * that is correct rather than merely tolerable: a session opened microseconds
+   * before the ban landed is one the janitor and the TTL will reap anyway, and
+   * the ban still refuses every later reconnection.
+   */
+  async checkBan(ipHash: string, clientHash: string): Promise<BanCheck> {
+    if (!this.config.enforcement.enabled) return { banned: false };
+    const [byIp, byClient] = await this.client.mget(
+      this.keys.ban(ipHash),
+      this.keys.ban(clientHash),
+    );
+    // IP first only because it is the coarser of the two; either alone refuses.
+    if (typeof byIp === 'string') return { banned: true, dimension: 'ip', enforcementId: byIp };
+    if (typeof byClient === 'string') {
+      return { banned: true, dimension: 'client', enforcementId: byClient };
+    }
+    return { banned: false };
+  }
+
+  /**
+   * Write a ban key for one subject hash.
+   *
+   * The value is the `enforcement.enforcement_id` that caused it, so a refusal
+   * observed in production can be traced to the row that ordered it and to the
+   * `admin_audit` row that justifies it. Without that link a ban is an
+   * unexplained outage for the person on the other end of it.
+   *
+   * Idempotent: re-issuing the same ban resets the TTL and overwrites with the
+   * newer enforcement id, which is what a moderator extending a sanction means.
+   */
+  async applyBan(subjectKey: string, enforcementId: string, ttlSeconds: number): Promise<void> {
+    if (!this.config.enforcement.enabled) return;
+    await this.client.set(this.keys.ban(subjectKey), enforcementId, 'EX', ttlSeconds);
+  }
+
+  /**
+   * Lift a ban. Returns whether a key was actually removed, so the caller can
+   * tell a revocation from a no-op instead of reporting success either way —
+   * a ban that expired on its own and one that never existed are different
+   * facts to an operator reading an audit trail.
+   */
+  async revokeBan(subjectKey: string): Promise<boolean> {
+    return (await this.client.del(this.keys.ban(subjectKey))) > 0;
   }
 
   /* --- janitor ------------------------------------------------------------ */

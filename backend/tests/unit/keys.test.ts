@@ -18,6 +18,7 @@ describe('key namespace', () => {
     expect(keys.connRate('abc')).toBe('chat:rl:conn:abc');
     expect(keys.connSessions('abc')).toBe('chat:conn:abc');
     expect(keys.blocks('abc')).toBe('chat:blocks:abc');
+    expect(keys.ban('abc')).toBe('chat:ban:abc');
     expect(keys.instance('i_1')).toBe('chat:instance:i_1');
     expect(keys.instances()).toBe('chat:instances');
     expect(keys.janitorLock()).toBe('chat:janitor:lock');
@@ -40,7 +41,20 @@ describe('key namespace', () => {
     expect(() => keys.session('')).toThrow(UnsafeKeyComponentError);
     expect(() => keys.session('s 1')).toThrow(UnsafeKeyComponentError);
     expect(() => keys.blocks('a'.repeat(129))).toThrow(UnsafeKeyComponentError);
+    expect(() => keys.ban('abc:evil')).toThrow(UnsafeKeyComponentError);
     expect(() => createKeys('bad:prefix')).toThrow(UnsafeKeyComponentError);
+  });
+
+  it('keeps bans and blocks in separate namespaces', () => {
+    // They are answers to different questions — "will these two be matched"
+    // against "does this connection happen at all" — and they are written and
+    // revoked by different actors. A shared namespace would let a moderator
+    // revoking a ban delete a user's own block, or let a user's block refuse an
+    // upgrade. The prefixes are what keep the two apart, so assert they differ
+    // for the same subject rather than trusting the spelling.
+    expect(keys.ban('same')).not.toBe(keys.blocks('same'));
+    expect(keys.ban('same').startsWith('chat:ban:')).toBe(true);
+    expect(keys.blocks('same').startsWith('chat:blocks:')).toBe(true);
   });
 
   it('never puts the offending value in the error message', () => {

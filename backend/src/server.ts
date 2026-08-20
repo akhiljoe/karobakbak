@@ -30,7 +30,7 @@ import { CLOSE_CODES, type ServerFeatures, type ServerLimits } from './protocol/
 import type { ValidatedCommand } from './protocol/validate';
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
-import type { RedisStore } from './redis/store';
+import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
 import type { RetentionSink } from './storage/sink';
 import { hashIp } from './util/ids';
@@ -230,6 +230,46 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     const ipHash = hashIp(address, config.security.ipHashSalt);
     const { token, issued } = resolveClientToken(req);
     const clientHash = hashIp(token, config.security.ipHashSalt);
+
+    // Enforcement, before a session exists (I11). Placed here rather than in
+    // `lifecycle.open` on purpose: a banned connection should consume no
+    // session id, no Pub/Sub subscription and no connection slot, so the check
+    // has to precede the first thing that allocates any of them.
+    //
+    // A Redis failure here refuses the connection rather than admitting it. The
+    // opposite default — fail open, so an outage cannot lock everyone out — is
+    // the usual instinct and is wrong for this specific check: `/ready` already
+    // drops an instance with unhealthy Redis out of the load balancer, so the
+    // failure mode is a connection that was going to fail moments later anyway,
+    // whereas failing open would silently un-ban every sanctioned user for the
+    // duration of the outage.
+    let ban: BanCheck;
+    try {
+      ban = await store.checkBan(ipHash, clientHash);
+    } catch (err) {
+      metrics.connectionsRejected.labels('error').inc();
+      logger.error('failed to check enforcement state', {
+        errName: err instanceof Error ? err.name : 'unknown',
+      });
+      refuse(socket, 503, 'unavailable');
+      return;
+    }
+
+    if (ban.banned) {
+      metrics.connectionsRejected.labels('banned').inc();
+      // The enforcement id, never the hash: it identifies the decision, not the
+      // person, and it is the handle an operator needs to find the audit row.
+      logger.info('refused a banned connection', {
+        dimension: ban.dimension,
+        enforcementId: ban.enforcementId,
+      });
+      // Deliberately the same shape of refusal a disallowed origin gets, with
+      // no detail about which dimension matched or how long it lasts. Telling a
+      // banned client that its cookie is the problem is telling it exactly what
+      // to change.
+      refuse(socket, 403, 'forbidden');
+      return;
+    }
 
     const subscribedTo: string[] = [];
     const releaseSubscription = async (): Promise<void> => {

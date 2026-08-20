@@ -52,6 +52,20 @@ export function newClientToken(): string {
 }
 
 /**
+ * Identifies one enforcement decision — a ban, a suspension, a revocation.
+ *
+ * Generated here rather than left to the database default because the value is
+ * written to *two* places that must agree: the `enforcement` row and the Redis
+ * ban key whose value is this id. A database-side default would only be known
+ * after the insert returned, so the key would either be written second (a
+ * window where the row exists and the ban does not) or written with a different
+ * value (a refusal that cannot be traced back to its justification).
+ */
+export function newEnforcementId(): string {
+  return `enf_${randomToken()}`;
+}
+
+/**
  * Identifies this backend process. Stable for the process lifetime and used
  * for the Redis liveness beacon that lets other instances detect a crash.
  *

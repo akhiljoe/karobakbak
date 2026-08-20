@@ -87,6 +87,26 @@ describe('loadConfig', () => {
 });
 
 describe('loadConfig — cross-field coherence', () => {
+  it('rejects a default ban longer than the ban ceiling', () => {
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          ENFORCEMENT_DEFAULT_BAN_SECONDS: '2592000',
+          ENFORCEMENT_MAX_BAN_SECONDS: '86400',
+        }),
+      ),
+    ).toThrow(/ENFORCEMENT_DEFAULT_BAN_SECONDS/);
+    // Equal is coherent: a deployment with exactly one legal ban length.
+    expect(
+      loadConfig(
+        baseEnv({
+          ENFORCEMENT_DEFAULT_BAN_SECONDS: '86400',
+          ENFORCEMENT_MAX_BAN_SECONDS: '86400',
+        }),
+      ).enforcement.defaultBanSeconds,
+    ).toBe(86400);
+  });
+
   it('rejects a heartbeat that cannot keep a session alive', () => {
     expect(() =>
       loadConfig(baseEnv({ SESSION_TTL_SECONDS: '30', HEARTBEAT_INTERVAL_MS: '20000' })),

@@ -75,6 +75,17 @@ export interface RedisKeys {
   connSessions(ipHash: string): string;
   /** SET — the block keys that this block key refuses to be matched with (D18). */
   blocks(blockKey: string): string;
+  /**
+   * STRING — a moderator-issued ban on one subject key, checked at upgrade.
+   *
+   * Distinct from `blocks` in both shape and meaning. A block is *relative*: a
+   * set of peers one user refuses, consulted inside `tryMatch`. A ban is
+   * *absolute*: the holder of this key does not get a session at all, so it is
+   * a single key with a TTL, read before a session exists. Keeping them apart
+   * means a ban can never be mistaken for a peer relationship by the matching
+   * path, and revoking one cannot disturb the other.
+   */
+  ban(subjectKey: string): string;
   /** STRING — liveness beacon for one backend instance. */
   instance(iid: string): string;
   /** SET — known instance ids. */
@@ -109,6 +120,7 @@ export function createKeys(prefix: string): RedisKeys {
     connRate: (ipHash) => `${prefix}:rl:conn:${assertComponent(ipHash, 'ip hash')}`,
     connSessions: (ipHash) => `${prefix}:conn:${assertComponent(ipHash, 'ip hash')}`,
     blocks: (blockKey) => `${prefix}:blocks:${assertComponent(blockKey, 'block key')}`,
+    ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,
