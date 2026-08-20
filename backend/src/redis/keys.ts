@@ -86,6 +86,8 @@ export interface RedisKeys {
    * path, and revoking one cannot disturb the other.
    */
   ban(subjectKey: string): string;
+  /** STRING — resume-token hash to session id, so a returning socket can find its seat. */
+  resume(tokenHash: string): string;
   /** STRING — liveness beacon for one backend instance. */
   instance(iid: string): string;
   /** SET — known instance ids. */
@@ -121,6 +123,7 @@ export function createKeys(prefix: string): RedisKeys {
     connSessions: (ipHash) => `${prefix}:conn:${assertComponent(ipHash, 'ip hash')}`,
     blocks: (blockKey) => `${prefix}:blocks:${assertComponent(blockKey, 'block key')}`,
     ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,
+    resume: (tokenHash) => `${prefix}:resume:${assertComponent(tokenHash, 'resume hash')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,

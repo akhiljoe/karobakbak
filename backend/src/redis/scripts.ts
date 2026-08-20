@@ -58,6 +58,7 @@ local function kUserMatch(sid) return P .. ':user_match:' .. sid end
 local function kDedupe(mid)    return P .. ':dedupe:' .. mid end
 local function kBlocks(b)      return P .. ':blocks:' .. b end
 local function kLastPartner(sid) return P .. ':last_partner:' .. sid end
+local function kResume(h)      return P .. ':resume:' .. h end
 local function kInstance(iid)  return P .. ':instance:' .. iid end
 local function kConn(ip)       return P .. ':conn:' .. ip end
 
@@ -192,7 +193,7 @@ function define(name: string, keys: number, argv: number, body: string): LuaScri
 const createSession = define(
   'createSession',
   2,
-  7,
+  8,
   `
 local now = nowMs()
 redis.call('HSET', KEYS[1],
@@ -204,6 +205,12 @@ redis.call('HSET', KEYS[1],
   'clientHash', ARGV[6],
   'createdAt', now,
   'lastSeenAt', now)
+-- Only the hash of the resume token is stored, never the token. A read of
+-- Redis must not hand somebody the ability to walk into a live conversation.
+if ARGV[8] and ARGV[8] ~= '' then
+  redis.call('HSET', KEYS[1], 'resumeHash', ARGV[8])
+  redis.call('SET', kResume(ARGV[8]), ARGV[2], 'EX', tonumber(ARGV[7]))
+end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
 redis.call('SADD', KEYS[2], ARGV[2])
 return { 'OK', tostring(now) }
@@ -217,6 +224,54 @@ return { 'OK', tostring(now) }
  * Preserves I7: a session stops being matchable within one TTL of its socket
  * going away, because only a live connection refreshes it.
  */
+/**
+ * Redeem a resume token and re-attach a session to this instance.
+ *
+ * KEYS: resume index for the presented hash.
+ * ARGV: prefix, presented hash, new hash, instanceId, sessionTtl.
+ *
+ * Refuses anything that is not a *detached* session. A token for a session
+ * whose socket is still open would let a second tab — or somebody who captured
+ * the token — take over a conversation in progress while the original holder
+ * watched it happen.
+ *
+ * The token is rotated on every successful resume: the presented one is deleted
+ * and a fresh one indexed, so a captured token is good for exactly one use and
+ * only until the person it was taken from reconnects.
+ */
+const resumeSession = define(
+  'resumeSession',
+  1,
+  5,
+  `
+local sid = redis.call('GET', KEYS[1])
+if not sid then return { 'NO_SESSION' } end
+
+local skey = kSession(sid)
+local flat = redis.call('HGETALL', skey)
+if #flat == 0 then
+  redis.call('DEL', KEYS[1])
+  return { 'NO_SESSION' }
+end
+local h = hashToTable(flat)
+if not h['detachedAt'] then return { 'NOT_DETACHED' } end
+
+local ttl = tonumber(ARGV[5])
+redis.call('HSET', skey, 'instanceId', ARGV[4], 'lastSeenAt', nowMs(), 'resumeHash', ARGV[3])
+redis.call('HDEL', skey, 'detachedAt')
+redis.call('EXPIRE', skey, ttl)
+redis.call('SADD', kSessions(), sid)
+
+redis.call('DEL', KEYS[1])
+redis.call('SET', kResume(ARGV[3]), sid, 'EX', ttl)
+
+local mid = redis.call('GET', kUserMatch(sid))
+if mid then redis.call('EXPIRE', kUserMatch(sid), ttl) end
+
+return { 'RESUMED', sid, mid or '', h['state'] or 'IDLE', h['ipHash'] or '', h['clientHash'] or '' }
+`,
+);
+
 const heartbeat = define(
   'heartbeat',
   2,
@@ -250,9 +305,10 @@ return { 'OK', state or '', mid or '' }
 const closeSession = define(
   'closeSession',
   4,
-  2,
+  3,
   `
 local sid = ARGV[2]
+local grace = tonumber(ARGV[3]) or 0
 local flat = redis.call('HGETALL', KEYS[1])
 local h = hashToTable(flat)
 if h['segment'] and h['segment'] ~= '' then
@@ -265,6 +321,27 @@ if redis.call('SCARD', KEYS[4]) == 0 then redis.call('DEL', KEYS[4]) end
 -- clearing only ours here would strand the partner pointing at a match record
 -- nobody is going to take down.
 local mid = redis.call('GET', KEYS[3])
+
+-- A socket dropped mid-conversation, and resumption is enabled: hold the seat
+-- rather than tearing the conversation down (D7 reversed, §28).
+--
+-- The row is kept, marked detached, and given the grace window as its TTL. It
+-- is removed from the sessions set and the connection set because there is no
+-- socket any more — the slot must not stay spent. Nothing else is required:
+-- if the window passes, the row expires on its own, and janitorMatches already
+-- ends a match whose side has vanished and returns the survivor to notify. No
+-- new sweeper, and one expiry mechanism instead of two that can disagree.
+if grace > 0 and mid and mid ~= '' and #flat > 0 then
+  -- instanceId is deliberately left in place. resolveRoute reads an empty one
+  -- as PARTNER_GONE, which the message pipeline turns into "not matched" and
+  -- ends the conversation -- so one message sent during the gap would destroy
+  -- the very thing this window exists to protect. The field means "which
+  -- instance last held this socket", and a resume overwrites it.
+  redis.call('HSET', KEYS[1], 'detachedAt', nowMs())
+  redis.call('EXPIRE', KEYS[1], grace)
+  return { 'DETACHED', mid }
+end
+
 redis.call('DEL', KEYS[1])
 if #flat == 0 then return { 'GONE', mid or '' } end
 return { 'CLOSED', mid or '' }
@@ -911,6 +988,7 @@ return { 'OK' }
 );
 
 export const SCRIPTS = {
+  resumeSession,
   createSession,
   heartbeat,
   closeSession,

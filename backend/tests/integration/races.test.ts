@@ -11,6 +11,8 @@ import { newMatchId, newSessionId } from '../../src/util/ids';
 
 let one: TestContext;
 let two: TestContext;
+/** Same Redis, resumption disabled — for the teardown races (§28). */
+let noResume: TestContext;
 
 beforeAll(async () => {
   one = await createTestContext();
@@ -19,6 +21,10 @@ beforeAll(async () => {
   two = await createTestContext({
     REDIS_KEY_PREFIX: one.config.redis.keyPrefix,
     INSTANCE_ID: 'i_two',
+  });
+  noResume = await createTestContext({
+    REDIS_KEY_PREFIX: one.config.redis.keyPrefix,
+    RESUME_GRACE_SECONDS: '0',
   });
 });
 
@@ -29,6 +35,7 @@ afterEach(async () => {
 afterAll(async () => {
   await one.close();
   await two.close();
+  await noResume.close();
 });
 
 /** Every live match, as { mid: [a, b] }. */
@@ -165,7 +172,7 @@ describe('§10.3 / §10.4 — disconnect racing matchmaking', () => {
         // that no longer exists.
         expect(close.matchId === mid || close.matchId === null).toBe(true);
         await one.store.endMatch(mid);
-        expect(await one.store.currentMatchId(a)).toBeNull();
+        expect(await noResume.store.currentMatchId(a)).toBeNull();
         expect((await one.store.readSession(a))?.state).toBe('IDLE');
       } else {
         // The close won: the candidate was skipped and no match exists.
@@ -243,90 +250,103 @@ describe('§10.8 — message racing a skip', () => {
 
 describe('§10.5 — matched, then one side disconnects immediately', () => {
   it('hands the caller the match to end and releases the survivor', async () => {
-    const a = await one.session();
-    const b = await two.session({ instanceId: 'i_two' });
-    await enqueue(one, a);
-    await enqueue(two, b);
+    // Resumption off: this is the teardown path, where a dropped socket ends
+    // the conversation. The held-seat path has its own suite (§28).
+    const a = await noResume.session();
+    const b = await noResume.session({ instanceId: 'i_two' });
+    await enqueue(noResume, a);
+    await enqueue(noResume, b);
     const mid = newMatchId();
-    expect(await one.store.tryMatch(a, one.segment, mid)).toMatchObject({ status: 'matched' });
+    expect(await noResume.store.tryMatch(a, noResume.segment, mid)).toMatchObject({
+      status: 'matched',
+    });
 
-    // b's socket dies on the *other* instance a millisecond after pairing.
-    const closed = await two.store.closeSession(b, fakeHash(b));
+    // b's socket dies a millisecond after pairing.
+    const closed = await noResume.store.closeSession(b, fakeHash(b));
     // closeSession deliberately does not end the match — it reports which one
     // to end, because endMatch is what cleans both sides.
     expect(closed).toEqual({ status: 'closed', matchId: mid });
 
-    const ended = await two.store.endMatch(mid);
-    expect(ended).toMatchObject({ status: 'ended', segment: one.segment });
+    const ended = await noResume.store.endMatch(mid);
+    expect(ended).toMatchObject({ status: 'ended', segment: noResume.segment });
     // The survivor is named, so the instance owning a's socket knows whom to
     // notify. Nobody has to guess it from a routing table.
     if (ended.status === 'ended') expect([ended.a, ended.b].sort()).toEqual([a, b].sort());
 
-    expect(await one.store.currentMatchId(a)).toBeNull();
+    expect(await noResume.store.currentMatchId(a)).toBeNull();
     expect((await one.store.readSession(a))?.state).toBe('IDLE');
     expect(await one.store.readMatch(mid)).toBeNull();
   });
 
   it('converges when the same disconnect is cleaned up twice', async () => {
-    const a = await one.session();
-    const b = await two.session();
-    await enqueue(one, a);
-    await enqueue(two, b);
+    const a = await noResume.session();
+    const b = await noResume.session();
+    await enqueue(noResume, a);
+    await enqueue(noResume, b);
     const mid = newMatchId();
-    await one.store.tryMatch(a, one.segment, mid);
+    await noResume.store.tryMatch(a, noResume.segment, mid);
 
-    await two.store.closeSession(b, fakeHash(b));
-    await two.store.endMatch(mid);
+    await noResume.store.closeSession(b, fakeHash(b));
+    await noResume.store.endMatch(mid);
 
     // A duplicate cleanup — a retried close handler, or the janitor arriving
     // behind it — must not error or resurrect state (I3, rule 4).
-    expect(await two.store.closeSession(b, fakeHash(b))).toEqual({
+    expect(await noResume.store.closeSession(b, fakeHash(b))).toEqual({
       status: 'gone',
       matchId: null,
     });
-    expect(await two.store.endMatch(mid)).toEqual({ status: 'already_ended' });
-    expect((await one.store.readSession(a))?.state).toBe('IDLE');
+    expect(await noResume.store.endMatch(mid)).toEqual({ status: 'already_ended' });
+    expect((await noResume.store.readSession(a))?.state).toBe('IDLE');
   });
 });
 
-describe('§10.9 — message racing a partner disconnect', () => {
+/**
+ * These describe the *teardown* path, so they run with resumption disabled.
+ *
+ * With a held seat a dropped socket deliberately stays routable — that is the
+ * fix which stops one message during the gap from ending the conversation — so
+ * "gone the instant the socket closed" is no longer what a disconnect means
+ * unless resumption is off. The window §10.9 is about still exists there, and
+ * still has to be safe.
+ */
+describe('§10.9 — message racing a partner disconnect (no resumption)', () => {
   it('refuses to route to a session that is gone, without burning the message id', async () => {
-    const a = await one.session();
-    const b = await two.session();
-    await enqueue(one, a);
-    await enqueue(two, b);
+    const a = await noResume.session();
+    const b = await noResume.session();
+    await enqueue(noResume, a);
+    await enqueue(noResume, b);
     const mid = newMatchId();
-    await one.store.tryMatch(a, one.segment, mid);
+    await noResume.store.tryMatch(a, noResume.segment, mid);
 
     // The window §10.9 is about: b's session row is gone, but the match record
     // has not been torn down yet.
-    await two.store.closeSession(b, fakeHash(b));
-    expect(await one.store.resolvePartner(a, 'c_gone')).toEqual({
+    await noResume.store.closeSession(b, fakeHash(b));
+    expect(await noResume.store.resolvePartner(a, 'c_gone')).toEqual({
       status: 'partner_gone',
       matchId: mid,
     });
 
     // The id was not consumed: the dedupe SADD happens only after a partner is
     // resolved, so an undeliverable message stays retryable (§10.17).
-    expect(await one.client.sismember(one.keys.dedupe(mid), 'c_gone')).toBe(0);
+    expect(await noResume.client.sismember(noResume.keys.dedupe(mid), 'c_gone')).toBe(0);
 
     // Once the match is ended there is no match to speak of at all.
-    await one.store.endMatch(mid);
-    expect(await one.store.resolvePartner(a, 'c_gone')).toEqual({ status: 'not_matched' });
+    await noResume.store.endMatch(mid);
+    expect(await noResume.store.resolvePartner(a, 'c_gone')).toEqual({ status: 'not_matched' });
   });
 
   it('never resolves a deliverable partner once the disconnect has landed', async () => {
     for (let round = 0; round < 12; round += 1) {
-      const a = await one.session();
-      const b = await two.session();
-      await enqueue(one, a);
-      await enqueue(two, b);
+      const a = await noResume.session();
+      const b = await noResume.session();
+      await enqueue(noResume, a);
+      await enqueue(noResume, b);
       const mid = newMatchId();
-      await one.store.tryMatch(a, one.segment, mid);
+      await noResume.store.tryMatch(a, noResume.segment, mid);
 
       const [routed] = await Promise.all([
-        one.store.resolvePartner(a, `c_${round}`),
-        two.store.closeSession(b, fakeHash(b)),
+        noResume.store.resolvePartner(a, `c_${round}`),
+        noResume.store.closeSession(b, fakeHash(b)),
       ]);
 
       // Three orderings, all safe: the send beat the close (`ok`, and the
@@ -334,23 +354,23 @@ describe('§10.9 — message racing a partner disconnect', () => {
       // design), or the close landed first (`partner_gone`). What must never
       // happen is a resolve *after* the close claiming a live partner.
       expect(['ok', 'partner_gone']).toContain(routed.status);
-      const after = await one.store.resolvePartner(a, `c_after_${round}`);
+      const after = await noResume.store.resolvePartner(a, `c_after_${round}`);
       expect(after.status).not.toBe('ok');
 
-      await one.flush();
+      await noResume.flush();
     }
   });
 });
 
 describe('§10.10 — duplicate queue entries', () => {
   it('is structurally impossible under concurrent joins', async () => {
-    const sid = await one.session();
+    const sid = await noResume.session();
     await Promise.all([
-      one.store.joinQueue(sid, one.segment),
-      two.store.joinQueue(sid, two.segment),
-      one.store.joinQueue(sid, one.segment),
+      noResume.store.joinQueue(sid, noResume.segment),
+      noResume.store.joinQueue(sid, two.segment),
+      noResume.store.joinQueue(sid, noResume.segment),
     ]);
-    expect(await one.store.queueDepth(one.segment)).toBe(1);
+    expect(await noResume.store.queueDepth(noResume.segment)).toBe(1);
   });
 });
 
@@ -384,26 +404,26 @@ describe('§10.15 — two instances, no process-local state', () => {
     // Created by instance one, queued by instance two, matched by instance one:
     // no decision reads process-local state, so none of this is unusual.
     const sid = await one.session();
-    await two.store.joinQueue(sid, two.segment);
+    await one.store.joinQueue(sid, two.segment);
     const partner = await two.session({ instanceId: 'i_two' });
-    await enqueue(two, partner);
+    await enqueue(one, partner);
 
     const result = await one.store.tryMatch(sid, one.segment, newMatchId());
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: partner });
-    expect(await two.store.heartbeat(sid)).toMatchObject({ state: 'MATCHED' });
+    expect(await one.store.heartbeat(sid)).toMatchObject({ state: 'MATCHED' });
   });
 
   it('routes to whichever instance owns the partner socket', async () => {
     const local = await one.session({ instanceId: 'i_one' });
     const remote = await two.session({ instanceId: 'i_two' });
     await enqueue(one, local);
-    await enqueue(two, remote);
+    await enqueue(one, remote);
     await one.store.tryMatch(local, one.segment, newMatchId());
 
     expect(await one.store.resolvePartner(local, 'c_1')).toMatchObject({
       partnerInstanceId: 'i_two',
     });
-    expect(await two.store.resolvePartner(remote, 'c_2')).toMatchObject({
+    expect(await one.store.resolvePartner(remote, 'c_2')).toMatchObject({
       partnerInstanceId: 'i_one',
     });
   });

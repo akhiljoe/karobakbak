@@ -6,14 +6,13 @@
  * same shell rather than being a separate screen the layout jumps between.
  */
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clock, X } from 'lucide-react';
+import { ArrowLeft, Clock, MoreVertical, ShieldX, SkipForward, X } from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
 import type { ChatState } from '../state/machine';
 import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
 import { colourFor, composerDisabled, glyphFor, searchingDetail, type ConnectionView } from '../view/presentation';
-import { ActionBar } from './ActionBar';
 import { AdRail } from './AdRail';
 import { Avatar } from './Avatar';
 import { ConnectionStatus } from './ConnectionStatus';
@@ -69,6 +68,15 @@ export function ChatShell({
   // What they said about themselves, as a subtitle. Null when they declared
   // nothing, which is the common case and the one the copy defaults to.
   const declared = describeProfile(state.partner?.profile ?? null);
+  // Two different waits, and they are not the same message. `partnerAway` is
+  // "they dropped, their seat is held"; `reconnecting` is "*we* dropped".
+  const partnerCountdown = useCountdown(state.partnerAway);
+  const reconnecting = state.screen === 'disconnected' && state.matchId !== null;
+  const selfCountdown = useCountdown(
+    reconnecting && state.resumeGraceSeconds > 0
+      ? new Date(Date.now() + state.resumeGraceSeconds * 1000).toISOString()
+      : null,
+  );
   const [icebreakerDismissed, setIcebreakerDismissed] = useState(false);
 
   // A new conversation gets a fresh offer of a prompt.
@@ -78,12 +86,15 @@ export function ChatShell({
 
   const showIcebreaker =
     icebreakersEnabled && chatting && !icebreakerDismissed && state.messages.length === 0;
-  const safetyAvailable = state.features.report || state.features.block;
+  // Report only. Block is its own control now, gated separately — a sheet that
+  // opened with nothing in it because only blocking was enabled would be a
+  // button advertising a capability the server had turned off.
+  const safetyAvailable = state.features.report;
 
   return (
     <div className="flex h-full flex-col">
       <header className="sticky top-0 z-20 border-b border-ink-800 bg-ink-950/80 backdrop-blur-md">
-        <div className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-4">
+        <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-4">
           <button
             onClick={onBack}
             aria-label="Back to home"
@@ -111,6 +122,14 @@ export function ChatShell({
             <div className="flex h-4 items-center gap-2 text-xs text-ink-400">
               {searching ? (
                 'Looking for a stranger'
+              ) : reconnecting ? (
+                <span className="text-amber-300">
+                  Reconnecting{selfCountdown === null ? '…' : ` — ${selfCountdown}s`}
+                </span>
+              ) : state.partnerAway !== null ? (
+                <span className="text-amber-300">
+                  They dropped out{partnerCountdown === null ? '' : ` — back within ${partnerCountdown}s`}
+                </span>
               ) : state.partnerTyping ? (
                 <span className="text-amber-300">typing…</span>
               ) : (
@@ -134,6 +153,55 @@ export function ChatShell({
               )}
             </div>
           </div>
+
+          {/*
+            Icon above label, not beside it. Side by side, the two buttons ate
+            the width the declared name needs on a phone and the header read as
+            cramped; stacked, each is 56px wide instead of ~90px. The header
+            grows to 64px so the touch target stays around 48px — shrinking the
+            buttons to fit a 56px bar would have traded one mobile problem for a
+            worse one.
+
+            Block sits up here, beside who it is about, and deliberately not in
+            the action bar. Down there it shared an edge with "Next stranger" —
+            the button somebody presses dozens of times a session — and a
+            destructive, rate-limited action one thumb-width from a reflex is an
+            accident waiting to be reported as a bug.
+
+            Icon plus word, not an icon alone: it has to be findable in a hurry
+            by somebody who is uncomfortable, and an unlabelled icon is only
+            discoverable to people who already know what it does.
+          */}
+          {chatting && state.features.block && (
+            <button
+              onClick={onBlockAndNext}
+              aria-label="Block this stranger and find someone else"
+              className="inline-flex h-12 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-rose-500/30 text-rose-400/90 transition-all hover:border-rose-500/60 hover:bg-rose-500/10 active:scale-95"
+            >
+              <ShieldX className="h-4 w-4" />
+              <span className="text-[0.65rem] font-medium leading-none">Block</span>
+            </button>
+          )}
+
+          {/*
+            Reporting is a *considered* action — pick a category, maybe write a
+            note, ask a human to look. Nobody does that in a panic, so it does
+            not need to compete with Block for width or attention; it needs to
+            be findable. One level in, behind a labelled control, is the trade.
+
+            It stays available for the whole conversation and nowhere else: a
+            report needs the match that is being reported, so there is no
+            reporting from the ended screen.
+          */}
+          {chatting && safetyAvailable && (
+            <button
+              onClick={onOpenSafety}
+              aria-label="Safety and reporting options"
+              className="inline-flex h-12 w-9 shrink-0 items-center justify-center rounded-xl text-ink-400 transition-all hover:bg-ink-800 hover:text-ink-100 active:scale-95"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+          )}
 
           {searching && (
             <button
@@ -175,6 +243,38 @@ export function ChatShell({
         <AdRail />
       </div>
 
+      {/*
+        One row above the composer: the choice on the left, the action on the
+        right. Both are about moving on, so they belong together and beside the
+        thing you are typing in — and both are deliberately far from Block,
+        which lives in the header. Side by side is how a reflex becomes a block
+        somebody did not mean.
+      */}
+      {chatting && (
+        <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-1 sm:px-4">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-400 transition-colors hover:text-ink-200">
+            <input
+              type="checkbox"
+              checked={autoSearch}
+              onChange={(event) => onToggleAutoSearch(event.target.checked)}
+              className="h-3.5 w-3.5 shrink-0 accent-amber-400"
+            />
+            <span className="leading-tight">
+              Auto-find next
+              <span className="ml-1 hidden text-ink-600 sm:inline">· never after you block</span>
+            </span>
+          </label>
+
+          <button
+            onClick={onSkip}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs font-medium text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+            Next stranger
+          </button>
+        </div>
+      )}
+
       <MessageInput
         maxLength={state.limits?.maxMessageLength ?? 500}
         disabled={composerDisabled(state)}
@@ -182,17 +282,6 @@ export function ChatShell({
         onTyping={onTyping}
       />
 
-      {chatting && (
-        <ActionBar
-          safetyAvailable={safetyAvailable}
-          blockAvailable={state.features.block}
-          autoSearch={autoSearch}
-          onSkip={onSkip}
-          onOpenSafety={onOpenSafety}
-          onBlockAndNext={onBlockAndNext}
-          onToggleAutoSearch={onToggleAutoSearch}
-        />
-      )}
     </div>
   );
 }
@@ -268,4 +357,32 @@ function describeProfile(profile: Profile | null): string | null {
     parts.push(COUNTRY_NAMES[profile.country as keyof typeof COUNTRY_NAMES] ?? profile.country);
   }
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * Seconds remaining until an ISO deadline, ticking, or null when there is none.
+ *
+ * A countdown rather than a spinner because the two answer different questions.
+ * A spinner says "something is happening"; this says "how long you have to
+ * wait, and that it is bounded" — which is what somebody staring at a paused
+ * conversation actually wants to know.
+ */
+function useCountdown(until: string | null): number | null {
+  const [left, setLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (until === null) {
+      setLeft(null);
+      return;
+    }
+    const deadline = new Date(until).getTime();
+    const tick = (): void => {
+      setLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [until]);
+
+  return left;
 }

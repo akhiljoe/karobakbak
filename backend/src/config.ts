@@ -223,6 +223,19 @@ export interface Config {
     readonly reloadIntervalMs: number;
   };
 
+  /**
+   * Session resumption (§28, reverses D7).
+   *
+   * A dropped socket keeps its seat for `graceSeconds` instead of ending the
+   * conversation. The returning browser proves it is the same person with a
+   * token issued at session creation; without one, a reconnect is a new session
+   * exactly as before.
+   */
+  readonly resume: {
+    /** 0 disables resumption entirely and restores the original D7 behaviour. */
+    readonly graceSeconds: number;
+  };
+
   readonly moderation: {
     readonly enabled: boolean;
     /**
@@ -560,6 +573,10 @@ export function loadConfig(env: Env = process.env): Config {
       lockoutSeconds: int(env, 'ADMIN_LOCKOUT_SECONDS', 900, 30, 86_400),
       loginAttemptsPerMinute: int(env, 'ADMIN_LOGIN_ATTEMPTS_PER_MINUTE', 10, 1, 10_000),
       allowedOrigins: list(env, 'ADMIN_ALLOWED_ORIGINS', ''),
+    },
+
+    resume: {
+      graceSeconds: int(env, 'RESUME_GRACE_SECONDS', 20, 0, 300),
     },
 
     moderation: {

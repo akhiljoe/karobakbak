@@ -35,6 +35,7 @@ import type {
   ServerFeatures,
   ServerLimits,
 } from '../protocol/types';
+import { clearResumeToken, saveResumeToken } from '../resume';
 
 /** What the screen is showing. Mirrors the server's session state (§5). */
 export type Screen = 'connecting' | 'idle' | 'searching' | 'chatting' | 'ended' | 'disconnected';
@@ -81,6 +82,17 @@ export interface ChatState {
    * a second caller ever needs it, and guessing is fine for one.
    */
   readonly rateLimitedAt: number | null;
+  /** Seconds a dropped socket keeps its seat, as the server reported it. */
+  readonly resumeGraceSeconds: number;
+  /**
+   * When the stranger's seat is given up, if their socket has dropped (§28).
+   *
+   * Null while they are present. Drives the "reconnecting" notice and the
+   * countdown, and disables the composer — messages sent now reach nobody and
+   * are deliberately not buffered, because holding message text in a Redis key
+   * is what invariant I8 forbids.
+   */
+  readonly partnerAway: string | null;
   readonly reportSent: boolean;
   /**
    * The user asked to go home and the server has not confirmed it yet.
@@ -122,6 +134,8 @@ export const initialState: ChatState = {
   endReason: null,
   notice: null,
   rateLimitedAt: null,
+  resumeGraceSeconds: 0,
+  partnerAway: null,
   reportSent: false,
   leaving: false,
 };
@@ -136,6 +150,8 @@ export type Action =
   | { type: 'message'; payload: IncomingMessagePayload }
   | { type: 'message_ack'; payload: MessageAckPayload }
   | { type: 'partner_typing'; payload: PartnerTypingPayload }
+  | { type: 'partner_reconnecting'; matchId: string; until: string }
+  | { type: 'partner_returned'; matchId: string }
   | { type: 'partner_left'; matchId: string }
   | { type: 'report_ack' }
   | { type: 'server_error'; payload: ErrorPayload }
@@ -167,24 +183,61 @@ export function reduce(state: ChatState, action: Action): ChatState {
     case 'socket_open':
       return { ...state, screen: 'connecting', notice: null };
 
-    case 'connected':
-      return {
+    case 'connected': {
+      // Store the replacement immediately. The server rotates on every
+      // redemption, so keeping the old one would offer a spent credential on
+      // the next reconnection and lose a conversation that could have resumed.
+      saveResumeToken(action.payload.resumeToken ?? '');
+
+      const base = {
         ...state,
-        screen: 'idle',
         sessionId: action.payload.sessionId,
         limits: action.payload.limits,
         // Whatever the server says it can do — not what this build assumes.
         features: action.payload.features ?? NO_FEATURES,
+        resumeGraceSeconds: action.payload.resumeGraceSeconds ?? 0,
         notice: null,
       };
 
+      // A conversation came back with the connection (§28). Restored here
+      // rather than by waiting for a second frame, so the interface never
+      // flashes a landing screen over a conversation that never ended.
+      const resumed = action.payload.resumed;
+      if (resumed) {
+        return {
+          ...base,
+          screen: 'chatting',
+          matchId: resumed.matchId,
+          matchStartedAt: resumed.startedAt,
+          you: resumed.you,
+          partner: resumed.partner,
+          partnerAway: null,
+          endReason: null,
+        };
+      }
+
+      // Nothing came back, so whatever was on screen is over. Cleared here
+      // rather than on `socket_closed`, because this is the first moment the
+      // server has actually said so — and a stale conversation left behind
+      // would render a transcript nobody is on the other end of.
+      return { ...clearedConversation(base), screen: 'idle', partnerAway: null };
+    }
+
     case 'socket_closed':
-      // There is no session resumption (D7): reconnecting starts a new session,
-      // so the old conversation is gone rather than resumable.
+      // The conversation is **kept on screen** while the socket comes back
+      // (§28, reversing D7). Clearing it here was right when a blip ended the
+      // conversation; now the seat is held for a grace window, and wiping the
+      // transcript would throw away something the server is still holding —
+      // and would be visibly wrong the moment the resume succeeds.
+      //
+      // A resume that fails lands on `connected` with no `resumed` payload,
+      // which moves to the landing screen. That is where an ending belongs:
+      // after the server has said so, not on the guess that it will.
       return {
-        ...clearedConversation(state),
+        ...state,
         screen: 'disconnected',
         sessionId: null,
+        partnerTyping: false,
         notice: 'Connection lost. Reconnecting…',
       };
 
@@ -274,7 +327,20 @@ export function reduce(state: ChatState, action: Action): ChatState {
       if (action.payload.matchId !== state.matchId) return state;
       return { ...state, partnerTyping: action.payload.active };
 
+    case 'partner_reconnecting':
+      if (state.matchId !== null && action.matchId !== state.matchId) return state;
+      // Not an ending. Told "they left" a person moves on; told "reconnecting"
+      // they wait, and most of the time the conversation comes back.
+      return { ...state, partnerAway: action.until, partnerTyping: false };
+
+    case 'partner_returned':
+      if (state.matchId !== null && action.matchId !== state.matchId) return state;
+      return { ...state, partnerAway: null };
+
     case 'partner_left':
+      // They are gone for good, not away: nothing to reclaim.
+      clearResumeToken();
+
       if (state.matchId !== null && action.matchId !== state.matchId) return state;
       return {
         ...clearedConversation(state),

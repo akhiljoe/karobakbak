@@ -59,9 +59,30 @@ export type EndMatchResult =
   | { status: 'ended'; a: string; b: string; segment: string }
   | { status: 'already_ended' };
 
+export type ResumeSessionResult =
+  | {
+      status: 'resumed';
+      sessionId: string;
+      matchId: string | null;
+      state: SessionState;
+      ipHash: string;
+      clientHash: string;
+    }
+  /** No such token, or the session it named is gone. */
+  | { status: 'no_session' }
+  /** The session is still attached: a live conversation is not transferable. */
+  | { status: 'not_detached' };
+
 export type CloseSessionResult = {
-  /** `gone` means the row had already expired; the cleanup still ran. */
-  status: 'closed' | 'gone';
+  /**
+   * `gone` means the row had already expired; the cleanup still ran.
+   *
+   * `detached` means the socket dropped mid-conversation and the seat is being
+   * held: the match is **not** ended, the row stays with the grace window as
+   * its TTL, and the caller must tell the partner someone is reconnecting
+   * rather than that they left.
+   */
+  status: 'closed' | 'gone' | 'detached';
   /** The match this session was in, for the caller to end. */
   matchId: string | null;
 };
@@ -246,6 +267,8 @@ export class RedisStore {
    * it did before this existed.
    */
   private readonly lateBlockTtl: number;
+  /** Seconds a dropped socket keeps its seat. 0 restores the old behaviour. */
+  private readonly resumeGraceSeconds: number;
   private readonly matchTtl: number;
 
   constructor(
@@ -257,12 +280,17 @@ export class RedisStore {
     this.sessionTtl = config.ttl.sessionSeconds;
     this.matchTtl = config.ttl.matchSeconds;
     this.lateBlockTtl = config.blocks.lateBlockSeconds;
+    this.resumeGraceSeconds = config.resume.graceSeconds;
   }
 
   /* --- session lifecycle -------------------------------------------------- */
 
   /** Preserves I1: the session is created in exactly one state. */
-  async createSession(identity: SessionIdentity, segment: string): Promise<CreateSessionResult> {
+  async createSession(
+    identity: SessionIdentity,
+    segment: string,
+    resumeHash = '',
+  ): Promise<CreateSessionResult> {
     const reply = await this.runner.run(
       'createSession',
       [this.keys.session(identity.sessionId), this.keys.sessions()],
@@ -274,9 +302,47 @@ export class RedisStore {
         identity.ipHash,
         identity.clientHash,
         this.sessionTtl,
+        resumeHash,
       ],
     );
     return { status: 'ok', createdAtMs: num(reply, 1) };
+  }
+
+  /**
+   * Redeem a resume token, re-attaching its session to this instance.
+   *
+   * The caller passes the hash of the token the client presented and the hash
+   * of the replacement it will be given. Rotation is not optional: a token that
+   * survived one resume would still work after the person it belongs to has
+   * reconnected, which is the difference between a single-use credential and a
+   * standing one.
+   */
+  async resumeSession(
+    presentedHash: string,
+    replacementHash: string,
+    instanceId: string,
+  ): Promise<ResumeSessionResult> {
+    const reply = await this.runner.run(
+      'resumeSession',
+      [this.keys.resume(presentedHash)],
+      [this.keys.prefix, presentedHash, replacementHash, instanceId, this.sessionTtl],
+    );
+    const status = str(reply, 0);
+    if (status === 'NO_SESSION') return { status: 'no_session' };
+    if (status === 'NOT_DETACHED') return { status: 'not_detached' };
+    return {
+      status: 'resumed',
+      sessionId: str(reply, 1),
+      matchId: orNull(str(reply, 2)),
+      state: (str(reply, 3) || 'IDLE') as SessionState,
+      ipHash: str(reply, 4),
+      clientHash: str(reply, 5),
+    };
+  }
+
+  /** Store both display identities on the match, so a resume can restore them. */
+  async saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void> {
+    await this.client.hset(this.keys.match(matchId), 'identA', identityA, 'identB', identityB);
   }
 
   /** Preserves I7: only a live connection refreshes a session's TTLs. */
@@ -298,7 +364,11 @@ export class RedisStore {
    * Preserves I3 and I7. Returns the match id, if any, for the caller to end —
    * `endMatch` cleans both sides, so this deliberately does not.
    */
-  async closeSession(sessionId: string, ipHash: string): Promise<CloseSessionResult> {
+  async closeSession(
+    sessionId: string,
+    ipHash: string,
+    holdSeat = true,
+  ): Promise<CloseSessionResult> {
     const reply = await this.runner.run(
       'closeSession',
       [
@@ -307,10 +377,11 @@ export class RedisStore {
         this.keys.userMatch(sessionId),
         this.keys.connSessions(ipHash),
       ],
-      [this.keys.prefix, sessionId],
+      [this.keys.prefix, sessionId, holdSeat ? this.resumeGraceSeconds : 0],
     );
+    const status = str(reply, 0);
     return {
-      status: str(reply, 0) === 'GONE' ? 'gone' : 'closed',
+      status: status === 'GONE' ? 'gone' : status === 'DETACHED' ? 'detached' : 'closed',
       matchId: orNull(str(reply, 1)),
     };
   }

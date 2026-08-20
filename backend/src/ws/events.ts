@@ -35,6 +35,10 @@ export type SessionEvent =
     }
   | { event: 'partner_typing'; matchId: string; active: boolean }
   | { event: 'partner_skipped'; matchId: string }
+  /** Their socket dropped and the seat is held until `until` (§28). */
+  | { event: 'partner_reconnecting'; matchId: string; until: string }
+  /** They came back inside the window; the conversation continues. */
+  | { event: 'partner_returned'; matchId: string }
   | { event: 'partner_disconnected'; matchId: string }
   /** The session was reaped server-side; the socket should be closed, not updated. */
   | { event: 'session_evicted'; matchId: string; reason: 'reaped' | 'shutdown' };
@@ -138,6 +142,11 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
       return { event: 'partner_typing', matchId, active: data.active };
     case 'partner_skipped':
       return { event: 'partner_skipped', matchId };
+    case 'partner_reconnecting':
+      if (typeof data.until !== 'string') return null;
+      return { event: 'partner_reconnecting', matchId, until: data.until };
+    case 'partner_returned':
+      return { event: 'partner_returned', matchId };
     case 'partner_disconnected':
       return { event: 'partner_disconnected', matchId };
     case 'session_evicted':
@@ -176,6 +185,13 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       return serverFrame('partner_typing', { matchId: event.matchId, active: event.active });
     case 'partner_skipped':
       return serverFrame('partner_skipped', { matchId: event.matchId });
+    case 'partner_reconnecting':
+      return serverFrame('partner_reconnecting', { matchId: event.matchId, until: event.until });
+    case 'partner_returned':
+      // A real frame, not an inference. Without it the partner's countdown runs
+      // to zero while the stranger is already back and typing, and the
+      // interface says they left when they did not.
+      return serverFrame('partner_returned', { matchId: event.matchId });
     case 'partner_disconnected':
       return serverFrame('partner_disconnected', { matchId: event.matchId });
     case 'session_evicted':

@@ -346,7 +346,7 @@ describe('leave_chat — end the conversation without re-queueing', () => {
 });
 
 describe('disconnect across two instances (§13)', () => {
-  it('ends the match and tells the survivor', async () => {
+  it('holds the seat and tells the survivor someone is reconnecting (§28)', async () => {
     const a = await connect(one);
     const b = await connect(two);
     const heard = await listen(two, b.sessionId);
@@ -360,29 +360,45 @@ describe('disconnect across two instances (§13)', () => {
       const closed = await one.lifecycle.close(a.sessionId, a.ipHash, a.socket);
       await delay(60);
 
-      expect(closed).toEqual({ endedMatchId: matched.matchId });
-      expect(heard.events).toEqual([
-        { event: 'partner_disconnected', matchId: matched.matchId },
-      ]);
-      expect(await one.ctx.store.readSession(a.sessionId)).toBeNull();
-      expect(await two.ctx.store.currentMatchId(b.sessionId)).toBeNull();
+      // The conversation is not ended: the seat is held for the grace window.
+      expect(closed).toEqual({ endedMatchId: null });
+      expect(heard.events).toHaveLength(1);
+      expect(heard.events[0]).toMatchObject({
+        event: 'partner_reconnecting',
+        matchId: matched.matchId,
+      });
+      // Told "reconnecting", a person waits. Told "they left", they move on —
+      // which is why this is a different event and not a reworded one.
+      expect(await two.ctx.store.currentMatchId(b.sessionId)).toBe(matched.matchId);
     } finally {
       heard.stop();
     }
   });
 
   it('is idempotent and notifies the survivor only once', async () => {
-    const a = await connect(one);
-    const b = await connect(one);
-    await one.lifecycle.joinQueue(a.sessionId);
-    const matched = await one.lifecycle.joinQueue(b.sessionId);
-    if (matched.kind !== 'matched') throw new Error('expected a match');
+    // Resumption off, so this is the teardown path: the close and error
+    // handlers both run, and the survivor must be told exactly once.
+    const offCtx = await createTestContext({
+      REDIS_KEY_PREFIX: one.ctx.config.redis.keyPrefix,
+      RESUME_GRACE_SECONDS: '0',
+    });
+    const off = instanceFor(offCtx);
+    try {
+      const a = await connect(off);
+      const b = await connect(off);
+      await off.lifecycle.joinQueue(a.sessionId);
+      const matched = await off.lifecycle.joinQueue(b.sessionId);
+      if (matched.kind !== 'matched') throw new Error('expected a match');
 
-    const first = await one.lifecycle.close(b.sessionId, b.ipHash, b.socket);
-    const second = await one.lifecycle.close(b.sessionId, b.ipHash, b.socket);
-    expect(first.endedMatchId).toBe(matched.matchId);
-    expect(second.endedMatchId).toBeNull();
-    expect(a.socket.parsed().filter((f) => f.type === 'partner_disconnected')).toHaveLength(1);
+      const first = await off.lifecycle.close(b.sessionId, b.ipHash, b.socket);
+      const second = await off.lifecycle.close(b.sessionId, b.ipHash, b.socket);
+      expect(first.endedMatchId).toBe(matched.matchId);
+      expect(second.endedMatchId).toBeNull();
+      expect(a.socket.parsed().filter((f) => f.type === 'partner_disconnected')).toHaveLength(1);
+    } finally {
+      off.registry.clear();
+      await offCtx.close();
+    }
   });
 
   it('releases the connection slot and dequeues a searching session', async () => {

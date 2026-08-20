@@ -16,13 +16,16 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import {
+  BASE_PROTOCOL,
   PROTOCOL_VERSION,
+  RESUME_PROTOCOL_PREFIX,
   type AnyServerEnvelope,
   type ClientEventType,
   type Profile,
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
+import { loadResumeToken, saveResumeToken } from '../resume';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
 function socketUrl(): string {
@@ -86,7 +89,15 @@ export function useChat(): ChatApi {
 
     const connect = (): void => {
       if (disposed) return;
-      const socket = new WebSocket(url);
+      // The resume token rides on the handshake as a subprotocol (§28): the
+      // only value a browser can attach to a WebSocket handshake, and unlike a
+      // query string it does not land in an access log. `kbb.v1` is offered
+      // beside it so the server has something harmless to echo back.
+      const token = loadResumeToken();
+      const socket =
+        token === null
+          ? new WebSocket(url, [BASE_PROTOCOL])
+          : new WebSocket(url, [BASE_PROTOCOL, `${RESUME_PROTOCOL_PREFIX}${token}`]);
       socketRef.current = socket;
 
       socket.addEventListener('open', () => {
@@ -259,6 +270,14 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
       return { type: 'message_ack', payload: frame.payload };
     case 'partner_typing':
       return { type: 'partner_typing', payload: frame.payload };
+    case 'partner_reconnecting':
+      return {
+        type: 'partner_reconnecting',
+        matchId: frame.payload.matchId,
+        until: frame.payload.until,
+      };
+    case 'partner_returned':
+      return { type: 'partner_returned', matchId: frame.payload.matchId };
     case 'partner_skipped':
     case 'partner_disconnected':
       // The same outcome for the user, and deliberately indistinguishable from

@@ -523,14 +523,31 @@ describe('a message cannot outlive its conversation (I6)', () => {
     }
   });
 
-  it('is refused after the partner disconnects', async () => {
+  it('still routes while the partner is reconnecting, and is refused once they are gone', async () => {
     const { alice, bob } = await pairAcrossInstances();
     try {
       bob.terminate();
-      await alice.waitForFrame('partner_disconnected');
+      await alice.waitForFrame('partner_reconnecting');
 
-      alice.command('message', { text: 'hello?' }, 'c_late');
-      expect(payloadOf<ErrorPayload>(await alice.waitForFrame('error')).code).toBe('NOT_MATCHED');
+      // The point of this test: a message sent during the gap must not end the
+      // conversation. Before the seat was held, an empty `instanceId` read as
+      // PARTNER_GONE, the pipeline turned that into "not matched", and one
+      // message destroyed the very thing the window exists to protect.
+      //
+      // It is accepted and routed. `delivered` stays true because that flag has
+      // always meant "accepted and routed", never "received" (§14.3, D14) — the
+      // publish goes to a channel nobody is listening on. The message reaches
+      // nobody and is deliberately not buffered: holding message text in a
+      // Redis key is what I8 forbids, which is why the client disables the
+      // composer rather than pretending it went through.
+      alice.command('message', { text: 'hello?' }, 'c_during');
+      const ack = await alice.waitForFrame('message_ack');
+      expect(payloadOf<{ delivered: boolean }>(ack).delivered).toBe(true);
+
+      // Still in the conversation, which is the property that matters.
+      alice.command('typing', { active: true });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(alice.frames.some((f) => f.type === 'error')).toBe(false);
     } finally {
       alice.close();
     }

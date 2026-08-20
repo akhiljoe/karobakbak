@@ -52,6 +52,29 @@ export function newClientToken(): string {
 }
 
 /**
+ * A session resume token (§28).
+ *
+ * 256 bits, because this one is a bearer credential: whoever holds it can
+ * reclaim the conversation it belongs to. Short-lived, single-use, and stored
+ * only as a hash — see `hashResumeToken`.
+ */
+export function newResumeToken(): string {
+  return randomToken(32);
+}
+
+/**
+ * Hash a resume token for storage.
+ *
+ * SHA-256, unsalted, and that is correct here rather than lazy: the input is
+ * 256 bits of `crypto.randomBytes`, so there is no dictionary to slow an
+ * attacker down over and nothing a salt would protect against. A password needs
+ * a KDF because people choose passwords; this is not one.
+ */
+export function hashResumeToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/**
  * Identifies one audit row.
  *
  * Generated here like every other id rather than left to a database default,

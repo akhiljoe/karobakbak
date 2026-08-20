@@ -93,7 +93,12 @@ export function colourFor(identity: Identity | null): string {
  * only adds the connection check, since a socket that is away cannot deliver.
  */
 export function composerDisabled(state: ChatState): boolean {
-  return state.screen !== 'chatting' || state.matchId === null;
+  if (state.screen !== 'chatting' || state.matchId === null) return true;
+  // The stranger's socket has dropped and their seat is held (§28). A message
+  // sent now reaches nobody and is deliberately not buffered — holding message
+  // text in a Redis key is what invariant I8 forbids — so the composer says so
+  // by being unavailable rather than accepting something that goes nowhere.
+  return state.partnerAway !== null;
 }
 
 /**

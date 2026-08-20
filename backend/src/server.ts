@@ -27,7 +27,14 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config, RateLimitedCommand } from './config';
 import { moderate } from './moderation';
 import type { Logger } from './logger';
-import { CLOSE_CODES, type ServerFeatures, type ServerLimits } from './protocol/types';
+import {
+  BASE_PROTOCOL,
+  CLOSE_CODES,
+  RESUME_PROTOCOL_PREFIX,
+  type MatchedPayload,
+  type ServerFeatures,
+  type ServerLimits,
+} from './protocol/types';
 import type { ValidatedCommand } from './protocol/validate';
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
@@ -114,6 +121,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const httpServer = createHttpServer((req, res) => handleHttp(req, res));
   const wss = new WebSocketServer({
     noServer: true,
+    // Never echo the resume entry: a server must select a protocol the client
+    // offered, and selecting that one would repeat the token in the response
+    // headers. Clients offer `kbb.v1` beside it precisely so there is something
+    // harmless to agree on, and offering nothing at all is still fine.
+    handleProtocols: (protocols) => (protocols.has(BASE_PROTOCOL) ? BASE_PROTOCOL : false),
     // `ws` closes the socket with 1009 on an oversized frame before this
     // process ever allocates the payload — the check has to be here rather
     // than after parsing, or the limit protects nothing.
@@ -277,6 +289,55 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       for (const sessionId of subscribedTo) await subscriber.unsubscribe(sessionId);
     };
 
+    // A returning browser presents its resume token as a WebSocket subprotocol
+    // (§28). The subprotocol is chosen because it is the only channel a browser
+    // can put a value on during a handshake — `WebSocket` takes no custom
+    // headers — and unlike a query string it does not land in an access log.
+    //
+    // Anything that fails here falls through to a fresh session rather than
+    // refusing the connection. A stale token after a long tab suspension is the
+    // common case, and it means "a new conversation", never an error page.
+    const presented = resumeTokenFrom(req);
+    if (presented !== null) {
+      let resumed;
+      try {
+        resumed = await lifecycle.resume(presented, async (sessionId) => {
+          await subscriber.subscribe(sessionId);
+          subscribedTo.push(sessionId);
+        });
+      } catch (err) {
+        resumed = { kind: 'no_session' as const };
+        logger.warn('resume attempt failed', {
+          errName: err instanceof Error ? err.name : 'unknown',
+        });
+      }
+
+      if (resumed.kind === 'too_many_connections') {
+        await releaseSubscription();
+        metrics.connectionsRejected.labels('too_many_connections').inc();
+        refuse(socket, 429, 'too_many_connections');
+        return;
+      }
+
+      if (resumed.kind === 'resumed') {
+        metrics.resumes.labels('ok').inc();
+        const restored = resumed;
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          attach(ws, restored.sessionId, restored.ipHash, restored.clientHash, {
+            resumeToken: restored.resumeToken,
+            matchId: restored.matchId,
+          });
+        });
+        return;
+      }
+
+      // Nothing to resume. Release the subscription taken on the way in, or a
+      // fresh session would inherit a listener for a session id it is not.
+      await releaseSubscription();
+      subscribedTo.length = 0;
+      metrics.resumes.labels('expired').inc();
+    }
+
     let outcome;
     try {
       outcome = await lifecycle.open(ipHash, clientHash, async (sessionId) => {
@@ -319,8 +380,27 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      attach(ws, sessionId, ipHash, clientHash);
+      attach(ws, sessionId, ipHash, clientHash, { resumeToken: outcome.resumeToken });
     });
+  }
+
+  /**
+   * The resume token a browser offered, or null.
+   *
+   * Namespaced (`kbb.resume.<token>`) so an unrelated subprotocol cannot be
+   * mistaken for one, and length-bounded before anything hashes it.
+   */
+  function resumeTokenFrom(req: IncomingMessage): string | null {
+    const header = req.headers['sec-websocket-protocol'];
+    const raw = Array.isArray(header) ? header.join(',') : (header ?? '');
+    for (const entry of raw.split(',')) {
+      const value = entry.trim();
+      if (!value.startsWith(RESUME_PROTOCOL_PREFIX)) continue;
+      const token = value.slice(RESUME_PROTOCOL_PREFIX.length);
+      if (token.length === 0 || token.length > 128) return null;
+      return token;
+    }
+    return null;
   }
 
   function refuse(
@@ -351,7 +431,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
 
   /* --- connection --------------------------------------------------------- */
 
-  function attach(ws: WebSocket, sessionId: string, ipHash: string, clientHash: string): void {
+  function attach(
+    ws: WebSocket,
+    sessionId: string,
+    ipHash: string,
+    clientHash: string,
+    session: { resumeToken: string; matchId?: string | null } = { resumeToken: '' },
+  ): void {
     const connection = new SocketConnection({
       socket: ws,
       sessionId,
@@ -366,7 +452,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // rejection. The TTLs and the janitor are the recovery net for whatever
         // this could not clean up (§13).
         try {
-          await lifecycle.close(conn.sessionId, conn.ipHash, conn);
+          await lifecycle.close(conn.sessionId, conn.ipHash, conn, { holdSeat: !draining });
         } catch (err) {
           logger.warn('session cleanup failed', {
             sessionId: conn.sessionId,
@@ -382,14 +468,27 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     registry.add(connection);
     metrics.connectionsTotal.inc();
     metrics.connectionsActive.set(registry.size);
-    connection.sendEvent('connected', {
-      sessionId,
-      protocolVersion: 1,
-      serverTime: nowIso(),
-      limits,
-      features: FEATURES,
-    });
-    void sendPresence(connection);
+    // Built before the frame is sent so a resumed conversation arrives *with*
+    // the connection rather than a moment later — a client that saw `connected`
+    // first would paint a landing screen and then replace it.
+    void (async () => {
+      let resumed: MatchedPayload | undefined;
+      if (session.matchId != null && session.matchId !== '') {
+        resumed = (await lifecycle.restoreMatch(sessionId, session.matchId)) ?? undefined;
+        if (resumed) await lifecycle.announceReturn(sessionId, session.matchId);
+      }
+      connection.sendEvent('connected', {
+        sessionId,
+        protocolVersion: 1,
+        serverTime: nowIso(),
+        limits,
+        features: FEATURES,
+        resumeToken: session.resumeToken,
+        resumeGraceSeconds: config.resume.graceSeconds,
+        ...(resumed ? { resumed } : {}),
+      });
+      void sendPresence(connection);
+    })();
   }
 
   /**

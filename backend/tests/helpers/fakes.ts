@@ -11,6 +11,7 @@
  */
 import type { Logger } from '../../src/logger';
 import type { Profile } from '../../src/protocol/types';
+import type { ResumeSessionResult } from '../../src/redis/store';
 import type {
   BlockPartnerResult,
   CloseSessionResult,
@@ -113,6 +114,25 @@ export class FakeStore implements LifecycleStore {
     // Mirrors the real script: the match is left for endMatch to clean, so both
     // sides are taken down by one call.
     return { status: 'closed', matchId: session.matchId };
+  }
+
+  /** Match hashes, as the real store keeps them, for resume restoration. */
+  readonly matchRecords = new Map<string, Record<string, string>>();
+
+  async resumeSession(): Promise<ResumeSessionResult> {
+    // The fake models Redis state, not the resume handshake: resumption is
+    // exercised against real Redis and real sockets, where the parts that can
+    // actually go wrong — expiry, rotation, a second tab racing — exist.
+    return { status: 'no_session' };
+  }
+
+  async readMatch(matchId: string): Promise<Record<string, string> | null> {
+    return this.matchRecords.get(matchId) ?? null;
+  }
+
+  async saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void> {
+    const existing = this.matchRecords.get(matchId) ?? {};
+    this.matchRecords.set(matchId, { ...existing, identA: identityA, identB: identityB });
   }
 
   /** Declared profiles, keyed by session, exactly as the real store holds them. */

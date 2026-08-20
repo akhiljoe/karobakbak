@@ -77,8 +77,11 @@ export function MessageInput({
     if (!disabled) onTyping(next.trim().length > 0);
   };
 
+  // `safe-pb` lives here now. It used to sit on the action bar below this,
+  // which no longer exists — without it the composer sits under an iPhone home
+  // indicator, which is invisible on every device that does not have one.
   return (
-    <div className="border-t border-ink-800 bg-ink-950/90 backdrop-blur-md">
+    <div className="safe-pb border-t border-ink-800 bg-ink-950/90 backdrop-blur-md">
       <div className="px-2 py-2 sm:px-4">
         <div
           className={`mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border bg-ink-900 px-2.5 py-1.5 transition-colors sm:px-3 ${

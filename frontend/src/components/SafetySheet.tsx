@@ -1,37 +1,41 @@
 /**
  * The safety sheet.
  *
- * Two actions, and they are genuinely different things, so the copy says so:
+ * **Report** sends the conversation to a reviewer. The other side is never told
+ * (security §31, §32).
  *
- *  * **Report** sends evidence to a reviewer and ends the conversation. The
- *    other side is never told (security §31, §32).
- *  * **Block** is a matching filter going forward, not a retroactive undo. It
- *    stops future pairings; it does not unsend anything (D18, §10.16).
+ * The copy here is one line, on purpose. The retention notice that used to sit
+ * at the bottom of this menu was accurate and in the wrong place: somebody
+ * opening it is dealing with a person, not reading a privacy policy, and a
+ * paragraph about how long data is kept is friction at the moment friction is
+ * least wanted. It still appears on the landing screen, where somebody deciding
+ * whether to use the product at all can read it.
  *
- * Each entry is shown only if the server said it supports that command on the
- * `connected` frame.
+ * Block used to live here too, behind two taps. It is now a single control in
+ * the conversation header, next to the person it is about — burying the safe
+ * action three screens deep meant most people took the fast one instead and
+ * never blocked at all. One action per surface also removes the question of
+ * which of two similar buttons somebody meant to press.
+ *
+ * Shown only if the server said it supports reporting on the `connected` frame.
  */
 import { useEffect } from 'react';
-import { ArrowRight, Ban, Flag, X } from 'lucide-react';
+import { ArrowRight, Flag, X } from 'lucide-react';
 
 interface SafetySheetProps {
   open: boolean;
   reportAvailable: boolean;
-  blockAvailable: boolean;
   reportSent: boolean;
   onClose(): void;
   onReport(): void;
-  onBlock(): void;
 }
 
 export function SafetySheet({
   open,
   reportAvailable,
-  blockAvailable,
   reportSent,
   onClose,
   onReport,
-  onBlock,
 }: SafetySheetProps): JSX.Element | null {
   useEffect(() => {
     if (!open) return;
@@ -46,18 +50,28 @@ export function SafetySheet({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center"
+      className="fixed inset-0 z-50"
       role="dialog"
       aria-modal="true"
       aria-label="Safety options"
     >
-      <div className="absolute inset-0 animate-fade-in bg-ink-950/70 backdrop-blur-sm" onClick={onClose} />
+      {/*
+        A transparent backdrop, not a dimmed one. This is a menu hanging off a
+        control, not a modal that takes over the screen — darkening everything
+        would say "stop what you are doing", which is not what opening a menu
+        means. It still covers the viewport so a click anywhere closes it.
+      */}
+      <div className="absolute inset-0" onClick={onClose} />
 
-      <div className="relative w-full max-w-sm animate-fade-in rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl">
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
-
+      {/*
+        Anchored under the control that opened it, top right, rather than rising
+        from the bottom. A sheet from the bottom edge is a fine pattern when it
+        is the main event; for a menu it breaks the link between what was
+        pressed and what appeared.
+      */}
+      <div className="absolute right-3 top-[4.5rem] w-[min(20rem,calc(100vw-1.5rem))] animate-fade-in rounded-2xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:right-4">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-display text-lg font-semibold text-ink-50">Safety</h2>
+          <h2 className="font-display text-lg font-semibold text-ink-50">Report</h2>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -84,40 +98,13 @@ export function SafetySheet({
                 {reportSent ? 'Already reported' : 'Report'}
               </span>
               <span className="block text-xs text-ink-500">
-                {reportSent
-                  ? 'A reviewer has this conversation.'
-                  : 'Send this conversation to a reviewer'}
+                {reportSent ? 'Already sent for review.' : 'Send this to a reviewer.'}
               </span>
             </span>
             {!reportSent && <ArrowRight className="h-4 w-4 shrink-0 text-ink-600" />}
           </button>
         )}
 
-        {blockAvailable && (
-          <button
-            onClick={() => {
-              onBlock();
-              onClose();
-            }}
-            className="flex w-full items-center gap-3 rounded-xl border border-ink-700 bg-ink-950 px-4 py-3.5 text-left transition-all hover:border-ink-600 active:scale-[0.98]"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400">
-              <Ban className="h-4 w-4" />
-            </span>
-            <span className="flex-1">
-              <span className="block text-sm font-medium text-rose-400">Block</span>
-              <span className="block text-xs text-ink-500">
-                Stops future matches with them. It does not undo this one.
-              </span>
-            </span>
-            <ArrowRight className="h-4 w-4 shrink-0 text-ink-600" />
-          </button>
-        )}
-
-        <p className="mt-3 px-1 text-xs leading-relaxed text-ink-500">
-          Conversations are kept for a limited period so abuse can be investigated, then deleted
-          automatically. They are never shown back to you.
-        </p>
       </div>
     </div>
   );

@@ -61,6 +61,14 @@ export interface Metrics {
    * only, never who or what age, because that is a claim about a person (I8).
    */
   readonly profilesRefused: Counter<'reason'>;
+  /**
+   * Resume attempts, by outcome.
+   *
+   * `expired` is the number worth watching: a high ratio means the grace window
+   * is shorter than the reconnections people actually make, and every one of
+   * them was a conversation that ended when it did not have to.
+   */
+  readonly resumes: Counter<'outcome'>;
 
   /* matchmaking */
   readonly queueDepth: Gauge<'segment'>;
@@ -156,6 +164,7 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     profilesRefused: counter('chat_profiles_refused_total', 'Declared profiles refused at join, by reason', [
       'reason',
     ]),
+    resumes: counter('chat_session_resumes_total', 'Session resume attempts, by outcome', ['outcome']),
 
     queueDepth: gauge('chat_queue_depth', 'Sessions waiting in a queue segment', ['segment']),
     activeMatches: gauge('chat_active_matches', 'Live conversations, cluster-wide'),

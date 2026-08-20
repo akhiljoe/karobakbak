@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { AppHeader } from './components/AppHeader';
 import { useAutoSearch } from './hooks/useAutoSearch';
+import { useBackButton } from './hooks/useBackButton';
 import { useMatchNotification } from './hooks/useMatchNotification';
 import { unlockSound } from './notify';
 import { EMPTY_PROFILE, clearProfile, loadProfile, saveProfile } from './profile';
@@ -85,6 +86,10 @@ export function App(): JSX.Element {
   const showShell = phase === 'searching' || phase === 'chatting';
 
   useMatchNotification({ state, enabled: preferences.notifyOnMatch });
+
+  // Back on a phone should leave the conversation, not the site. Active while
+  // searching too: a search is a thing somebody equally wants to back out of.
+  useBackButton({ active: showShell, onBack: chat.leave });
 
   // Browsers refuse to start audio without a user gesture. Starting a search is
   // the one gesture guaranteed to precede any match, so the context is unlocked
@@ -195,11 +200,9 @@ export function App(): JSX.Element {
       <SafetySheet
         open={safetyOpen}
         reportAvailable={state.features.report}
-        blockAvailable={state.features.block}
         reportSent={state.reportSent}
         onClose={() => setSafetyOpen(false)}
         onReport={() => setReporting(true)}
-        onBlock={chat.block}
       />
 
       {reporting && (

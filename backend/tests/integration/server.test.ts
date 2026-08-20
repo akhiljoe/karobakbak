@@ -371,7 +371,7 @@ describe('control commands', () => {
     }
   });
 
-  it('tells the partner when a socket disconnects', async () => {
+  it('tells the partner someone is reconnecting when a socket drops (§28)', async () => {
     const alice = await TestClient.connect(http.url);
     const bob = await TestClient.connect(http.url);
     try {
@@ -385,7 +385,11 @@ describe('control commands', () => {
 
       // terminate, not close: a dropped connection, not a polite goodbye.
       bob.terminate();
-      await alice.waitForFrame('partner_disconnected');
+      // The seat is held, so the conversation is not over — it is paused, and
+      // the frame says which. "They left" would send Alice off to find someone
+      // else while Bob was three seconds from being back.
+      const frame = await alice.waitForFrame('partner_reconnecting');
+      expect(typeof payloadOf<{ until: string }>(frame).until).toBe('string');
     } finally {
       alice.close();
     }

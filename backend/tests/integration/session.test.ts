@@ -125,7 +125,7 @@ describe('closeSession', () => {
     expect(await ctx.client.sismember(ctx.keys.queue(ctx.segment), sid)).toBe(0);
   });
 
-  it('returns the match id but leaves the match for endMatch to clean', async () => {
+  it('holds the seat when a socket drops mid-conversation (§28)', async () => {
     const a = await ctx.session();
     const b = await ctx.session();
     await ctx.store.joinQueue(a, ctx.segment);
@@ -133,11 +133,43 @@ describe('closeSession', () => {
     await ctx.store.tryMatch(b, ctx.segment, 'm_close');
 
     const result = await ctx.store.closeSession(a, fakeHash(a));
-    expect(result).toEqual({ status: 'closed', matchId: 'm_close' });
-    // Still there: clearing only our own side would strand the partner
-    // pointing at a match record nobody was going to take down.
+    expect(result).toEqual({ status: 'detached', matchId: 'm_close' });
+
+    // The row survives, marked detached and carrying the grace window as its
+    // TTL. Nothing sweeps it: if the window passes it expires on its own and
+    // janitorMatches ends the match, which is the one expiry mechanism.
+    const ttl = await ctx.client.ttl(ctx.keys.session(a));
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(ctx.config.resume.graceSeconds);
+    expect(await ctx.client.hget(ctx.keys.session(a), 'detachedAt')).not.toBeNull();
+
+    // The conversation is untouched, and the partner still points at it.
     expect(await ctx.store.readMatch('m_close')).not.toBeNull();
     expect(await ctx.store.currentMatchId(b)).toBe('m_close');
+
+    // The seat costs no connection slot: the socket is gone.
+    expect(await ctx.client.sismember(ctx.keys.sessions(), a)).toBe(0);
+  });
+
+  it('tears down immediately when resumption is disabled (the original D7)', async () => {
+    const off = await createTestContext({ RESUME_GRACE_SECONDS: '0' });
+    try {
+      const a = await off.session();
+      const b = await off.session();
+      await off.store.joinQueue(a, off.segment);
+      await off.store.joinQueue(b, off.segment);
+      await off.store.tryMatch(b, off.segment, 'm_off');
+
+      const result = await off.store.closeSession(a, fakeHash(a));
+      expect(result).toEqual({ status: 'closed', matchId: 'm_off' });
+      expect(await off.client.exists(off.keys.session(a))).toBe(0);
+      // Still left for endMatch: clearing only our own side would strand the
+      // partner pointing at a match record nobody was going to take down.
+      expect(await off.store.readMatch('m_off')).not.toBeNull();
+    } finally {
+      await off.flush();
+      await off.close();
+    }
   });
 
   it('is idempotent and safe to run from both the close and error handlers', async () => {

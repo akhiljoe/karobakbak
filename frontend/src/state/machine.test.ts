@@ -32,6 +32,8 @@ function connected(state = initialState): ChatState {
       serverTime: '2026-08-19T10:00:00.000Z',
       limits: LIMITS,
       features: FEATURES,
+      resumeToken: 't_test',
+      resumeGraceSeconds: 20,
     },
   });
 }
@@ -216,13 +218,74 @@ describe('the conversation ending', () => {
     expect(state.messages).toEqual([]);
   });
 
-  it('says a dropped connection ends the conversation, not pauses it', () => {
-    const state = reduce(matched(), { type: 'socket_closed', code: 1006 });
-    // There is no session resumption (D7).
+  it('holds the conversation on screen while the socket comes back (§28)', () => {
+    const talking = reduce(matched(), {
+      type: 'message',
+      payload: {
+        matchId: 'm_1',
+        messageId: 'srv_1',
+        type: 'text',
+        text: 'hello',
+        sentAt: '2026-08-19T10:00:01.000Z',
+        from: 'partner',
+      },
+    });
+    const state = reduce(talking, { type: 'socket_closed', code: 1006 });
     expect(state.screen).toBe('disconnected');
     expect(state.sessionId).toBeNull();
-    expect(state.matchId).toBeNull();
-    expect(state.messages).toEqual([]);
+    // Kept, not cleared. The server is holding the seat, so throwing the
+    // transcript away here would be visibly wrong the moment the resume lands —
+    // and would be an ending the server never announced.
+    expect(state.matchId).not.toBeNull();
+    expect(state.messages.length).toBeGreaterThan(0);
+    expect(state.partnerTyping).toBe(false);
+  });
+
+  it('drops the conversation when the reconnection brings nothing back', () => {
+    // The ending belongs here: after the server has said the seat is gone, not
+    // on the guess that it will be.
+    const dropped = reduce(matched(), { type: 'socket_closed', code: 1006 });
+    const fresh = connected(dropped);
+    expect(fresh.screen).toBe('idle');
+    expect(fresh.matchId).toBeNull();
+  });
+
+  it('restores the conversation when the reconnection resumes it', () => {
+    const dropped = reduce(matched(), { type: 'socket_closed', code: 1006 });
+    const back = reduce(dropped, {
+      type: 'connected',
+      payload: {
+        sessionId: 's_new',
+        protocolVersion: 1,
+        serverTime: '2026-08-19T10:00:05.000Z',
+        limits: LIMITS,
+        features: FEATURES,
+        resumeToken: 't_rotated',
+        resumeGraceSeconds: 20,
+        resumed: {
+          matchId: 'm_1',
+          startedAt: '2026-08-19T10:00:00.000Z',
+          you: YOU,
+          partner: PARTNER,
+        },
+      },
+    });
+    expect(back.screen).toBe('chatting');
+    expect(back.matchId).toBe('m_1');
+    expect(back.partnerAway).toBeNull();
+  });
+
+  it('marks the partner away without ending the conversation', () => {
+    const away = reduce(matched(), {
+      type: 'partner_reconnecting',
+      matchId: 'm_1',
+      until: '2026-08-19T10:00:20.000Z',
+    });
+    expect(away.screen).toBe('chatting');
+    expect(away.partnerAway).toBe('2026-08-19T10:00:20.000Z');
+
+    const back = reduce(away, { type: 'partner_returned', matchId: 'm_1' });
+    expect(back.partnerAway).toBeNull();
   });
 
   it('keeps the user searching after their own skip', () => {

@@ -26,6 +26,7 @@ describe('script registry', () => {
         'rateLimit',
         'resolvePartner',
         'resolveRoute',
+        'resumeSession',
         'tryMatch',
       ].sort(),
     );

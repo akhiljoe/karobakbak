@@ -45,6 +45,8 @@ export const SERVER_EVENTS = [
   'message_ack',
   'partner_typing',
   'partner_skipped',
+  'partner_reconnecting',
+  'partner_returned',
   'partner_disconnected',
   'report_ack',
   'error',
@@ -83,6 +85,26 @@ export interface Envelope<TType extends string = string, TPayload = unknown> {
   timestamp?: string;
   payload: TPayload;
 }
+
+/**
+ * How a returning browser presents its resume token (§28).
+ *
+ * A WebSocket subprotocol, because it is the only value a browser can attach to
+ * a handshake — `new WebSocket(url, protocols)` — and unlike a query string it
+ * does not end up in an access log. Namespaced so an unrelated subprotocol can
+ * never be read as one.
+ */
+export const RESUME_PROTOCOL_PREFIX = 'kbb.resume.';
+
+/**
+ * Offered alongside a resume token, and the one the server selects.
+ *
+ * A WebSocket server must echo a protocol the client offered, so selecting the
+ * resume entry would put the token in the *response* headers as well as the
+ * request. Offering this plain marker beside it gives the server something
+ * harmless to agree on.
+ */
+export const BASE_PROTOCOL = 'kbb.v1';
 
 export const MAX_CLIENT_ID_LENGTH = 64;
 export const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -563,6 +585,30 @@ export interface ConnectedPayload {
   serverTime: string;
   limits: ServerLimits;
   features: ServerFeatures;
+  /**
+   * A single-use credential for reclaiming *this* session after a dropped
+   * socket or a page refresh (§28).
+   *
+   * Rotated on every successful resume, so a captured token works once and only
+   * until its owner reconnects. Belongs in `sessionStorage`, not
+   * `localStorage`: it should die with the tab, exactly as a conversation does.
+   *
+   * Empty when resumption is disabled, in which case a reconnect is a new
+   * session exactly as it was before (D7).
+   */
+  resumeToken: string;
+  /**
+   * How long a dropped socket keeps its seat, in seconds. 0 means resumption is
+   * off. Sent so the client can count down honestly rather than hardcoding a
+   * number that would drift from the server's.
+   */
+  resumeGraceSeconds: number;
+  /**
+   * Present when this connection resumed a conversation that was already in
+   * progress. The client restores the chat from it rather than showing a
+   * landing screen and losing the transcript.
+   */
+  resumed?: MatchedPayload;
 }
 
 /** Result of join_queue / leave_queue / a no-op skip. */
@@ -645,6 +691,29 @@ export interface PartnerTypingPayload {
   active: boolean;
 }
 
+/**
+ * The stranger's socket dropped and their seat is being held (§28).
+ *
+ * Distinct from `partner_disconnected`, which means they are gone for good. The
+ * difference matters: told "they left", a person moves on; told "they are
+ * reconnecting", they wait — and most of the time the conversation resumes.
+ *
+ * Messages sent during this window are **not** delivered and not buffered.
+ * Buffering them would mean writing message text to a Redis key, which is
+ * exactly what invariant I8 forbids, so the client disables the composer
+ * instead of pretending it is going through.
+ */
+export interface PartnerReconnectingPayload {
+  matchId: string;
+  /** When the seat is given up, ISO 8601, for an honest countdown. */
+  until: string;
+}
+
+/** They made it back inside the window; the conversation carries on. */
+export interface PartnerReturnedPayload {
+  matchId: string;
+}
+
 export interface PartnerSkippedPayload {
   matchId: string;
 }
@@ -691,6 +760,8 @@ export interface ServerEventPayloads {
   message_ack: MessageAckPayload;
   partner_typing: PartnerTypingPayload;
   partner_skipped: PartnerSkippedPayload;
+  partner_reconnecting: PartnerReconnectingPayload;
+  partner_returned: PartnerReturnedPayload;
   partner_disconnected: PartnerDisconnectedPayload;
   report_ack: ReportAckPayload;
   error: ErrorPayload;

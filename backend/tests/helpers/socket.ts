@@ -91,12 +91,23 @@ export class TestClient {
 
   static async connect(
     url: string,
-    options: { headers?: Record<string, string>; maxPayload?: number } = {},
+    options: {
+      headers?: Record<string, string>;
+      maxPayload?: number;
+      /** Subprotocols to offer, as a browser would. */
+      protocols?: string[];
+    } = {},
   ): Promise<TestClient> {
-    const socket = new WebSocket(url, {
-      headers: options.headers,
-      maxPayload: options.maxPayload ?? 10 * 1024 * 1024,
-    });
+    const socket =
+      options.protocols === undefined
+        ? new WebSocket(url, {
+            headers: options.headers,
+            maxPayload: options.maxPayload ?? 10 * 1024 * 1024,
+          })
+        : new WebSocket(url, options.protocols, {
+            headers: options.headers,
+            maxPayload: options.maxPayload ?? 10 * 1024 * 1024,
+          });
     const client = new TestClient(socket);
     await new Promise<void>((resolve, reject) => {
       socket.once('open', () => resolve());

@@ -23,8 +23,9 @@
  */
 import type { Config } from '../config';
 import type { Logger } from '../logger';
-import type { Identity, Profile } from '../protocol/types';
+import type { Identity, MatchedPayload, Profile } from '../protocol/types';
 import type {
+  ResumeSessionResult,
   BlockPartnerResult,
   CloseSessionResult,
   ConnRateResult,
@@ -38,7 +39,7 @@ import type {
   TryMatchResult,
 } from '../redis/store';
 import type { RetentionSink } from '../storage/sink';
-import { newMatchId, newMessageId, newSessionId } from '../util/ids';
+import { hashResumeToken, newMatchId, newMessageId, newResumeToken, newSessionId } from '../util/ids';
 import { nowIso } from '../util/time';
 import type { DeliveryRoute, EventDispatcher } from './dispatch';
 import { newIdentityPair } from './identity';
@@ -53,11 +54,22 @@ import type { Connection, ConnectionRegistry } from './registry';
  * mid-operation.
  */
 export interface LifecycleStore {
-  createSession(identity: SessionIdentity, segment: string): Promise<CreateSessionResult>;
+  createSession(
+    identity: SessionIdentity,
+    segment: string,
+    resumeHash?: string,
+  ): Promise<CreateSessionResult>;
   heartbeat(sessionId: string): Promise<HeartbeatResult>;
-  closeSession(sessionId: string, ipHash: string): Promise<CloseSessionResult>;
+  closeSession(sessionId: string, ipHash: string, holdSeat?: boolean): Promise<CloseSessionResult>;
   joinQueue(sessionId: string, segment: string): Promise<JoinQueueResult>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
+  resumeSession(
+    presentedHash: string,
+    replacementHash: string,
+    instanceId: string,
+  ): Promise<ResumeSessionResult>;
+  readMatch(matchId: string): Promise<Record<string, string> | null>;
+  saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void>;
   readProfiles(a: string, b: string): Promise<{ a: Profile | null; b: Profile | null }>;
   leaveQueue(sessionId: string, segment: string): Promise<LeaveQueueResult>;
   tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult>;
@@ -73,9 +85,24 @@ export interface LifecycleStore {
 /* -------------------------------------------------------------------------- */
 
 export type OpenOutcome =
-  | { kind: 'opened'; sessionId: string }
+  | { kind: 'opened'; sessionId: string; resumeToken: string }
   | { kind: 'rate_limited'; retryAfterSeconds: number }
   | { kind: 'too_many_connections'; count: number };
+
+export type ResumeOutcome =
+  | {
+      kind: 'resumed';
+      sessionId: string;
+      /** The conversation still in progress, if there was one. */
+      matchId: string | null;
+      /** The replacement token; the presented one is now spent. */
+      resumeToken: string;
+      ipHash: string;
+      clientHash: string;
+    }
+  | { kind: 'too_many_connections'; count: number }
+  /** No such token, an expired window, or a session that is still attached. */
+  | { kind: 'no_session' };
 
 export interface MatchedOutcome {
   kind: 'matched';
@@ -141,6 +168,7 @@ export interface CloseOutcome {
 
 export class SessionLifecycle {
   private readonly segment: string;
+  private readonly resumeEnabled: boolean;
 
   constructor(
     private readonly store: LifecycleStore,
@@ -151,6 +179,7 @@ export class SessionLifecycle {
     private readonly retention: RetentionSink,
   ) {
     this.segment = config.matchmaking.defaultSegment;
+    this.resumeEnabled = config.resume.graceSeconds > 0;
   }
 
   /**
@@ -181,9 +210,13 @@ export class SessionLifecycle {
     const sessionId = newSessionId();
     if (beforeCreate) await beforeCreate(sessionId);
 
+    // Issued here and hashed before storage: Redis holds only the hash, so a
+    // read of it does not hand somebody a way into a live conversation.
+    const resumeToken = this.resumeEnabled ? newResumeToken() : '';
     await this.store.createSession(
       { sessionId, instanceId: this.config.instanceId, ipHash, clientHash },
       this.segment,
+      resumeToken === '' ? '' : hashResumeToken(resumeToken),
     );
 
     const slot = await this.store.acquireConnectionSlot(ipHash, sessionId);
@@ -195,7 +228,86 @@ export class SessionLifecycle {
       return { kind: 'too_many_connections', count: slot.count };
     }
 
-    return { kind: 'opened', sessionId };
+    return { kind: 'opened', sessionId, resumeToken };
+  }
+
+  /**
+   * Reclaim a detached session with the token it was issued.
+   *
+   * Returns `no_session` for anything that does not resolve to a session held
+   * open for exactly this token — an expired window, an unknown token, a
+   * session that was reaped. The caller then opens a fresh session, which is
+   * the pre-§28 behaviour and the right fallback: a failed resume must never be
+   * an error page, it is simply a new conversation.
+   */
+  async resume(
+    token: string,
+    beforeAttach?: (sessionId: string) => Promise<void>,
+  ): Promise<ResumeOutcome> {
+    if (!this.resumeEnabled || token === '') return { kind: 'no_session' };
+
+    const replacement = newResumeToken();
+    const result = await this.store.resumeSession(
+      hashResumeToken(token),
+      hashResumeToken(replacement),
+      this.config.instanceId,
+    );
+    if (result.status !== 'resumed') return { kind: 'no_session' };
+
+    // Subscribed before the caller can be told it worked, so no event published
+    // to this session can arrive before this instance is listening (§11).
+    if (beforeAttach) await beforeAttach(result.sessionId);
+
+    // The slot was released when the socket dropped, so it has to be taken
+    // again — a resumed session is a live connection like any other, and not
+    // counting it would let one address hold unlimited seats by reconnecting.
+    const slot = await this.store.acquireConnectionSlot(result.ipHash, result.sessionId);
+    if (!slot.allowed) return { kind: 'too_many_connections', count: slot.count };
+
+    return {
+      kind: 'resumed',
+      sessionId: result.sessionId,
+      matchId: result.matchId,
+      resumeToken: replacement,
+      ipHash: result.ipHash,
+      clientHash: result.clientHash,
+    };
+  }
+
+  /**
+   * Rebuild the `matched` frame for a session that just came back.
+   *
+   * The identities are read from the match rather than regenerated: they were
+   * shipped in the original event and are not a function of anything, so a
+   * fresh draw would show the returning user a different stranger name for the
+   * same conversation and make the transcript read as two people.
+   */
+  async restoreMatch(sessionId: string, matchId: string): Promise<MatchedPayload | null> {
+    const match = await this.store.readMatch(matchId);
+    if (!match) return null;
+    const mine = match.a === sessionId;
+    const partnerSessionId = mine ? match.b : match.a;
+    if (partnerSessionId === undefined || partnerSessionId === '') return null;
+
+    const you = parseIdentity(mine ? match.identA : match.identB);
+    const partner = parseIdentity(mine ? match.identB : match.identA);
+    if (!you || !partner) return null;
+
+    return {
+      matchId,
+      startedAt: new Date(Number(match.createdAt ?? 0)).toISOString(),
+      you,
+      partner,
+    };
+  }
+
+  /** Tell the partner the stranger is back, so their composer re-enables. */
+  async announceReturn(sessionId: string, matchId: string): Promise<void> {
+    const match = await this.store.readMatch(matchId);
+    if (!match) return;
+    const partnerSessionId = match.a === sessionId ? match.b : match.a;
+    if (!partnerSessionId) return;
+    await this.notify(partnerSessionId, { event: 'partner_returned', matchId });
   }
 
   /** Preserves I3 and D4: the caller is queued before anything scans. */
@@ -388,11 +500,38 @@ export class SessionLifecycle {
    * Tear down a session (§13). Safe to call twice, from both the close and the
    * error handler, and safe to call for a session whose row already expired.
    */
-  async close(sessionId: string, ipHash: string, connection?: Connection): Promise<CloseOutcome> {
+  async close(
+    sessionId: string,
+    ipHash: string,
+    connection?: Connection,
+    options: { holdSeat?: boolean } = {},
+  ): Promise<CloseOutcome> {
     this.registry.remove(sessionId, connection);
 
-    const closed = await this.store.closeSession(sessionId, ipHash);
+    // A deliberate shutdown is not a network blip. Holding seats through one
+    // would leave every partner waiting out a grace window for somebody whose
+    // server is going away, so drain tears down and releases them.
+    const closed = await this.store.closeSession(sessionId, ipHash, options.holdSeat !== false);
     if (closed.matchId === null) return { endedMatchId: null };
+
+    // The seat is being held (§28). The conversation is untouched, so the only
+    // thing to do is tell the partner what is happening — told "they left", a
+    // person moves on; told "they are reconnecting", they wait, and most of the
+    // time the conversation resumes.
+    if (closed.status === 'detached') {
+      const until = new Date(Date.now() + this.config.resume.graceSeconds * 1000).toISOString();
+      const match = await this.store.readMatch(closed.matchId);
+      const partnerSessionId =
+        match === null ? null : match.a === sessionId ? match.b : match.a;
+      if (partnerSessionId !== null && partnerSessionId !== undefined && partnerSessionId !== '') {
+        await this.notify(partnerSessionId, {
+          event: 'partner_reconnecting',
+          matchId: closed.matchId,
+          until,
+        });
+      }
+      return { endedMatchId: null };
+    }
 
     const ended = await this.endMatchAndNotify(
       sessionId,
@@ -470,6 +609,14 @@ export class SessionLifecycle {
       profileB: profiles.b,
     });
 
+    // Stored on the match so a reconnection can restore exactly these names
+    // rather than drawing new ones for a conversation already in progress.
+    await this.store.saveMatchIdentities(
+      matchId,
+      JSON.stringify(identities.you),
+      JSON.stringify(identities.partner),
+    );
+
     const partnerRoute = await this.notify(partnerSessionId, {
       event: 'matched',
       matchId,
@@ -526,5 +673,29 @@ export class SessionLifecycle {
     event: Parameters<EventDispatcher['toSession']>[1],
   ): Promise<DeliveryRoute> {
     return this.dispatcher.toSession(sessionId, event, nowIso());
+  }
+}
+
+/**
+ * Read an identity back off the match hash.
+ *
+ * Returns null for anything unparseable rather than throwing: a match written
+ * by an older build has no identities stored, and that must degrade to "cannot
+ * restore, start fresh" instead of failing a reconnection.
+ */
+function parseIdentity(raw: string | undefined): Identity | null {
+  if (raw === undefined || raw === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const value = parsed as Record<string, unknown>;
+    if (typeof value.nickname !== 'string' || typeof value.colour !== 'string') return null;
+    return {
+      nickname: value.nickname,
+      colour: value.colour,
+      profile: (value.profile ?? null) as Identity['profile'],
+    };
+  } catch {
+    return null;
   }
 }
