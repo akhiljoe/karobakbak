@@ -17,7 +17,7 @@
  * is already committed in Redis, so the worst case is one stale label that the
  * client's next action corrects.
  */
-import type { Identity, MessageContentType, ServerEnvelope } from '../protocol/types';
+import type { Identity, MessageContentType, Profile, ServerEnvelope } from '../protocol/types';
 import { serverFrame } from '../protocol/envelope';
 
 /** Envelope version for the internal bus. Independent of the wire protocol version. */
@@ -67,6 +67,24 @@ function isIdentity(value: unknown): value is Identity {
 }
 
 /**
+ * Read a profile out of a published event.
+ *
+ * Tolerant on purpose: an instance running an older build publishes a `matched`
+ * event with no `profile` key at all, and during a rolling deploy that must
+ * degrade to "declared nothing" rather than dropping the whole event and losing
+ * the match. Each field is checked individually for the same reason.
+ */
+function readProfile(value: unknown): Profile | null {
+  if (!isPlainObject(value)) return null;
+  return {
+    name: typeof value.name === 'string' ? value.name : null,
+    country: typeof value.country === 'string' ? value.country : null,
+    age: typeof value.age === 'number' ? value.age : null,
+    gender: typeof value.gender === 'string' ? value.gender : null,
+  };
+}
+
+/**
  * Parse a published payload. Returns null for anything unrecognised — including
  * an event name a newer instance introduced, which is precisely the case that
  * must not throw during a rolling deploy.
@@ -93,8 +111,16 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
         event: 'matched',
         matchId,
         startedAt: data.startedAt,
-        you: { nickname: data.you.nickname, colour: data.you.colour },
-        partner: { nickname: data.partner.nickname, colour: data.partner.colour },
+        you: {
+          nickname: data.you.nickname,
+          colour: data.you.colour,
+          profile: readProfile(data.you.profile),
+        },
+        partner: {
+          nickname: data.partner.nickname,
+          colour: data.partner.colour,
+          profile: readProfile(data.partner.profile),
+        },
       };
     case 'message':
       if (typeof data.messageId !== 'string' || typeof data.text !== 'string') return null;

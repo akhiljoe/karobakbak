@@ -25,6 +25,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { Config, RateLimitedCommand } from './config';
+import { moderate } from './moderation';
 import type { Logger } from './logger';
 import { CLOSE_CODES, type ServerFeatures, type ServerLimits } from './protocol/types';
 import type { ValidatedCommand } from './protocol/validate';
@@ -470,7 +471,26 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       }
 
       case 'join_queue': {
-        const outcome = await lifecycle.joinQueue(connection.sessionId);
+        // A declared name is shown to every stranger this session meets, so it
+        // is moderated more strictly than a message: *any* rule firing refuses
+        // it, rather than the default flag-and-deliver (D20). A message is one
+        // utterance judged in context; a name is a label on a person, and a
+        // contact handle in a name is unambiguously an advert rather than
+        // something a moderator should weigh later.
+        const declaredName = command.profile.name;
+        if (declaredName !== null && config.moderation.enabled) {
+          const verdict = moderate({ type: 'text', text: declaredName }, config.moderation);
+          if (verdict.flags.length > 0) {
+            metrics.profilesRefused.labels('name_moderation').inc();
+            // Rule ids only. The name itself is user content and must not reach
+            // a log line (I8).
+            logger.info('refused a declared name', { flags: verdict.flags });
+            connection.sendError('VALIDATION_FAILED', 'that name cannot be used');
+            return;
+          }
+        }
+
+        const outcome = await lifecycle.joinQueue(connection.sessionId, command.profile);
         replyToSearch(connection, outcome);
         return;
       }

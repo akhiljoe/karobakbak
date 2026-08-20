@@ -46,6 +46,8 @@ function conversation(id: string): RetentionRecord {
     sessionB: 's_b',
     segment: 'default',
     startedAt: new Date().toISOString(),
+    profileA: null,
+    profileB: null,
   };
 }
 

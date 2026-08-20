@@ -23,8 +23,11 @@ describe('per-match identities', () => {
     const { you } = newIdentityPair();
     // Anything derived from an identifier would be stable across matches, and
     // anything stable across matches is a correlation handle (§24.3).
-    expect(Object.keys(you).sort()).toEqual(['colour', 'nickname']);
+    expect(Object.keys(you).sort()).toEqual(['colour', 'nickname', 'profile']);
     expect(you.nickname).not.toMatch(/\d/);
+    // Nothing declared means null, not an object of nulls: "told us nothing"
+    // has one representation downstream.
+    expect(you.profile).toBeNull();
   });
 
   it('is not a stable function of anything — repeated calls differ', () => {

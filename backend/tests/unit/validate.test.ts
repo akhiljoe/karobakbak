@@ -1,9 +1,20 @@
 import {
   parseClientFrame,
   validateMessageText,
+  validateProfile,
   validateReportNote,
 } from '../../src/protocol/validate';
-import { PROTOCOL_VERSION, REPORT_CATEGORIES } from '../../src/protocol/types';
+import {
+  COUNTRY_CODES,
+  GENDERS,
+  COUNTRY_NAMES,
+  countryName,
+  MAX_DECLARED_AGE,
+  MAX_DISPLAY_NAME_LENGTH,
+  MIN_DECLARED_AGE,
+  PROTOCOL_VERSION,
+  REPORT_CATEGORIES,
+} from '../../src/protocol/types';
 
 /** Deliberately different numbers, so a test can tell which limit fired. */
 const limits = { maxMessageLength: 20, maxReportNoteLength: 30 };
@@ -33,7 +44,15 @@ function expectError(result: ReturnType<typeof parseClientFrame>, code: string) 
 describe('parseClientFrame — envelope', () => {
   it('accepts a minimal valid control frame and reports no client id', () => {
     const result = parseClientFrame(frame({ type: 'join_queue', payload: {} }), false, limits);
-    expect(result).toEqual({ ok: true, command: { type: 'join_queue', clientId: null } });
+    expect(result).toEqual({
+      ok: true,
+      command: {
+        type: 'join_queue',
+        clientId: null,
+        // Absent, null and every-field-declined all normalise to one shape.
+        profile: { name: null, country: null, age: null, gender: null },
+      },
+    });
   });
 
   it('treats a missing payload as an empty payload for zero-argument events', () => {
@@ -607,5 +626,154 @@ describe('protocol surface — future signalling is not accepted early', () => {
       parseClientFrame(frame({ type: 'report', payload: { category: 'spam' } }), false, limits).ok,
     ).toBe(true);
     expect(parseClientFrame(messageFrame({ text: 'hi' }), false, limits).ok).toBe(true);
+  });
+});
+
+describe('validateProfile', () => {
+  it('treats absent, null and all-declined as one shape', () => {
+    // "Told us nothing" must have a single representation, or every consumer
+    // has to handle three.
+    const empty = { name: null, country: null, age: null, gender: null };
+    expect(validateProfile(undefined)).toEqual({ ok: true, profile: empty });
+    expect(validateProfile(null)).toEqual({ ok: true, profile: empty });
+    expect(validateProfile({})).toEqual({ ok: true, profile: empty });
+    expect(validateProfile({ name: '', country: '', age: null })).toEqual({
+      ok: true,
+      profile: empty,
+    });
+    expect(validateProfile({ name: '   ' })).toEqual({ ok: true, profile: empty });
+  });
+
+  it('accepts a full declaration and trims the name', () => {
+    expect(validateProfile({ name: '  Sam  ', country: 'IN', age: 27, gender: 'female' })).toEqual({
+      ok: true,
+      profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
+    });
+  });
+
+  it('refuses a name that is too long, before trimming', () => {
+    // Length before trim, so a megabyte of whitespace is rejected as oversized
+    // rather than accepted as empty.
+    const long = 'a'.repeat(MAX_DISPLAY_NAME_LENGTH + 1);
+    const result = validateProfile({ name: long });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('VALIDATION_FAILED');
+
+    expect(validateProfile({ name: ' '.repeat(MAX_DISPLAY_NAME_LENGTH + 1) }).ok).toBe(false);
+  });
+
+  it('gives a name the same character treatment as a message body', () => {
+    // A name is displayed to a stranger and read back by a moderator, so it is
+    // just as capable of carrying a terminal escape as a message is (I8).
+    const control = validateProfile({ name: `Sam${String.fromCharCode(7)}` });
+    expect(control.ok).toBe(false);
+    if (!control.ok) expect(control.code).toBe('VALIDATION_FAILED');
+
+    const surrogate = validateProfile({ name: `Sam${String.fromCharCode(0xd800)}` });
+    expect(surrogate.ok).toBe(false);
+  });
+
+  it('never echoes the declared name in a rejection', () => {
+    const result = validateProfile({ name: `CANARY${String.fromCharCode(7)}` });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).not.toContain('CANARY');
+  });
+
+  it('refuses a country outside the list rather than dropping it', () => {
+    // Silently ignoring an unknown code would let a client believe it had set a
+    // country it had not.
+    for (const country of ['XX', 'in', 'IND', 'I', 42, {}]) {
+      expect(validateProfile({ country }).ok).toBe(false);
+    }
+    expect(validateProfile({ country: 'IN' })).toEqual({
+      ok: true,
+      profile: { name: null, country: 'IN', age: null, gender: null },
+    });
+  });
+
+  it('refuses an age below the minimum with its own code', () => {
+    // Its own code so the client can say what the service is, and so the server
+    // can count the declaration as a safety signal rather than inferring it
+    // from a generic validation failure.
+    for (const age of [17, 13, 1, 0, -5]) {
+      const result = validateProfile({ age });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('AGE_BELOW_MINIMUM');
+    }
+    expect(validateProfile({ age: MIN_DECLARED_AGE }).ok).toBe(true);
+  });
+
+  it('refuses an age that is not a whole number in range', () => {
+    for (const age of [18.5, Number.NaN, Infinity, '25', MAX_DECLARED_AGE + 1]) {
+      const result = validateProfile({ age });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('refuses a profile that is not an object', () => {
+    for (const value of ['Sam', 42, true, []]) {
+      expect(validateProfile(value).ok).toBe(false);
+    }
+  });
+
+  it('refuses a gender outside the closed list', () => {
+    // Closed for the same reason country is a code: a free-text identity field
+    // is somewhere to write a sentence, a slur or a contact handle.
+    for (const gender of ['Female', 'f', 'attack helicopter', 42, {}]) {
+      expect(validateProfile({ gender }).ok).toBe(false);
+    }
+    for (const gender of GENDERS) {
+      expect(validateProfile({ gender }).ok).toBe(true);
+    }
+    // Omitting the field is how you decline to say.
+    expect(validateProfile({ gender: null }).ok).toBe(true);
+    expect(validateProfile({ gender: '' }).ok).toBe(true);
+  });
+
+  it('has a display name for every code, and no orphans', () => {
+    // The code is what travels; the name is only how it is spelled. A code
+    // without a name would render as raw "ZZ" in the chat header and in the
+    // moderation console, which is the kind of thing nobody notices until a
+    // user asks what country "MF" is.
+    const missing = COUNTRY_CODES.filter((code) => !(code in COUNTRY_NAMES));
+    const orphans = Object.keys(COUNTRY_NAMES).filter(
+      (code) => !(COUNTRY_CODES as readonly string[]).includes(code),
+    );
+    expect(missing).toEqual([]);
+    expect(orphans).toEqual([]);
+    expect(countryName('IN')).toBe('India');
+    expect(countryName(null)).toBeNull();
+    // An unknown code renders as itself rather than as "undefined".
+    expect(countryName('ZZ')).toBe('ZZ');
+  });
+
+  it('rides along on a join_queue frame', () => {
+    const result = parseClientFrame(
+      frame({ type: 'join_queue', payload: { profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' } } }),
+      false,
+      limits,
+    );
+    expect(result).toEqual({
+      ok: true,
+      command: {
+        type: 'join_queue',
+        clientId: null,
+        profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
+      },
+    });
+  });
+
+  it('fails the whole join when the declaration is bad', () => {
+    // Rejecting the frame rather than dropping the field: a client that thinks
+    // it set an age and was quietly ignored will display one the server does
+    // not have.
+    const result = parseClientFrame(
+      frame({ type: 'join_queue', payload: { profile: { age: 15 } } }),
+      false,
+      limits,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('AGE_BELOW_MINIMUM');
   });
 });

@@ -10,6 +10,9 @@
 import { Lock, MessageCircle, Shield, Sparkles, Users } from 'lucide-react';
 
 import type { ChatState } from '../state/machine';
+import type { Profile } from '../protocol/types';
+import { isEmptyProfile } from '../profile';
+import { ProfileCard } from './ProfileCard';
 import { AdSlot } from './AdSlot';
 import { Button } from './Button';
 
@@ -17,11 +20,25 @@ interface LandingScreenProps {
   state: ChatState;
   ended: boolean;
   onStart(): void;
+  profile: Profile;
+  onProfileChange(profile: Profile): void;
+  onProfileClear(): void;
 }
 
-export function LandingScreen({ state, ended, onStart }: LandingScreenProps): JSX.Element {
+export function LandingScreen({
+  state,
+  ended,
+  onStart,
+  profile,
+  onProfileChange,
+  onProfileClear,
+}: LandingScreenProps): JSX.Element {
   const presence = state.features.presence ? state.presence : null;
   const connecting = state.screen === 'connecting' || state.screen === 'disconnected';
+  // The strapline claims "no profile", which stops being true the moment
+  // someone fills one in. Saying it anyway would be the kind of small
+  // dishonesty that costs trust when noticed.
+  const declaredAnything = !isEmptyProfile(profile);
 
   return (
     <div className="relative flex h-full animate-fade-in flex-col overflow-y-auto">
@@ -68,10 +85,14 @@ export function LandingScreen({ state, ended, onStart }: LandingScreenProps): JS
         <p className="text-pretty mx-auto mt-4 max-w-md text-base text-ink-300 sm:mt-5 sm:text-lg">
           {ended
             ? 'There is no way back to that conversation. There is always another stranger.'
-            : 'Random. Anonymous. Instant. Talk to a stranger — no profiles, no history, just a conversation.'}
+            : 'Random. Anonymous. Instant. Talk to a stranger — no signup, no history, just a conversation.'}
         </p>
 
-        <div className="mt-8 w-full max-w-xs sm:mt-10">
+        <div className="mt-8 flex w-full justify-center sm:mt-10">
+          <ProfileCard profile={profile} onChange={onProfileChange} onClear={onProfileClear} />
+        </div>
+
+        <div className="mt-5 w-full max-w-xs">
           <Button size="lg" onClick={onStart} disabled={connecting} className="w-full">
             <Sparkles className="h-5 w-5" />
             {connecting ? 'Connecting…' : ended ? 'Find someone else' : 'Start chatting'}
@@ -80,7 +101,7 @@ export function LandingScreen({ state, ended, onStart }: LandingScreenProps): JS
 
         <div className="mt-6 flex items-center justify-center gap-2 text-xs text-ink-500">
           <Lock className="h-3 w-3" />
-          No signup · No profile · Anonymous
+          {declaredAnything ? 'No signup · No account · Nothing kept after you leave' : 'No signup · No profile · Anonymous'}
         </div>
 
         <div className="mt-8 w-full max-w-xs">

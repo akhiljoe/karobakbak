@@ -187,18 +187,240 @@ export function isReportCategory(value: unknown): value is ReportCategory {
  * match ends.
  */
 export interface Identity {
-  /** Server-generated display name. Never user-supplied. */
+  /**
+   * Server-generated display name. Never user-supplied.
+   *
+   * Still present when the user has set their own name: this is the fallback a
+   * client shows when `profile.name` is null, and it is what keeps every match
+   * displaying *something* without a client having to invent a placeholder.
+   */
   nickname: string;
   /** CSS colour for the identity accent, e.g. "#7C5CFF". */
   colour: string;
+  /**
+   * What this side chose to tell strangers about themselves, or null.
+   *
+   * Entirely optional and entirely unverified — see `Profile`.
+   */
+  profile: Profile | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Self-declared profile (phase 14)                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Details a user volunteers so a conversation can start faster than
+ * "asl" — a name to be called, a country, an age.
+ *
+ * ---------------------------------------------------------------------------
+ * EVERY FIELD IS A CLAIM, NOT A FACT
+ * ---------------------------------------------------------------------------
+ * Nothing here is verified and nothing here can be. It is typed by an anonymous
+ * stranger who may be lying, and both the UI and the moderation console must
+ * present it as "what they said about themselves", never as an attribute of the
+ * person. In particular `age` is **not age assurance** (security §24) and must
+ * never be described as such anywhere in this system.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE SHAPES ARE CONSTRAINED
+ * ---------------------------------------------------------------------------
+ * `country` is a code from a fixed list rather than free text, and `age` is a
+ * bounded integer, because a free-text "location" field is somewhere to type a
+ * street address or a phone number and a free-text age is somewhere to type a
+ * sentence. Only `name` is free text, and it is the one field that therefore
+ * goes through the same validation and moderation as a message body.
+ *
+ * The profile is sent by the client on `join_queue` and lives for the life of
+ * the session. The server stores nothing between sessions: remembering it is
+ * the browser's job (UI-side), so a returning user re-declares rather than
+ * being recognised. A profile the *server* kept against a durable identifier
+ * would be the cross-chat correlator `DESIGN.md` §24.3 forbids.
+ */
+export interface Profile {
+  /** What they want to be called. User content, moderated (I8). */
+  name: string | null;
+  /** ISO 3166-1 alpha-2, from `COUNTRY_CODES`. */
+  country: string | null;
+  /** Self-declared, integer, `MIN_DECLARED_AGE`..`MAX_DECLARED_AGE`. */
+  age: number | null;
+  /** Self-declared, from `GENDERS`. */
+  gender: string | null;
+}
+
+/** An empty profile — every field declined. */
+export const EMPTY_PROFILE: Profile = { name: null, country: null, age: null, gender: null };
+
+/**
+ * The gender values a user may declare.
+ *
+ * A closed list rather than free text, for the same reason `country` is a code:
+ * a free-text identity field is somewhere to write a sentence, a slur or a
+ * contact handle, and it would need moderating like a message body. Omitting
+ * the field *is* "prefer not to say", so there is no option for it — an
+ * explicit "prefer not to say" would be a fourth way of saying nothing.
+ *
+ * **Declared, not filterable.** No matchmaking path reads this today, and that
+ * is deliberate rather than unfinished. A filter would make the value worth
+ * lying about — the incentive is created by the filter, not the field — and a
+ * paid "match me with X" control is a targeting tool aimed at whichever group
+ * is filtered for. If filtering is ever built, it belongs behind the queue
+ * segment seam (D23) and needs its own decision recorded, not a quiet change
+ * here.
+ */
+export const GENDERS = ['female', 'male', 'nonbinary', 'other'] as const;
+export type Gender = (typeof GENDERS)[number];
+
+export function isGender(value: unknown): value is Gender {
+  return typeof value === 'string' && (GENDERS as readonly string[]).includes(value);
+}
+
+/**
+ * The lowest age this service accepts as a declaration.
+ *
+ * A lower number submitted here is refused with `AGE_BELOW_MINIMUM` and is not
+ * stored as a profile value, because publishing a self-declared minor's age to
+ * random strangers is the targeting primitive that security §23 lists
+ * "repeated attempts to establish age" as a *grooming signal* for.
+ *
+ * This is a floor on what may be *declared*. It is not an age gate, and it does
+ * not make the service safe for or closed to minors — that is the minor-safety
+ * policy and age-assurance work which security §24 requires legal counsel to
+ * settle before public launch, and which is not this.
+ */
+export const MIN_DECLARED_AGE = 18;
+
+/** Upper bound, so the field holds an age rather than an arbitrary number. */
+export const MAX_DECLARED_AGE = 99;
+
+/** Longest display name. Short enough to sit in a chat header on a phone. */
+export const MAX_DISPLAY_NAME_LENGTH = 24;
+
+/**
+ * ISO 3166-1 alpha-2 codes.
+ *
+ * The code is the value that travels and the value anything ever matches on;
+ * `COUNTRY_NAMES` below is only how it is spelled for a human. A code is stable
+ * when an English name changes, is exact to filter on, and is the same three
+ * bytes in every language.
+ *
+ * The list is the full standard rather than a curated subset: any shorter list
+ * is a set of arbitrary exclusions that someone will eventually read as a
+ * statement.
+ */
+export const COUNTRY_CODES = [
+  'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AS', 'AT', 'AU', 'AW', 'AX', 'AZ',
+  'BA', 'BB', 'BD', 'BE', 'BF', 'BG', 'BH', 'BI', 'BJ', 'BL', 'BM', 'BN', 'BO', 'BQ', 'BR', 'BS',
+  'BT', 'BV', 'BW', 'BY', 'BZ', 'CA', 'CC', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM', 'CN',
+  'CO', 'CR', 'CU', 'CV', 'CW', 'CX', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO', 'DZ', 'EC', 'EE',
+  'EG', 'EH', 'ER', 'ES', 'ET', 'FI', 'FJ', 'FK', 'FM', 'FO', 'FR', 'GA', 'GB', 'GD', 'GE', 'GF',
+  'GG', 'GH', 'GI', 'GL', 'GM', 'GN', 'GP', 'GQ', 'GR', 'GS', 'GT', 'GU', 'GW', 'GY', 'HK', 'HM',
+  'HN', 'HR', 'HT', 'HU', 'ID', 'IE', 'IL', 'IM', 'IN', 'IO', 'IQ', 'IR', 'IS', 'IT', 'JE', 'JM',
+  'JO', 'JP', 'KE', 'KG', 'KH', 'KI', 'KM', 'KN', 'KP', 'KR', 'KW', 'KY', 'KZ', 'LA', 'LB', 'LC',
+  'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV', 'LY', 'MA', 'MC', 'MD', 'ME', 'MF', 'MG', 'MH', 'MK',
+  'ML', 'MM', 'MN', 'MO', 'MP', 'MQ', 'MR', 'MS', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA',
+  'NC', 'NE', 'NF', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU', 'NZ', 'OM', 'PA', 'PE', 'PF', 'PG',
+  'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT', 'PW', 'PY', 'QA', 'RE', 'RO', 'RS', 'RU', 'RW',
+  'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI', 'SJ', 'SK', 'SL', 'SM', 'SN', 'SO', 'SR', 'SS',
+  'ST', 'SV', 'SX', 'SY', 'SZ', 'TC', 'TD', 'TF', 'TG', 'TH', 'TJ', 'TK', 'TL', 'TM', 'TN', 'TO',
+  'TR', 'TT', 'TV', 'TW', 'TZ', 'UA', 'UG', 'UM', 'US', 'UY', 'UZ', 'VA', 'VC', 'VE', 'VG', 'VI',
+  'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA', 'ZM', 'ZW',
+] as const;
+
+export type CountryCode = (typeof COUNTRY_CODES)[number];
+
+export function isCountryCode(value: unknown): value is CountryCode {
+  return typeof value === 'string' && (COUNTRY_CODES as readonly string[]).includes(value);
+}
+
+/**
+ * English display names, keyed by code.
+ *
+ * The code is what travels and what anything ever matches on; this is only how
+ * it is spelled for a human. Both the chat client and the moderation console
+ * render country names, so the map ships with the protocol rather than being
+ * duplicated in two packages that would drift.
+ *
+ * Short names, not the formal ISO long forms — "South Korea" rather than
+ * "Korea, Republic of" — because this appears in a chat header next to a first
+ * name, not in a customs declaration.
+ */
+export const COUNTRY_NAMES: Record<CountryCode, string> = {
+  AD: 'Andorra', AE: 'United Arab Emirates', AF: 'Afghanistan', AG: 'Antigua and Barbuda',
+  AI: 'Anguilla', AL: 'Albania', AM: 'Armenia', AO: 'Angola', AQ: 'Antarctica', AR: 'Argentina',
+  AS: 'American Samoa', AT: 'Austria', AU: 'Australia', AW: 'Aruba', AX: 'Åland Islands',
+  AZ: 'Azerbaijan', BA: 'Bosnia and Herzegovina', BB: 'Barbados', BD: 'Bangladesh', BE: 'Belgium',
+  BF: 'Burkina Faso', BG: 'Bulgaria', BH: 'Bahrain', BI: 'Burundi', BJ: 'Benin',
+  BL: 'Saint Barthélemy', BM: 'Bermuda', BN: 'Brunei', BO: 'Bolivia', BQ: 'Caribbean Netherlands',
+  BR: 'Brazil', BS: 'Bahamas', BT: 'Bhutan', BV: 'Bouvet Island', BW: 'Botswana', BY: 'Belarus',
+  BZ: 'Belize', CA: 'Canada', CC: 'Cocos (Keeling) Islands', CD: 'DR Congo',
+  CF: 'Central African Republic', CG: 'Republic of the Congo', CH: 'Switzerland',
+  CI: "Côte d'Ivoire", CK: 'Cook Islands', CL: 'Chile', CM: 'Cameroon', CN: 'China',
+  CO: 'Colombia', CR: 'Costa Rica', CU: 'Cuba', CV: 'Cape Verde', CW: 'Curaçao',
+  CX: 'Christmas Island', CY: 'Cyprus', CZ: 'Czechia', DE: 'Germany', DJ: 'Djibouti',
+  DK: 'Denmark', DM: 'Dominica', DO: 'Dominican Republic', DZ: 'Algeria', EC: 'Ecuador',
+  EE: 'Estonia', EG: 'Egypt', EH: 'Western Sahara', ER: 'Eritrea', ES: 'Spain', ET: 'Ethiopia',
+  FI: 'Finland', FJ: 'Fiji', FK: 'Falkland Islands', FM: 'Micronesia', FO: 'Faroe Islands',
+  FR: 'France', GA: 'Gabon', GB: 'United Kingdom', GD: 'Grenada', GE: 'Georgia',
+  GF: 'French Guiana', GG: 'Guernsey', GH: 'Ghana', GI: 'Gibraltar', GL: 'Greenland',
+  GM: 'Gambia', GN: 'Guinea', GP: 'Guadeloupe', GQ: 'Equatorial Guinea', GR: 'Greece',
+  GS: 'South Georgia and the South Sandwich Islands', GT: 'Guatemala', GU: 'Guam',
+  GW: 'Guinea-Bissau', GY: 'Guyana', HK: 'Hong Kong', HM: 'Heard and McDonald Islands',
+  HN: 'Honduras', HR: 'Croatia', HT: 'Haiti', HU: 'Hungary', ID: 'Indonesia', IE: 'Ireland',
+  IL: 'Israel', IM: 'Isle of Man', IN: 'India', IO: 'British Indian Ocean Territory', IQ: 'Iraq',
+  IR: 'Iran', IS: 'Iceland', IT: 'Italy', JE: 'Jersey', JM: 'Jamaica', JO: 'Jordan', JP: 'Japan',
+  KE: 'Kenya', KG: 'Kyrgyzstan', KH: 'Cambodia', KI: 'Kiribati', KM: 'Comoros',
+  KN: 'Saint Kitts and Nevis', KP: 'North Korea', KR: 'South Korea', KW: 'Kuwait',
+  KY: 'Cayman Islands', KZ: 'Kazakhstan', LA: 'Laos', LB: 'Lebanon', LC: 'Saint Lucia',
+  LI: 'Liechtenstein', LK: 'Sri Lanka', LR: 'Liberia', LS: 'Lesotho', LT: 'Lithuania',
+  LU: 'Luxembourg', LV: 'Latvia', LY: 'Libya', MA: 'Morocco', MC: 'Monaco', MD: 'Moldova',
+  ME: 'Montenegro', MF: 'Saint Martin', MG: 'Madagascar', MH: 'Marshall Islands',
+  MK: 'North Macedonia', ML: 'Mali', MM: 'Myanmar', MN: 'Mongolia', MO: 'Macao',
+  MP: 'Northern Mariana Islands', MQ: 'Martinique', MR: 'Mauritania', MS: 'Montserrat',
+  MT: 'Malta', MU: 'Mauritius', MV: 'Maldives', MW: 'Malawi', MX: 'Mexico', MY: 'Malaysia',
+  MZ: 'Mozambique', NA: 'Namibia', NC: 'New Caledonia', NE: 'Niger', NF: 'Norfolk Island',
+  NG: 'Nigeria', NI: 'Nicaragua', NL: 'Netherlands', NO: 'Norway', NP: 'Nepal', NR: 'Nauru',
+  NU: 'Niue', NZ: 'New Zealand', OM: 'Oman', PA: 'Panama', PE: 'Peru', PF: 'French Polynesia',
+  PG: 'Papua New Guinea', PH: 'Philippines', PK: 'Pakistan', PL: 'Poland',
+  PM: 'Saint Pierre and Miquelon', PN: 'Pitcairn Islands', PR: 'Puerto Rico', PS: 'Palestine',
+  PT: 'Portugal', PW: 'Palau', PY: 'Paraguay', QA: 'Qatar', RE: 'Réunion', RO: 'Romania',
+  RS: 'Serbia', RU: 'Russia', RW: 'Rwanda', SA: 'Saudi Arabia', SB: 'Solomon Islands',
+  SC: 'Seychelles', SD: 'Sudan', SE: 'Sweden', SG: 'Singapore', SH: 'Saint Helena',
+  SI: 'Slovenia', SJ: 'Svalbard and Jan Mayen', SK: 'Slovakia', SL: 'Sierra Leone',
+  SM: 'San Marino', SN: 'Senegal', SO: 'Somalia', SR: 'Suriname', SS: 'South Sudan',
+  ST: 'São Tomé and Príncipe', SV: 'El Salvador', SX: 'Sint Maarten', SY: 'Syria',
+  SZ: 'Eswatini', TC: 'Turks and Caicos Islands', TD: 'Chad', TF: 'French Southern Territories',
+  TG: 'Togo', TH: 'Thailand', TJ: 'Tajikistan', TK: 'Tokelau', TL: 'Timor-Leste',
+  TM: 'Turkmenistan', TN: 'Tunisia', TO: 'Tonga', TR: 'Türkiye', TT: 'Trinidad and Tobago',
+  TV: 'Tuvalu', TW: 'Taiwan', TZ: 'Tanzania', UA: 'Ukraine', UG: 'Uganda',
+  UM: 'U.S. Minor Outlying Islands', US: 'United States', UY: 'Uruguay', UZ: 'Uzbekistan',
+  VA: 'Vatican City', VC: 'Saint Vincent and the Grenadines', VE: 'Venezuela',
+  VG: 'British Virgin Islands', VI: 'U.S. Virgin Islands', VN: 'Vietnam', VU: 'Vanuatu',
+  WF: 'Wallis and Futuna', WS: 'Samoa', YE: 'Yemen', YT: 'Mayotte', ZA: 'South Africa',
+  ZM: 'Zambia', ZW: 'Zimbabwe',
+};
+
+/** The display name for a code, or the code itself if it is somehow unknown. */
+export function countryName(code: string | null): string | null {
+  if (code === null) return null;
+  return (COUNTRY_NAMES as Record<string, string>)[code] ?? code;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Client -> server payloads                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Enter matchmaking. Idempotent while already SEARCHING. Changes state. */
-export type JoinQueuePayload = Record<string, never>;
+/**
+ * Enter matchmaking. Idempotent while already SEARCHING. Changes state.
+ *
+ * `profile` is optional and re-sent on every join, because the server keeps
+ * nothing between sessions. Omitting it clears any profile the session had:
+ * there is no partial update, so a client cannot end up displaying a stale
+ * field it thought it had removed.
+ */
+export interface JoinQueuePayload {
+  profile?: Profile;
+}
 
 /** Leave matchmaking without disconnecting. Idempotent. Changes state. */
 export type LeaveQueuePayload = Record<string, never>;
@@ -524,6 +746,16 @@ export const PROTOCOL_ERROR_CODES = [
    * `delivered: false` rather than as an error.
    */
   'MESSAGE_WITHHELD',
+  /**
+   * A declared age below `MIN_DECLARED_AGE`.
+   *
+   * Its own code rather than `VALIDATION_FAILED` so the client can say what the
+   * service actually is instead of "invalid input", and so the server can
+   * record the declaration as a minor-safety signal without inferring it from a
+   * generic failure. The join is refused; nothing about the age is stored as a
+   * profile value.
+   */
+  'AGE_BELOW_MINIMUM',
   /** Token bucket exhausted. */
   'RATE_LIMITED',
   /** Operation requires an active match and there is none. */

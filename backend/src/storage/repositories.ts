@@ -115,12 +115,18 @@ export class Repositories {
         record.segment,
         record.startedAt,
         expiryFrom(nowMs, this.config.retention.days.conversation),
+        // Serialised here rather than by the driver so a null declaration is a
+        // SQL null instead of the JSON string "null", which reads as a declared
+        // value in every query someone writes later.
+        record.profileA === null ? null : JSON.stringify(record.profileA),
+        record.profileB === null ? null : JSON.stringify(record.profileB),
       );
     }
     await db.query(
       `insert into conversations
-         (conversation_id, session_a, session_b, segment, started_at, retention_expires_at)
-       values ${placeholders(records.length, 6)}
+         (conversation_id, session_a, session_b, segment, started_at, retention_expires_at,
+          profile_a, profile_b)
+       values ${placeholders(records.length, 8)}
        on conflict (conversation_id) do nothing`,
       values,
     );

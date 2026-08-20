@@ -13,8 +13,8 @@ const matched: SessionEvent = {
   event: 'matched',
   matchId: 'm_1',
   startedAt: AT,
-  you: { nickname: 'Quiet Heron', colour: '#2DD4BF' },
-  partner: { nickname: 'Amber Fox', colour: '#7C5CFF' },
+  you: { nickname: 'Quiet Heron', colour: '#2DD4BF', profile: null },
+  partner: { nickname: 'Amber Fox', colour: '#7C5CFF', profile: null },
 };
 
 function roundTrip(event: SessionEvent): SessionEvent | null {

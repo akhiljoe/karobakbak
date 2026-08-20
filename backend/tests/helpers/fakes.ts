@@ -10,6 +10,7 @@
  * someone else ends first, a connection slot that is full.
  */
 import type { Logger } from '../../src/logger';
+import type { Profile } from '../../src/protocol/types';
 import type {
   BlockPartnerResult,
   CloseSessionResult,
@@ -112,6 +113,30 @@ export class FakeStore implements LifecycleStore {
     // Mirrors the real script: the match is left for endMatch to clean, so both
     // sides are taken down by one call.
     return { status: 'closed', matchId: session.matchId };
+  }
+
+  /** Declared profiles, keyed by session, exactly as the real store holds them. */
+  readonly profiles = new Map<string, Profile>();
+
+  async setProfile(sessionId: string, profile: Profile): Promise<void> {
+    this.profiles.set(sessionId, profile);
+  }
+
+  async readProfiles(a: string, b: string): Promise<{ a: Profile | null; b: Profile | null }> {
+    const read = (sessionId: string): Profile | null => {
+      const profile = this.profiles.get(sessionId);
+      if (profile === undefined) return null;
+      if (
+        profile.name === null &&
+        profile.country === null &&
+        profile.age === null &&
+        profile.gender === null
+      ) {
+        return null;
+      }
+      return profile;
+    };
+    return { a: read(a), b: read(b) };
   }
 
   async joinQueue(sessionId: string, _segment: string): Promise<JoinQueueResult> {

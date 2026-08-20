@@ -315,6 +315,10 @@
     var hasSubject = Boolean(detail.reportedKeys.ipHash || detail.reportedKeys.clientHash);
     addMeta(meta, 'Can be banned', hasSubject ? 'yes' : 'no identity recorded');
 
+    // Declarations, before the transcript: a report is often *about* one of
+    // these, and they never appear in the conversation itself.
+    renderDeclared(detail.declared);
+
     var noteBlock = $('note-block');
     if (detail.note) {
       $('note-text').textContent = detail.note;
@@ -353,6 +357,45 @@
     setError($('verdict-error'), '');
     show($('verdict-ok'), false);
     $('verdict-bot').disabled = !hasSubject;
+  }
+
+  /**
+   * Render both declarations, labelled as claims.
+   *
+   * "declared" is doing real work in that label. Nothing here was verified,
+   * `age` is not age assurance, and a moderator reading "27" as a fact about a
+   * person is the mistake this wording exists to prevent.
+   */
+  function renderDeclared(declared) {
+    var block = $('declared-block');
+    var list = $('declared-list');
+    clear(list);
+
+    var sides = [
+      ['Reported party declared', declared.reported],
+      ['Reporter declared', declared.reporter],
+    ];
+    var any = false;
+
+    sides.forEach(function (entry) {
+      var label = entry[0];
+      var profile = entry[1];
+      list.appendChild(el('dt', null, label));
+      if (!profile) {
+        list.appendChild(el('dd', 'muted', 'nothing'));
+        return;
+      }
+      any = true;
+      var parts = [];
+      if (profile.name) parts.push('name: ' + profile.name);
+      if (profile.age !== null && profile.age !== undefined) parts.push('age: ' + profile.age);
+      if (profile.gender) parts.push('gender: ' + profile.gender);
+      if (profile.country) parts.push('country: ' + profile.country);
+      list.appendChild(el('dd', null, parts.length > 0 ? parts.join(' · ') : 'nothing'));
+    });
+
+    show(block, true);
+    $('declared-caveat').hidden = !any;
   }
 
   /* --- deciding ---------------------------------------------------------- */

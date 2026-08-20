@@ -20,8 +20,8 @@ const LIMITS = {
   maxFrameBytes: 16384,
 };
 
-const YOU = { nickname: 'Quiet Heron', colour: '#2DD4BF' };
-const PARTNER = { nickname: 'Amber Fox', colour: '#7C5CFF' };
+const YOU = { nickname: 'Quiet Heron', colour: '#2DD4BF', profile: null };
+const PARTNER = { nickname: 'Amber Fox', colour: '#7C5CFF', profile: null };
 
 function connected(state = initialState): ChatState {
   return reduce(state, {

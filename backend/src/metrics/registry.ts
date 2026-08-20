@@ -52,6 +52,15 @@ export interface Metrics {
   readonly invalidFrames: Counter<string>;
   readonly socketErrors: Counter<string>;
   readonly rateLimited: Counter<'command'>;
+  /**
+   * Declared profiles refused at join, by reason.
+   *
+   * `age_below_minimum` is the one to watch: it counts people who told this
+   * service they are under 18. That is a safety signal and an input to the
+   * minor-safety policy security section 24 requires before launch — a count
+   * only, never who or what age, because that is a claim about a person (I8).
+   */
+  readonly profilesRefused: Counter<'reason'>;
 
   /* matchmaking */
   readonly queueDepth: Gauge<'segment'>;
@@ -144,6 +153,9 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     invalidFrames: counter('chat_invalid_frames_total', 'Malformed protocol frames'),
     socketErrors: counter('chat_socket_errors_total', 'Transport-level socket errors'),
     rateLimited: counter('chat_rate_limited_total', 'Commands refused by a token bucket', ['command']),
+    profilesRefused: counter('chat_profiles_refused_total', 'Declared profiles refused at join, by reason', [
+      'reason',
+    ]),
 
     queueDepth: gauge('chat_queue_depth', 'Sessions waiting in a queue segment', ['segment']),
     activeMatches: gauge('chat_active_matches', 'Live conversations, cluster-wide'),

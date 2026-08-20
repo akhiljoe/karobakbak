@@ -21,7 +21,7 @@
  */
 import { randomInt } from 'node:crypto';
 
-import type { Identity } from '../protocol/types';
+import type { Identity, Profile } from '../protocol/types';
 
 const ADJECTIVES = [
   'Amber',
@@ -134,16 +134,27 @@ function pickOther<T>(values: readonly T[], exclude: T): T {
  * exactly the situation — an argument worth reporting — where reading it back
  * matters most.
  */
-export function newIdentityPair(): { you: Identity; partner: Identity } {
+export function newIdentityPair(profiles?: {
+  you: Profile | null;
+  partner: Profile | null;
+}): { you: Identity; partner: Identity } {
   const yourAdjective = pick(ADJECTIVES);
   const yourNoun = pick(NOUNS);
   const yourColour = pick(COLOURS);
 
   return {
-    you: { nickname: `${yourAdjective} ${yourNoun}`, colour: yourColour },
+    you: {
+      nickname: `${yourAdjective} ${yourNoun}`,
+      colour: yourColour,
+      // The generated nickname stays even when a profile name exists. It is the
+      // fallback a client renders when someone declared nothing, so every match
+      // has a label without a client inventing a placeholder.
+      profile: profiles?.you ?? null,
+    },
     partner: {
       nickname: `${pickOther(ADJECTIVES, yourAdjective)} ${pickOther(NOUNS, yourNoun)}`,
       colour: pickOther(COLOURS, yourColour),
+      profile: profiles?.partner ?? null,
     },
   };
 }

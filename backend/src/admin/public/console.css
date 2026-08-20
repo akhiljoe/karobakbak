@@ -411,6 +411,17 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.declared {
+  padding: 12px 14px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: var(--ink-900);
+}
+
+.declared .meta {
+  margin-bottom: 4px;
+}
+
 /* --- transcript ---------------------------------------------------------- */
 
 .transcript {

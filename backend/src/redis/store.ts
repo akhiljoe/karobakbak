@@ -10,7 +10,7 @@
 import type { Redis } from 'ioredis';
 
 import type { Config, RateLimitedCommand } from '../config';
-import type { SessionState } from '../protocol/types';
+import type { Profile, SessionState } from '../protocol/types';
 import type { RedisKeys } from './keys';
 import { ScriptRunner, type ScriptReply } from './scripts';
 
@@ -206,6 +206,36 @@ class UnexpectedScriptReplyError extends Error {
 /* -------------------------------------------------------------------------- */
 /* Store                                                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Rebuild a profile from three raw hash fields.
+ *
+ * Returns null when nothing was declared, so "no profile" and "a profile of
+ * three nulls" are the same value downstream rather than two shapes a renderer
+ * has to handle. An unparseable age is dropped rather than shown: the field is
+ * written by this process from a validated integer, so a bad value means
+ * corruption, and a corrupt age displayed to a stranger is worse than none.
+ */
+function profileFromFields(raw: unknown): Profile | null {
+  if (!Array.isArray(raw)) return null;
+  const [name, country, age, gender] = raw as (string | null)[];
+  const parsedAge = typeof age === 'string' ? Number.parseInt(age, 10) : Number.NaN;
+  const profile: Profile = {
+    name: typeof name === 'string' && name.length > 0 ? name : null,
+    country: typeof country === 'string' && country.length > 0 ? country : null,
+    age: Number.isInteger(parsedAge) ? parsedAge : null,
+    gender: typeof gender === 'string' && gender.length > 0 ? gender : null,
+  };
+  if (
+    profile.name === null &&
+    profile.country === null &&
+    profile.age === null &&
+    profile.gender === null
+  ) {
+    return null;
+  }
+  return profile;
+}
 
 export class RedisStore {
   private readonly sessionTtl: number;
@@ -557,6 +587,73 @@ export class RedisStore {
       endedByUs: num(reply, 4) === 1,
       blockedIpHash: str(reply, 5),
       blockedClientHash: str(reply, 6),
+    };
+  }
+
+  /* --- declared profile --------------------------------------------------- */
+
+  /**
+   * Store what a session chose to declare about itself, on the session hash.
+   *
+   * Plain `HSET`/`HDEL` rather than Lua, and that is not an exception to the
+   * rule: a profile is display data, not matchmaking state. Nothing branches on
+   * it, no invariant spans it, and two instances writing it cannot interleave
+   * into an inconsistent state because only the session's own connection ever
+   * writes it.
+   *
+   * A null field is **deleted**, not written as an empty string. `join_queue`
+   * carries the whole profile every time, so a field the client stopped sending
+   * has to disappear — otherwise clearing a name would leave the old one on the
+   * hash and the partner would be shown something the user thought they had
+   * removed.
+   */
+  async setProfile(sessionId: string, profile: Profile): Promise<void> {
+    const key = this.keys.session(sessionId);
+    const set: string[] = [];
+    const clear: string[] = [];
+
+    if (profile.name !== null) set.push('pName', profile.name);
+    else clear.push('pName');
+    if (profile.country !== null) set.push('pCountry', profile.country);
+    else clear.push('pCountry');
+    if (profile.age !== null) set.push('pAge', String(profile.age));
+    else clear.push('pAge');
+    if (profile.gender !== null) set.push('pGender', profile.gender);
+    else clear.push('pGender');
+
+    const pipeline = this.client.pipeline();
+    if (set.length > 0) pipeline.hset(key, ...set);
+    if (clear.length > 0) pipeline.hdel(key, ...clear);
+    await pipeline.exec();
+  }
+
+  /**
+   * Read both sides' declared profiles when a match forms.
+   *
+   * Deliberately *beside* `tryMatch` rather than inside it. The match script is
+   * the most race-tested code in the system and its return shape is parsed
+   * positionally; widening it to carry six display fields would mean
+   * re-verifying every matchmaking race to ship a nickname. This runs once per
+   * conversation, never on the message path.
+   *
+   * A session whose hash has expired between the match and this read yields a
+   * null profile, which renders as the generated nickname — degraded, not
+   * wrong. `tryMatch` has just refreshed both TTLs, so the window is small.
+   */
+  async readProfiles(
+    sessionA: string,
+    sessionB: string,
+  ): Promise<{ a: Profile | null; b: Profile | null }> {
+    const fields = ['pName', 'pCountry', 'pAge', 'pGender'] as const;
+    const results = await this.client
+      .pipeline()
+      .hmget(this.keys.session(sessionA), ...fields)
+      .hmget(this.keys.session(sessionB), ...fields)
+      .exec();
+
+    return {
+      a: profileFromFields(results?.[0]?.[1]),
+      b: profileFromFields(results?.[1]?.[1]),
     };
   }
 

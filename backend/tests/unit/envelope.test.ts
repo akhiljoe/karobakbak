@@ -6,8 +6,8 @@ function matched(): MatchedPayload {
   return {
     matchId: 'm_1',
     startedAt: '2026-01-01T00:00:00.000Z',
-    you: { nickname: 'Amber Fox', colour: '#7C5CFF' },
-    partner: { nickname: 'Quiet Heron', colour: '#2DD4BF' },
+    you: { nickname: 'Amber Fox', colour: '#7C5CFF', profile: null },
+    partner: { nickname: 'Quiet Heron', colour: '#2DD4BF', profile: null },
   };
 }
 
@@ -38,10 +38,14 @@ describe('server frames', () => {
   it('never leaks a partner session id in a matched frame', () => {
     const payload = JSON.parse(encode('matched', matched())).payload;
     expect(Object.keys(payload).sort()).toEqual(['matchId', 'partner', 'startedAt', 'you']);
-    // The temporary identity is a nickname and a colour and nothing else: an
-    // identity carrying a session id would be a deanonymisation primitive.
-    expect(Object.keys(payload.partner).sort()).toEqual(['colour', 'nickname']);
-    expect(Object.keys(payload.you).sort()).toEqual(['colour', 'nickname']);
+    // The temporary identity is a nickname, a colour and whatever the user
+    // chose to declare — and nothing else. An identity carrying a session id
+    // would be a deanonymisation primitive.
+    expect(Object.keys(payload.partner).sort()).toEqual(['colour', 'nickname', 'profile']);
+    expect(Object.keys(payload.you).sort()).toEqual(['colour', 'nickname', 'profile']);
+    // The profile is only ever the three declared fields, so a future addition
+    // to it is a deliberate protocol change rather than a leak that rides along.
+    expect(Object.keys(payload.you.profile ?? {}).sort()).toEqual([]);
   });
 });
 

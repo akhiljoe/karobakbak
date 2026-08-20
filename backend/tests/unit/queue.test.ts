@@ -57,6 +57,8 @@ describe('priority assignment (D27)', () => {
         sessionB: 's_b',
         segment: 'default',
         startedAt: '2026-08-18T12:00:00.000Z',
+        profileA: null,
+        profileB: null,
       }),
     ).toBe('p0');
   });

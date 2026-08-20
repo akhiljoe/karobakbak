@@ -405,6 +405,8 @@ describe('report-triggered extension survives a deletion pass', () => {
           sessionB: 's_b',
           segment: 'default',
           startedAt: new Date().toISOString(),
+          profileA: null,
+          profileB: null,
         },
       ],
       // Stamped as if written a month ago, so the ordinary deadline has passed.
@@ -448,6 +450,8 @@ describe('§10.19 — the deletion worker racing a report', () => {
           sessionB: 's_b',
           segment: 'default',
           startedAt: new Date().toISOString(),
+          profileA: null,
+          profileB: null,
         },
       ],
       Date.now() - ctx.config.retention.days.conversation * 24 * 3600 * 1000 - 1000,

@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { AppHeader } from './components/AppHeader';
+import { EMPTY_PROFILE, clearProfile, loadProfile, saveProfile } from './profile';
+import type { Profile } from './protocol/types';
 import { AuthModal } from './components/AuthModal';
 import { ChatShell } from './components/ChatShell';
 import { FiltersModal } from './components/FiltersModal';
@@ -73,10 +75,26 @@ export function App(): JSX.Element {
     [chat],
   );
 
+  // Read once on mount: localStorage is synchronous and touching it during
+  // render would cost on every keystroke elsewhere in the tree.
+  const [profile, setProfile] = useState<Profile>(() => loadProfile());
+
   const showShell = phase === 'searching' || phase === 'chatting';
 
+  // Held in the browser, re-sent on every join. The server keeps nothing
+  // between sessions, so this is the only place the declaration lives.
+  const updateProfile = useCallback((next: Profile) => {
+    setProfile(next);
+    saveProfile(next);
+  }, []);
+
+  const resetProfile = useCallback(() => {
+    setProfile(EMPTY_PROFILE);
+    clearProfile();
+  }, []);
+
   return (
-    <div className="flex min-h-[100dvh] flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       <AppHeader
         state={state}
         onHome={chat.leave}
@@ -101,7 +119,14 @@ export function App(): JSX.Element {
               onBack={chat.leave}
             />
           ) : (
-            <LandingScreen state={state} ended={phase === 'ended'} onStart={chat.start} />
+            <LandingScreen
+              state={state}
+              ended={phase === 'ended'}
+              onStart={() => chat.start(profile)}
+              profile={profile}
+              onProfileChange={updateProfile}
+              onProfileClear={resetProfile}
+            />
           )}
         </div>
       </main>
@@ -111,8 +136,12 @@ export function App(): JSX.Element {
       <SettingsSheet
         open={settingsOpen}
         preferences={preferences}
+        profile={profile}
+        inConversation={phase === 'chatting'}
         onClose={() => setSettingsOpen(false)}
         onChange={setPreference}
+        onProfileChange={updateProfile}
+        onProfileClear={resetProfile}
       />
 
       {/*

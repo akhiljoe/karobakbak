@@ -36,6 +36,7 @@ import type { Logger } from '../logger';
 import { dbErrorFields } from '../logger';
 import type { Database } from '../storage/pool';
 import { newAuditId } from '../util/ids';
+import type { Profile } from '../protocol/types';
 import type { AdminIdentity } from './auth';
 
 /** Longest justification accepted. Same bound as a report note. */
@@ -90,6 +91,15 @@ export interface ReportDetail {
   readonly endedAt: string | null;
   readonly endReason: string | null;
   readonly messages: readonly ReplayMessage[];
+  /**
+   * What each side declared about themselves.
+   *
+   * Frequently the actual subject of the report — "they said they were 19",
+   * "the name was a phone number" — and never visible in the transcript,
+   * because a declaration is not a message. Unverified claims: the console
+   * labels them "declared", and `age` is not age assurance.
+   */
+  readonly declared: { readonly reported: Profile | null; readonly reporter: Profile | null };
   /** The two identity hashes of the reported party, for issuing a sanction. */
   readonly reportedKeys: { readonly ipHash: string | null; readonly clientHash: string | null };
 }
@@ -203,7 +213,8 @@ export class ReviewService {
         const reportResult = await client.query(
           `select r.report_id, r.conversation_id, r.category, r.state, r.created_at, r.note,
                   r.reporter_session_id, r.reported_session_id,
-                  c.started_at, c.ended_at, c.end_reason
+                  c.started_at, c.ended_at, c.end_reason,
+                  c.session_a, c.profile_a, c.profile_b
              from reports r
              join conversations c on c.conversation_id = r.conversation_id
             where r.report_id = $1`,
@@ -222,6 +233,9 @@ export class ReviewService {
               started_at: Date;
               ended_at: Date | null;
               end_reason: string | null;
+              session_a: string;
+              profile_a: Profile | null;
+              profile_b: Profile | null;
             }
           | undefined;
         if (report === undefined) return null;
@@ -285,6 +299,11 @@ export class ReviewService {
         );
         const keys = keysResult.rows as Array<{ dimension: string; blocked_key: string }>;
 
+        // The conversation stores its declarations as A and B; the report
+        // names a reporter and a reported party. Mapping here rather than in
+        // the UI keeps the console from having to know which side is which.
+        const reportedIsA = report.session_a === report.reported_session_id;
+
         return {
           reportId: report.report_id,
           conversationId: report.conversation_id,
@@ -296,6 +315,10 @@ export class ReviewService {
           endedAt: report.ended_at?.toISOString() ?? null,
           endReason: report.end_reason,
           messages,
+          declared: {
+            reported: reportedIsA ? report.profile_a : report.profile_b,
+            reporter: reportedIsA ? report.profile_b : report.profile_a,
+          },
           reportedKeys: {
             ipHash: keys.find((row) => row.dimension === 'ip')?.blocked_key ?? null,
             clientHash: keys.find((row) => row.dimension === 'client')?.blocked_key ?? null,

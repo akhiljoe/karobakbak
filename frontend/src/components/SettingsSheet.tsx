@@ -13,20 +13,31 @@ import { useEffect } from 'react';
 import { Settings, X } from 'lucide-react';
 
 import type { Preferences } from '../preferences';
+import type { Profile } from '../protocol/types';
 import { Button } from './Button';
+import { ProfileFields } from './ProfileFields';
 
 interface SettingsSheetProps {
   open: boolean;
   preferences: Preferences;
+  profile: Profile;
+  /** True while a conversation is running, so the editor can say what an edit reaches. */
+  inConversation: boolean;
   onClose(): void;
   onChange<K extends keyof Preferences>(key: K, value: Preferences[K]): void;
+  onProfileChange(profile: Profile): void;
+  onProfileClear(): void;
 }
 
 export function SettingsSheet({
   open,
   preferences,
+  profile,
+  inConversation,
   onClose,
   onChange,
+  onProfileChange,
+  onProfileClear,
 }: SettingsSheetProps): JSX.Element | null {
   useEffect(() => {
     if (!open) return;
@@ -48,7 +59,7 @@ export function SettingsSheet({
     >
       <div className="absolute inset-0 animate-fade-in bg-ink-950/70 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-md animate-fade-in rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl sm:p-5">
+      <div className="relative max-h-[90dvh] w-full max-w-md animate-fade-in overflow-y-auto rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl sm:p-5">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
 
         <div className="mb-4 flex items-center justify-between">
@@ -65,6 +76,20 @@ export function SettingsSheet({
           </button>
         </div>
 
+        <section className="mb-4">
+          <h3 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            About you
+          </h3>
+          <div className="rounded-xl border border-ink-700 bg-ink-950 px-3.5 py-3">
+            <ProfileFields
+              profile={profile}
+              onChange={onProfileChange}
+              onClear={onProfileClear}
+              appliesToNextMatch={inConversation}
+            />
+          </div>
+        </section>
+
         <Toggle
           label="Conversation starters"
           description="Offer a suggested opening line when you match with someone. Off by default."
@@ -73,8 +98,9 @@ export function SettingsSheet({
         />
 
         <p className="mt-4 px-1 text-xs leading-relaxed text-ink-500">
-          Settings are kept in this browser and never sent anywhere. Clearing your site data resets
-          them.
+          Settings are kept in this browser. Your preferences never leave it; what you declare above
+          is sent to the person you match with, and to nobody else. Clearing your site data resets
+          both.
         </p>
 
         <Button variant="secondary" className="mt-4 w-full" onClick={onClose}>

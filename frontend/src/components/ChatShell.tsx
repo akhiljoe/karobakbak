@@ -10,6 +10,8 @@ import { ArrowLeft, Clock, X } from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
 import type { ChatState } from '../state/machine';
+import { COUNTRY_NAMES, type Profile } from '../protocol/types';
+import { GENDER_LABELS } from '../profile';
 import { colourFor, composerDisabled, glyphFor, searchingDetail, type ConnectionView } from '../view/presentation';
 import { ActionBar } from './ActionBar';
 import { AdRail } from './AdRail';
@@ -56,6 +58,9 @@ export function ChatShell({
 }: ChatShellProps): JSX.Element {
   const chatting = state.screen === 'chatting';
   const duration = useDuration(chatting ? state.matchStartedAt : null);
+  // What they said about themselves, as a subtitle. Null when they declared
+  // nothing, which is the common case and the one the copy defaults to.
+  const declared = describeProfile(state.partner?.profile ?? null);
   const [icebreakerDismissed, setIcebreakerDismissed] = useState(false);
 
   // A new conversation gets a fresh offer of a prompt.
@@ -89,7 +94,9 @@ export function ChatShell({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-sm font-semibold text-ink-50">
-                {searching ? 'Finding someone…' : (state.partner?.nickname ?? 'Stranger')}
+                {searching
+                  ? 'Finding someone…'
+                  : (state.partner?.profile?.name ?? state.partner?.nickname ?? 'Stranger')}
               </h2>
               <ConnectionStatus state={connection} />
             </div>
@@ -100,7 +107,12 @@ export function ChatShell({
                 <span className="text-amber-300">typing…</span>
               ) : (
                 <>
-                  <span>Anonymous</span>
+                  {/*
+                    "Anonymous" only while they declared nothing. Showing it
+                    beside an age and a country would be the interface
+                    contradicting itself.
+                  */}
+                  <span>{declared ?? 'Anonymous'}</span>
                   {chatting && (
                     <>
                       <span className="text-ink-600">·</span>
@@ -222,4 +234,26 @@ function RotatingLine(): JSX.Element {
       {SEARCHING_LINES[index]}
     </p>
   );
+}
+
+/**
+ * One line of what a partner declared: "24 · Woman · India".
+ *
+ * The name is deliberately absent — it is already the header. Returns null
+ * rather than an empty string when nothing was declared, so the caller falls
+ * back to "Anonymous" instead of rendering a gap.
+ *
+ * None of this is verified, and the interface should never imply it is. It
+ * appears as a quiet subtitle rather than a badge for exactly that reason: a
+ * badge reads as a credential.
+ */
+function describeProfile(profile: Profile | null): string | null {
+  if (!profile) return null;
+  const parts: string[] = [];
+  if (profile.age !== null) parts.push(String(profile.age));
+  if (profile.gender) parts.push(GENDER_LABELS[profile.gender] ?? profile.gender);
+  if (profile.country) {
+    parts.push(COUNTRY_NAMES[profile.country as keyof typeof COUNTRY_NAMES] ?? profile.country);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
 }

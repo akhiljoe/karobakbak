@@ -19,6 +19,7 @@
  */
 import type { RetentionPriority } from '../config';
 import type { ModerationAction } from '../moderation';
+import type { Profile } from '../protocol/types';
 
 export interface ConversationStartedRecord {
   readonly kind: 'conversation_started';
@@ -27,6 +28,15 @@ export interface ConversationStartedRecord {
   readonly sessionB: string;
   readonly segment: string;
   readonly startedAt: string;
+  /**
+   * What each side declared about themselves, or null.
+   *
+   * Stamped at match time rather than read later: the declaration lives on the
+   * session, and the session is gone by the time anyone investigates. Unverified
+   * claims, never identity (see migration 006).
+   */
+  readonly profileA: Profile | null;
+  readonly profileB: Profile | null;
 }
 
 export interface ConversationEndedRecord {

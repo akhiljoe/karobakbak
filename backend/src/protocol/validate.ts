@@ -9,14 +9,21 @@
 import {
   CLIENT_ID_PATTERN,
   DEFAULT_MESSAGE_CONTENT_TYPE,
+  EMPTY_PROFILE,
+  MAX_DECLARED_AGE,
+  MAX_DISPLAY_NAME_LENGTH,
+  MIN_DECLARED_AGE,
   PROTOCOL_VERSION,
   RESERVED_MEDIA_FIELDS,
   isClientEventType,
+  isCountryCode,
+  isGender,
   isMessageContentType,
   isReportCategory,
   type ClientEventType,
   type MessageContentType,
   type MessagePayload,
+  type Profile,
   type ProtocolErrorCode,
   type ReportCategory,
   type ReportPayload,
@@ -37,7 +44,7 @@ import {
  * a validated command at all.
  */
 export type ValidatedCommand =
-  | { type: 'join_queue'; clientId: string | null }
+  | { type: 'join_queue'; clientId: string | null; profile: Profile }
   | { type: 'leave_queue'; clientId: string | null }
   | { type: 'leave_chat'; clientId: string | null }
   | { type: 'skip'; clientId: string | null }
@@ -188,6 +195,108 @@ export function validateReportNote(
 }
 
 /**
+ * Validate the optional self-declared profile on a `join_queue` payload.
+ *
+ * Absent, null, and every-field-declined all normalise to the same empty
+ * profile, so downstream code has one shape for "told us nothing" instead of
+ * three. There is no partial update: a join without a field clears it, which is
+ * what stops a client believing it removed something the server still shows.
+ *
+ * The four fields need different kinds of care:
+ *
+ *  * `name` is free text a stranger reads, so it gets exactly the treatment a
+ *    message body gets — length before trim, then the shared control-character
+ *    and lone-surrogate checks. Moderation is a *separate* pass at the edge
+ *    (a name is a fine place to advertise a Telegram handle); this is only the
+ *    character-level gate.
+ *  * `country` must be a code from the fixed list. Anything else is refused
+ *    rather than dropped, because silently ignoring an unknown code would let a
+ *    client believe it had set a country it had not.
+ *  * `age` is refused below `MIN_DECLARED_AGE` with its own code, so the client
+ *    can say what the service is and the server can record the declaration as a
+ *    safety signal rather than inferring it from a generic failure.
+ *  * `gender` is a value from a closed list, for the same reason as `country`:
+ *    a free-text identity field would need moderating like a message body.
+ */
+export function validateProfile(
+  value: unknown,
+): { ok: true; profile: Profile } | { ok: false; code: ProtocolErrorCode; message: string } {
+  if (value === undefined || value === null) return { ok: true, profile: EMPTY_PROFILE };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, code: 'VALIDATION_FAILED', message: 'payload.profile must be an object' };
+  }
+  const raw = value as { name?: unknown; country?: unknown; age?: unknown; gender?: unknown };
+
+  let name: string | null = null;
+  if (raw.name !== undefined && raw.name !== null) {
+    if (typeof raw.name !== 'string') {
+      return { ok: false, code: 'VALIDATION_FAILED', message: 'profile.name must be a string' };
+    }
+    if (raw.name.length > MAX_DISPLAY_NAME_LENGTH) {
+      return {
+        ok: false,
+        code: 'VALIDATION_FAILED',
+        message: `profile.name exceeds ${MAX_DISPLAY_NAME_LENGTH} characters`,
+      };
+    }
+    const trimmed = raw.name.trim();
+    if (trimmed.length > 0) {
+      const bad = checkTextCharacters(trimmed, 'profile name');
+      if (bad) return bad;
+      name = trimmed;
+    }
+  }
+
+  let country: string | null = null;
+  if (raw.country !== undefined && raw.country !== null && raw.country !== '') {
+    if (!isCountryCode(raw.country)) {
+      return {
+        ok: false,
+        code: 'VALIDATION_FAILED',
+        message: 'profile.country must be an ISO 3166-1 alpha-2 code',
+      };
+    }
+    country = raw.country;
+  }
+
+  let age: number | null = null;
+  if (raw.age !== undefined && raw.age !== null) {
+    if (typeof raw.age !== 'number' || !Number.isInteger(raw.age)) {
+      return { ok: false, code: 'VALIDATION_FAILED', message: 'profile.age must be a whole number' };
+    }
+    if (raw.age < MIN_DECLARED_AGE) {
+      return {
+        ok: false,
+        code: 'AGE_BELOW_MINIMUM',
+        message: `this service is for ${MIN_DECLARED_AGE} and over`,
+      };
+    }
+    if (raw.age > MAX_DECLARED_AGE) {
+      return {
+        ok: false,
+        code: 'VALIDATION_FAILED',
+        message: `profile.age must be at most ${MAX_DECLARED_AGE}`,
+      };
+    }
+    age = raw.age;
+  }
+
+  let gender: string | null = null;
+  if (raw.gender !== undefined && raw.gender !== null && raw.gender !== '') {
+    if (!isGender(raw.gender)) {
+      return {
+        ok: false,
+        code: 'VALIDATION_FAILED',
+        message: 'profile.gender is not one of the accepted values',
+      };
+    }
+    gender = raw.gender;
+  }
+
+  return { ok: true, profile: { name, country, age, gender } };
+}
+
+/**
  * Validate the content-type discriminator on a `message` payload.
  *
  * Two distinct controls, both required because `type` is client-supplied and
@@ -294,7 +403,11 @@ export function parseClientFrame(
   const payload: Record<string, unknown> = rawPayload ?? {};
 
   switch (type) {
-    case 'join_queue':
+    case 'join_queue': {
+      const profile = validateProfile((payload as { profile?: unknown }).profile);
+      if (!profile.ok) return fail(profile.code, profile.message);
+      return { ok: true, command: { type, clientId, profile: profile.profile } };
+    }
     case 'leave_queue':
     case 'leave_chat':
     case 'skip':

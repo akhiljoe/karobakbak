@@ -19,6 +19,7 @@ import {
   PROTOCOL_VERSION,
   type AnyServerEnvelope,
   type ClientEventType,
+  type Profile,
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
@@ -43,7 +44,7 @@ function newClientMessageId(): string {
 
 export interface ChatApi {
   readonly state: ChatState;
-  start(): void;
+  start(profile?: Profile): void;
   stop(): void;
   skip(): void;
   /** End the conversation (or the search) and return to the landing screen. */
@@ -164,9 +165,22 @@ export function useChat(): ChatApi {
 
   /* --- actions ------------------------------------------------------------ */
 
-  const start = useCallback(() => {
-    if (sendCommand('join_queue')) dispatch({ type: 'user_searching' });
-  }, [sendCommand]);
+  /**
+   * Enter the queue, carrying whatever this person chose to declare.
+   *
+   * The profile rides on the join rather than being set once on connect,
+   * because joining is the moment matchmaking starts — and it is re-sent every
+   * time, because the server keeps nothing between sessions. Sending it means
+   * a cleared field is genuinely cleared: there is no partial update to leave
+   * a stale value behind.
+   */
+  const start = useCallback(
+    (profile?: Profile) => {
+      const payload = profile === undefined ? {} : { profile };
+      if (sendCommand('join_queue', payload)) dispatch({ type: 'user_searching' });
+    },
+    [sendCommand],
+  );
 
   const stop = useCallback(() => {
     sendCommand('leave_queue');

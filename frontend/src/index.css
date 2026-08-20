@@ -33,6 +33,25 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * The app owns exactly one viewport and scrolls inside it.
+   *
+   * `min-height` here instead of `height` is what put the composer below the
+   * fold: a min-height lets the page grow past the viewport, and every inner
+   * pane sizes itself with `h-full`, which resolves against a *definite*
+   * parent height and silently does nothing without one. So the transcript
+   * grew the document instead of scrolling itself, and reaching the input
+   * meant scrolling the whole page.
+   *
+   * Definite height, hidden overflow, and the panes that should scroll say so
+   * themselves.
+   */
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
@@ -47,7 +66,9 @@
 
   /* Ambient warm gradient backdrop — a dim, cosy room rather than a form. */
   #root {
-    @apply min-h-[100dvh];
+    /* dvh, not vh: on mobile the browser chrome collapses and `vh` keeps the
+       old number, which hides the composer behind the address bar. */
+    @apply h-[100dvh] overflow-hidden;
     background:
       radial-gradient(120% 80% at 50% -10%, rgba(245, 158, 11, 0.08), transparent 60%),
       radial-gradient(100% 60% at 50% 110%, rgba(90, 146, 81, 0.05), transparent 60%),

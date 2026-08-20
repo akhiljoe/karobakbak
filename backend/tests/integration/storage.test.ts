@@ -44,6 +44,8 @@ function conversation(overrides: Partial<ConversationStartedRecord> = {}): Conve
     sessionB: 's_b',
     segment: 'default',
     startedAt: new Date().toISOString(),
+    profileA: null,
+    profileB: null,
     ...overrides,
   };
 }
