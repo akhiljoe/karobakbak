@@ -51,6 +51,17 @@ export function newClientToken(): string {
   return randomToken();
 }
 
+/**
+ * Identifies one audit row.
+ *
+ * Generated here like every other id rather than left to a database default,
+ * so a caller can name the row it just wrote — an audit entry nobody can cite
+ * is harder to follow up than one with an id.
+ */
+export function newAuditId(): string {
+  return `aud_${randomToken()}`;
+}
+
 /** Identifies one operator account. Opaque, so it can appear in an audit row. */
 export function newAdminAccountId(): string {
   return `adm_${randomToken()}`;

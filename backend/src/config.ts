@@ -194,6 +194,17 @@ export interface Config {
      * nobody can ever lift on evidence. Long bans are re-issued, not eternal.
      */
     readonly maxBanSeconds: number;
+    /**
+     * How often each instance replays live sanctions from PostgreSQL into
+     * Redis.
+     *
+     * Redis holds no persistence by design (D12), so a restart empties every
+     * ban key. Without this pass a sanction lasts until the next Redis restart
+     * and nothing reports that it has gone. Not leader-locked: the write is an
+     * idempotent SET, so instances converge rather than contend, and a pass
+     * that only the leader ran would leave the others' view stale.
+     */
+    readonly reloadIntervalMs: number;
   };
 
   readonly moderation: {
@@ -520,6 +531,7 @@ export function loadConfig(env: Env = process.env): Config {
       enabled: bool(env, 'ENFORCEMENT_ENABLED', true),
       defaultBanSeconds: int(env, 'ENFORCEMENT_DEFAULT_BAN_SECONDS', 2_592_000, 60, 31_536_000),
       maxBanSeconds: int(env, 'ENFORCEMENT_MAX_BAN_SECONDS', 31_536_000, 60, 31_536_000),
+      reloadIntervalMs: int(env, 'ENFORCEMENT_RELOAD_INTERVAL_MS', 300_000, 30_000, 3_600_000),
     },
 
     admin: {

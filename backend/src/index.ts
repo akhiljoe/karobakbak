@@ -19,6 +19,7 @@ import { createChatServer } from './server';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
+import { EnforcementService } from './admin/enforce';
 import { NullRetentionSink, type RetentionSink } from './storage/sink';
 import { DisabledSpool, FileSpool, type Spool } from './storage/spool';
 
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   let writer: RetentionWriter | null = null;
   let deletion: DeletionWorker | null = null;
   let database: ReturnType<typeof createDatabase> | null = null;
+  let banReloadTimer: NodeJS.Timeout | null = null;
 
   if (config.retention.enabled) {
     assertTlsWhereRequired(config);
@@ -65,6 +67,28 @@ async function main(): Promise<void> {
     // keeps (I10).
     deletion = new DeletionWorker(config, logger, database, store);
     deletion.start();
+
+    // Sanctions live in PostgreSQL and are *cached* in Redis, which holds no
+    // persistence by design (D12) — so a Redis restart empties every ban key.
+    // Replaying them is what stops every ban being quietly temporary, lasting
+    // only until the next restart with nothing reporting that it had gone.
+    //
+    // Not leader-locked, unlike the deletion worker: the write is an
+    // idempotent SET with a recomputed TTL, so instances converge instead of
+    // contending, and a pass only the leader ran would leave every other
+    // instance enforcing nothing.
+    if (config.enforcement.enabled) {
+      const sanctions = new EnforcementService(database, store, config, logger);
+      // Awaited once at startup so an instance does not begin accepting
+      // connections with an empty ban list. It never throws — a database
+      // outage must not stop the chat from serving (D16) — so a failure here
+      // costs one interval, not the boot.
+      await sanctions.reapplyActiveBans();
+      banReloadTimer = setInterval(() => {
+        void sanctions.reapplyActiveBans();
+      }, config.enforcement.reloadIntervalMs);
+      banReloadTimer.unref();
+    }
   }
 
   const metrics = createMetrics(config);
@@ -91,6 +115,7 @@ async function main(): Promise<void> {
     // conversations to close are still placed - written if the database is up,
     // spooled if it is not.
     clearInterval(metricsTimer);
+    if (banReloadTimer) clearInterval(banReloadTimer);
     deletion?.stop();
     if (writer) await writer.stop();
     if (database) await database.close();
