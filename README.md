@@ -95,10 +95,15 @@ npm run up / down / logs # the development stack
 npm run psql             # a shell in the running database
 npm run redis-cli        # a shell in the running Redis
 npm run unblock          # clear every block, so testing can continue
+
 npm run loadtest         # k6 against an isolated load-test stack
 npm run loadtest:down    # destroy that stack, volumes and all
 npm run prod:config      # resolve the production config without starting it
 npm run prod:up          # the production stack (needs .env.prod)
+
+# backend package — the moderation console (its own process, off by default)
+npm run console          # start it; needs ADMIN_CONSOLE_ENABLED=true
+npm run console:create   # create an operator account (password in ADMIN_PASSWORD)
 
 # integration dependencies
 npm run redis:test:up    # Redis :6380 and PostgreSQL :5433, both tmpfs-backed
@@ -185,6 +190,65 @@ The ones you will actually change:
 | `/health` | liveness: this process. Stays `200` while Redis is down, because the process is fine. |
 | `/ready` | readiness: **Redis, not PostgreSQL.** A backend with a dead database still serves chat correctly and must stay in the load balancer. `503` when Redis is unreachable. |
 | `/metrics` | Prometheus text format. nginx returns **404** for it at the edge: the scrape is for the private network, not the internet. |
+
+### The moderation console
+
+Off by default. A deployment that is not being moderated opens no port and holds
+no operator credentials in memory anywhere.
+
+It is a **separate process on its own port**, not a route on the chat server —
+the chat port is the one nginx proxies to the internet, so a console route
+sharing that listener would put "read every retained conversation" one
+`location` block away from public. Never publish `ADMIN_CONSOLE_PORT`; reach it
+through an SSH tunnel.
+
+```bash
+# one operator account. The password comes from the environment, never argv,
+# because arguments are visible in `ps` to every other user on the host.
+cd backend
+ADMIN_PASSWORD='...' npm run console:create -- <username>
+
+# start it
+ADMIN_CONSOLE_ENABLED=true npm run console
+
+# reach it from your laptop, without publishing the port
+ssh -L 8088:127.0.0.1:8088 <host>
+```
+
+`console:create` prints the TOTP secret **once**. There is no path that shows it
+again: a console that can re-display an enrolled secret is one where reading a
+row of the database is enough to log in as its owner. A lost secret means
+deleting the account and making another.
+
+It connects as `karobakbak_console`, a role that can read conversations and
+cannot delete them — deletion belongs to the retention worker. The chat role has
+no access to `admin_accounts` at all. `migrate` creates both roles; passwords for
+them come from secret management (§8.1).
+
+| Path | Serves |
+|---|---|
+| `/` | the console. Three static files, no build step, no third-party script. |
+| `/health` | liveness only. Everything else needs a session. |
+| `/api/*` | the console API. `POST` requires an allowed `Origin`. |
+
+**What using it costs.** Opening a case writes an `admin_audit` row before any
+message is selected, with your account, the report, and the reason you typed. A
+read whose audit row cannot be written returns no content at all. That is the
+point: the guarantee is "a read that was not logged did not happen", not "reads
+are usually logged".
+
+**What a ban is.** A salted hash of the address *and* of the browser token, both
+dimensions, for a bounded period — a speed bump, not a wall, since a new network
+and a cleared cookie defeat it. Permanent bans are not expressible
+(`ENFORCEMENT_MAX_BAN_SECONDS` caps at a year): there is no appeals channel, so
+an indefinite sanction against a hash nobody can identify is one nobody could
+ever lift on evidence.
+
+**Sanctions live in PostgreSQL and are cached in Redis.** Redis runs with
+persistence off by design, so ban keys die with a Redis restart; every backend
+replays live sanctions at startup and every `ENFORCEMENT_RELOAD_INTERVAL_MS`.
+If bans stop being enforced, check that the chat instances can reach the
+database — not that Redis has the keys.
 
 ### Metrics
 
