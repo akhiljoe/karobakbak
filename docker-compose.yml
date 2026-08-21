@@ -131,6 +131,20 @@ services:
       # `.env.loadtest`. Production keeps the shipped defaults.
       CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-60}"
       MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-40}"
+      # Session resumption (§28, D42) and the late-block window (D38).
+      #
+      # Both ship with defaults `loadConfig` already applies, and both are here
+      # because a load run is the only place their cost is visible and the only
+      # place anyone will want to change them. A held seat is a session, a match
+      # key and a Redis row that outlive their socket, so the grace window sets
+      # how much state a population of flapping mobile clients leaves standing.
+      #
+      # `RESUME_GRACE_SECONDS=0` restores the pre-§28 behaviour, where a dropped
+      # socket ended the conversation (D7). That is a supported configuration
+      # and the teardown tests run against it — being able to set it from an env
+      # file is what makes the before-and-after run possible.
+      RESUME_GRACE_SECONDS: "${RESUME_GRACE_SECONDS:-20}"
+      BLOCK_LATE_WINDOW_SECONDS: "${BLOCK_LATE_WINDOW_SECONDS:-120}"
       # Moderation policy. Empty by default, which means the deny-list rule
       # never fires and every match is flagged-and-delivered (D20) — the
       # shipped behaviour. `.env.loadtest` fills both in so the load stack

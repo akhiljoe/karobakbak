@@ -58,6 +58,9 @@ async function cli(container: string, args: readonly string[]): Promise<string> 
  * Count keys matching a pattern, and for the queue, find members whose session
  * is gone — all in one server-side script.
  *
+ * Order is load-bearing: the reply is read positionally by the destructuring
+ * below, so a new count goes on the **end** and gets a name there too.
+ *
  * `KEYS` is O(N) and would be wrong on a production instance. It is right here:
  * this is a disposable load-test stack, the alternative is thousands of round
  * trips, and the repository already uses exactly this pattern in
@@ -78,7 +81,9 @@ const RESIDUE_SCRIPT = [
   "local sessions = #redis.call('KEYS', prefix .. ':session:*')",
   "local userMatches = #redis.call('KEYS', prefix .. ':user_match:*')",
   "local blocks = #redis.call('KEYS', prefix .. ':blocks:*')",
-  "return { #members, orphans, matches, sessions, userMatches, blocks }",
+  "local resumes = #redis.call('KEYS', prefix .. ':resume:*')",
+  "local lastPartners = #redis.call('KEYS', prefix .. ':last_partner:*')",
+  "return { #members, orphans, matches, sessions, userMatches, blocks, resumes, lastPartners }",
 ].join(LF);
 
 export async function checkRedisResidue(input: RedisOracleInput): Promise<OracleResult> {
@@ -108,7 +113,16 @@ export async function checkRedisResidue(input: RedisOracleInput): Promise<Oracle
     .map((line) => Number(line.trim()))
     .filter((value) => Number.isFinite(value));
 
-  const [queued = 0, orphans = 0, matches = 0, sessions = 0, userMatches = 0, blocks = 0] = numbers;
+  const [
+    queued = 0,
+    orphans = 0,
+    matches = 0,
+    sessions = 0,
+    userMatches = 0,
+    blocks = 0,
+    resumes = 0,
+    lastPartners = 0,
+  ] = numbers;
 
   const details = [
     `queue members: ${queued}, of which ${orphans} have no session`,
@@ -116,6 +130,12 @@ export async function checkRedisResidue(input: RedisOracleInput): Promise<Oracle
     `session keys: ${sessions}`,
     `user_match keys: ${userMatches}`,
     `block sets: ${blocks} (these are meant to outlive the run — BLOCK_TTL_SECONDS is 30 days)`,
+    // Both are short-lived by construction and both are counted rather than
+    // asserted on: they are *supposed* to be non-zero while their windows run.
+    // What would be worth noticing is a count that does not fall between runs,
+    // which is why the number is printed rather than hidden behind a pass.
+    `resume tokens held: ${resumes} (RESUME_GRACE_SECONDS, one per live session)`,
+    `late-block records: ${lastPartners} (BLOCK_LATE_WINDOW_SECONDS, spent when used)`,
   ];
 
   // Blocks surviving between runs is correct behaviour with a real cost here.

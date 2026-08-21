@@ -55,3 +55,56 @@ my train was cancelled so i walked half the way home
 i have three unfinished projects and i started a fourth today
 the radiator in my room makes a noise like a small animal
 i bought a plant that is supposed to be unkillable and we will see
+
+# Added after a `human` run flagged benign rapid turn-takers as a campaign: the
+# offline spam query calls five identical lines across five conversations a
+# campaign, and a fast talker exhausts a small corpus in minutes. See the note
+# at the top of replies.txt.
+the kettle in this flat takes about four minutes and i have started timing it
+i have been trying to read more but i keep falling asleep after two pages
+my neighbour has started learning the trumpet which is going about as well as you would expect
+i spent the whole afternoon looking for a receipt i had already thrown away
+there is a cat that sits on my windowsill every morning and judges me
+i tried making bread again and it came out like a doorstop
+the bus was twenty minutes late and then two arrived together
+i have a plant that has survived everything i have done to it which feels like a warning
+my sister sent me a very long voice note about a film i have not seen
+i finally cleaned the inside of the fridge and found something unidentifiable
+i keep a list of things to do and then write more lists about the lists
+the weather here changes about four times a day and none of them are warm
+i watched a documentary about deep sea creatures and now i am unsettled
+my keyboard has one key that sticks and it is a very common letter
+i went for a run last week and my legs have not forgiven me yet
+there is a bakery near me that sells out by nine in the morning
+i have been slowly working through a puzzle that is mostly sky
+my flatmate reorganised the kitchen and i can no longer find anything
+i tried to fix a wobbly table and now it is wobbly in a new direction
+the shop near me plays the same six songs on a loop all day
+i have started walking a longer way home just to make the day feel bigger
+my headphones only work if i hold the cable at a very specific angle
+i made a soup that was fine but somehow tasted of nothing at all
+there is scaffolding outside my window and i have befriended nobody on it
+i have three unfinished books on my bedside table and no plan
+the last film i watched had a twist i saw coming in the first ten minutes
+i keep buying notebooks and then being too precious to write in them
+my phone thinks i am in a different city and keeps telling me the wrong weather
+i have been meaning to sort out a cupboard for about eight months
+someone left a piano in the courtyard and it is slowly going out of tune
+i learned a card trick badly and have now shown it to everyone i know
+the coffee at the place round the corner is terrible but the chairs are good
+i had a dream about a house i have never lived in and it felt very familiar
+i tried to grow herbs on the windowsill and produced one very tired basil leaf
+my washing machine makes a noise i have decided not to investigate
+i have started saying yes to things and it is exhausting but interesting
+there is a bench near the river i keep going back to for no clear reason
+i bought a jumper that is slightly too warm for every temperature there is
+i counted the steps to the shop once and now i cannot stop counting them
+my old school friend messaged after six years to ask about a shared laptop charger
+i have been listening to the same album for two weeks and it still holds up
+the light in my kitchen flickers only when i am cooking something delicate
+i took a photograph of a very ordinary door and i still like it
+i have never finished a crossword in my life and i keep starting them
+my upstairs neighbour walks in a rhythm i could set a metronome to
+i started a diary in january and it stops abruptly on the fourth of february
+there is a tree on my street that goes bare a fortnight before all the others
+i cooked something new and it was good and i cannot remember what i did

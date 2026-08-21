@@ -28,12 +28,55 @@
  */
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
+import { profileHash } from '../declared';
 import type { LedgerEvent } from '../ledger';
 import type { OracleResult } from './types';
 
+/** One message the sender was acked for, in send order. */
+interface Sent {
+  hash: string;
+  /** When it was acked. Compared against the partner's socket downtime. */
+  t: number;
+  /**
+   * False when the ack cannot be read as proof of arrival: the socket died
+   * holding it, or the partner's seat was being held when it was sent (§28,
+   * D43). The receiver is allowed not to have these, and only these.
+   *
+   * Set from two sources, because neither is sufficient alone. The sender's own
+   * `unconfirmed` flag knows only what the sender had been *told* — and it is
+   * told by a `partner_reconnecting` frame that takes a round trip to arrive.
+   * A message handed to the socket in that gap is acked `delivered: true`,
+   * reaches nobody, and carries no flag. The second source closes it: the
+   * partner's own ledger says when their socket was down, and anything acked
+   * inside that window could not have been delivered. See `downWindows`.
+   */
+  confirmed: boolean;
+}
+
+/** A stretch of time during which one bot had no socket. */
+interface Down {
+  from: number;
+  to: number;
+}
+
+/**
+ * How far *before* a recorded `closed` a send is still treated as uncertain.
+ *
+ * The close event is when the **bot** noticed, which lags the socket actually
+ * becoming unusable: the run that produced this constant had a message acked
+ * 10 ms before its partner recorded the close, and delivered to nobody.
+ *
+ * 500 ms is roughly ten times the p99 ack latency of a loaded run and well
+ * under any persona's think time, so it covers the lag without swallowing a
+ * message that had a real conversation happening around it. It is a tolerance,
+ * and it is the only one in this oracle: everything outside a partner's
+ * downtime is still held to strict order.
+ */
+const CLOSE_LAG_MS = 500;
+
 interface Side {
-  /** Hashes of messages the server acked as delivered, in send order. */
-  delivered: string[];
+  /** Messages the server acked as delivered, in send order. */
+  delivered: Sent[];
   /** Hashes of messages this side received, in arrival order. */
   received: string[];
   /** Server message ids received, for the duplicate check. */
@@ -69,11 +112,33 @@ export interface LedgerStats {
   connectRefusals: Map<string, number>;
   routes: Map<string, number>;
   harnessErrors: number;
+  /* --- session resumption (section 28, D42) ------------------------------ */
+  /** Handshakes that presented a resume token. */
+  resumesOffered: number;
+  /** Resumes that came back with the conversation attached. */
+  resumesSucceeded: number;
+  /**
+   * Resumes that opened a fresh session instead.
+   *
+   * Not a failure — a stale token is the common case and the designed answer to
+   * it is a new session. Worth watching as a *ratio*: a high one means the
+   * grace window is shorter than the reconnections people actually make, and
+   * every one of those was a conversation that ended when it did not have to.
+   */
+  resumesExpired: number;
+  /** Times this population was told a partner's seat was being held. */
+  partnersHeld: number;
+  /** Times a held partner came back. */
+  partnersReturned: number;
+  /** Messages whose ack could never arrive because the socket died first. */
+  acksLost: number;
 }
 
 export interface LedgerAnalysis {
   stats: LedgerStats;
   oracle: OracleResult;
+  /** Oracle 6 — see `analyseLedger`. Skipped when nobody declared anything. */
+  profiles: OracleResult;
 }
 
 function side(match: Match, bot: string): Side {
@@ -83,6 +148,29 @@ function side(match: Match, bot: string): Side {
     match.sides.set(bot, existing);
   }
   return existing;
+}
+
+/**
+ * What one bot declared, and what its partner was shown, for one match.
+ *
+ * Hashes throughout — see `ledger.ts`. The check is triangular and each leg
+ * fails differently:
+ *
+ *   declared -> `you`      the server kept what this bot sent on `join_queue`
+ *   `you`    -> partner's  the same profile reached the other side's identity
+ *
+ * A break in the first leg is validation or storage losing a field. A break in
+ * the second is the matchmaking read handing one side a stale or crossed
+ * profile — which, in a product where the profile is the only thing one
+ * stranger knows about another, is the worst of the two.
+ */
+interface Declaration {
+  /** Hash of the profile this bot sent on its most recent `join_queue`. */
+  declared: string | undefined;
+  /** Hash of `you.profile` in the `matched` frame. */
+  echoed: string | undefined;
+  /** Hash of `partner.profile` in the `matched` frame. */
+  sawPartner: string | undefined;
 }
 
 export async function analyseLedger(paths: readonly string[]): Promise<LedgerAnalysis> {
@@ -105,10 +193,22 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     connectRefusals: new Map(),
     routes: new Map(),
     harnessErrors: 0,
+    resumesOffered: 0,
+    resumesSucceeded: 0,
+    resumesExpired: 0,
+    partnersHeld: 0,
+    partnersReturned: 0,
+    acksLost: 0,
   };
 
   const strayDeliveries: string[] = [];
   const duplicateDeliveries: string[] = [];
+  /** The profile each bot most recently sent on `join_queue`. */
+  const lastDeclared = new Map<string, string>();
+  /** When each bot had no socket, in order. Closed by the next `connected`. */
+  const downWindows = new Map<string, Down[]>();
+  /** One entry per (bot, match) that reported identities. */
+  const declarations = new Map<string, Declaration>();
 
   for (const path of paths) {
     const reader = createInterface({ input: createReadStream(path, 'utf8'), crlfDelay: Infinity });
@@ -135,9 +235,29 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
       })();
 
       switch (event.type) {
+        case 'connected': {
+          // Closes whichever downtime this connection ended. A bot's first
+          // `connected` has no open window, which is why this is guarded.
+          const windows = downWindows.get(event.bot);
+          const open = windows?.[windows.length - 1];
+          if (open && open.to === Number.POSITIVE_INFINITY) open.to = event.t;
+          break;
+        }
+
+        case 'queued':
+          if (event.hash !== undefined) lastDeclared.set(event.bot, event.hash);
+          break;
+
         case 'matched':
           if (match && event.matchId !== undefined) {
             membership.add(`${event.bot}|${event.matchId}`);
+            if (event.myProfile !== undefined || event.theirProfile !== undefined) {
+              declarations.set(`${event.bot}|${event.matchId}`, {
+                declared: lastDeclared.get(event.bot),
+                echoed: event.myProfile,
+                sawPartner: event.theirProfile,
+              });
+            }
             // Register the side when the pair forms, not on its first message.
             // A conversation where nobody spoke is still one this harness saw
             // both halves of, and counting it as "one-sided" would bury the
@@ -160,7 +280,13 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
             stats.messagesWithheld += 1;
             break;
           }
-          if (match && event.hash) side(match, event.bot).delivered.push(event.hash);
+          if (match && event.hash) {
+            side(match, event.bot).delivered.push({
+              hash: event.hash,
+              t: event.t,
+              confirmed: event.unconfirmed !== true,
+            });
+          }
           break;
         }
 
@@ -182,6 +308,49 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
           if (event.hash) receiver.received.push(event.hash);
           break;
         }
+
+        case 'ack_lost': {
+          stats.acksLost += 1;
+          // Spliced into the sender's sequence at the point it was sent, and
+          // counted, so the comparison below can tell "the receiver has one
+          // more than the sender was acked for" (a delivery bug) from "the
+          // socket died holding the ack" (a Tuesday).
+          if (!match || !event.hash) break;
+          side(match, event.bot).delivered.push({ hash: event.hash, t: event.t, confirmed: false });
+          break;
+        }
+
+        case 'closed': {
+          const windows = downWindows.get(event.bot) ?? [];
+          windows.push({ from: event.t - CLOSE_LAG_MS, to: Number.POSITIVE_INFINITY });
+          downWindows.set(event.bot, windows);
+          break;
+        }
+
+        case 'resume_offered':
+          stats.resumesOffered += 1;
+          break;
+
+        case 'resumed':
+          stats.resumesSucceeded += 1;
+          // The conversation came back with the session, so this bot is a
+          // member of it again — and on a *new* connection, which is exactly
+          // the state a stray-delivery check must not mistake for routing into
+          // a conversation this bot was never in.
+          if (event.matchId !== undefined) membership.add(`${event.bot}|${event.matchId}`);
+          break;
+
+        case 'resume_expired':
+          stats.resumesExpired += 1;
+          break;
+
+        case 'partner_away':
+          stats.partnersHeld += 1;
+          break;
+
+        case 'partner_back':
+          stats.partnersReturned += 1;
+          break;
 
         case 'skipped':
         case 'left_chat':
@@ -224,6 +393,8 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
   let comparedMessages = 0;
   let missingTail = 0;
   let oneSidedMatches = 0;
+  let droppedInGap = 0;
+  let unprovenTail = 0;
 
   for (const [matchId, match] of matches) {
     const parties = [...match.sides.entries()];
@@ -245,20 +416,77 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     ] as const) {
       const sent = sender[1].delivered;
       const got = receiver[1].received;
-      const shared = Math.min(sent.length, got.length);
-      for (let i = 0; i < shared; i += 1) {
-        comparedMessages += 1;
-        if (sent[i] !== got[i]) {
-          mismatches.push(
-            `match ${matchId}: ${receiver[0]} position ${i} does not match what ${sender[0]} was acked for`,
-          );
-          break;
+
+      // A message acked while the receiver had no socket was routed at a
+      // session that could not take it, and nothing is buffered (D43). The
+      // sender's own flag misses the messages sent in the gap between the
+      // socket dying and `partner_reconnecting` arriving; the receiver's own
+      // ledger closes that gap, because it says exactly when it was away.
+      const away = downWindows.get(receiver[0]) ?? [];
+      if (away.length > 0) {
+        for (const entry of sent) {
+          if (!entry.confirmed) continue;
+          if (away.some((window) => entry.t >= window.from && entry.t <= window.to)) {
+            entry.confirmed = false;
+          }
         }
       }
-      if (got.length < sent.length) missingTail += sent.length - got.length;
-      if (got.length > sent.length) {
+
+      // Two pointers rather than index alignment.
+      //
+      // Index alignment assumes the receiver's list is a prefix of the
+      // sender's, and §28 breaks that assumption in the middle rather than at
+      // the end: a message sent while the partner's seat was held is acked and
+      // then dropped, so what the receiver has is the sender's list *with a
+      // hole in it*. Aligned by index, every message after the hole reads as a
+      // mismatch and one absent message becomes a whole conversation's worth of
+      // reported delivery bugs.
+      //
+      // So an unconfirmed send may be skipped, and nothing else may be. A
+      // confirmed message that is out of order, missing from the middle, or not
+      // what the sender was acked for is still a failure with no tolerance.
+      let s = 0;
+      let r = 0;
+      let broke = false;
+      while (s < sent.length && r < got.length) {
+        const expected = sent[s];
+        if (expected === undefined) break;
+        if (expected.hash === got[r]) {
+          comparedMessages += 1;
+          s += 1;
+          r += 1;
+          continue;
+        }
+        if (!expected.confirmed) {
+          // Never arrived, and never could be proved to have arrived.
+          droppedInGap += 1;
+          s += 1;
+          continue;
+        }
         mismatches.push(
-          `match ${matchId}: ${receiver[0]} received ${got.length - sent.length} message(s) ${sender[0]} was never acked for`,
+          `match ${matchId}: ${receiver[0]} position ${r} does not match what ${sender[0]} was acked for`,
+        );
+        broke = true;
+        break;
+      }
+
+      if (broke) continue;
+      // Whatever the sender has left is a tail the receiver never got: they
+      // left first, or the run drained. Counted, not failed.
+      for (let i = s; i < sent.length; i += 1) {
+        const trailing = sent[i];
+        if (trailing === undefined) continue;
+        // A *trailing* unconfirmed send is unknown, not lost: the socket may
+        // have died holding an ack for a message the partner did in fact get.
+        // Only an unconfirmed send the receiver overtook — one with a message
+        // after it that did arrive — is proof of a drop, and those are counted
+        // in the loop above.
+        if (trailing.confirmed) missingTail += 1;
+        else unprovenTail += 1;
+      }
+      if (r < got.length) {
+        mismatches.push(
+          `match ${matchId}: ${receiver[0]} received ${got.length - r} message(s) ${sender[0]} was never acked for`,
         );
       }
     }
@@ -271,6 +499,8 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     `messages sent but not received (partner left first): ${missingTail}`,
     `matches with only one side in the ledger: ${oneSidedMatches} (drain boundary)`,
     `messages withheld by moderation: ${stats.messagesWithheld} acked-undelivered, ${stats.messagesBlocked} refused outright`,
+    `acked and provably never delivered: ${droppedInGap} — sent while the partner's seat was held, and not buffered (D43)`,
+    `acked with no proof either way: ${unprovenTail} (the socket died holding the ack)`,
   ];
   for (const failure of failures.slice(0, 20)) details.push(failure);
   if (failures.length > 20) details.push(`... and ${failures.length - 20} more`);
@@ -287,7 +517,102 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
     details,
   };
 
-  return { stats, oracle };
+  return { stats, oracle, profiles: judgeProfiles(declarations) };
+}
+
+/**
+ * Oracle 6 — profile agreement.
+ *
+ * A declared profile is the only thing one stranger in this product knows about
+ * another, and it travels a long way for something so small: validated at the
+ * edge, moderated, written onto the session hash, read back beside `tryMatch`
+ * on both sides, and built into two different identities. Every one of those
+ * steps can lose a field or hand over the wrong one, and none of them would
+ * produce an error — the conversation works perfectly, and one person is simply
+ * shown somebody else's name.
+ *
+ * Two failures, and they are not the same fault:
+ *
+ *   * **not echoed** — what the server built for this bot does not match what
+ *     this bot declared. Validation dropped a field, or the session hash lost
+ *     one.
+ *   * **crossed** — what one side was shown does not match what the other side
+ *     was given as its own. This is the serious one: it means a profile reached
+ *     the wrong conversation.
+ *
+ * Both are proved with hashes, so the check runs without the ledger ever
+ * holding a name (see the note at the top of `ledger.ts`).
+ */
+function judgeProfiles(declarations: Map<string, Declaration>): OracleResult {
+  const failures: string[] = [];
+  let echoChecks = 0;
+  let crossChecks = 0;
+  let declaredSomething = 0;
+
+  const byMatch = new Map<string, { bot: string; declaration: Declaration }[]>();
+  for (const [key, declaration] of declarations) {
+    const separator = key.indexOf('|');
+    const bot = key.slice(0, separator);
+    const matchId = key.slice(separator + 1);
+    const entries = byMatch.get(matchId) ?? [];
+    entries.push({ bot, declaration });
+    byMatch.set(matchId, entries);
+
+    if (declaration.declared !== undefined && declaration.echoed !== undefined) {
+      echoChecks += 1;
+      if (declaration.declared !== declaration.echoed) {
+        failures.push(
+          `${bot} in ${matchId}: the server did not echo the profile this bot declared`,
+        );
+      }
+    }
+  }
+
+  for (const [matchId, entries] of byMatch) {
+    if (entries.length !== 2) continue;
+    const [first, second] = entries;
+    if (!first || !second) continue;
+    for (const [a, b] of [
+      [first, second],
+      [second, first],
+    ] as const) {
+      if (a.declaration.echoed === undefined || b.declaration.sawPartner === undefined) continue;
+      crossChecks += 1;
+      if (a.declaration.echoed !== b.declaration.sawPartner) {
+        failures.push(
+          `match ${matchId}: ${b.bot} was shown a profile that is not the one ${a.bot} declared`,
+        );
+      }
+    }
+  }
+
+  // The empty profile hashes to a stable value, so "everybody declined" is
+  // distinguishable from "nobody was checked" — and a run where it is the only
+  // value seen is a run where this oracle proved almost nothing.
+  const emptyHash = profileHash(null);
+  for (const { echoed } of declarations.values()) {
+    if (echoed !== undefined && echoed !== emptyHash) declaredSomething += 1;
+  }
+
+  const details = [
+    `declarations echoed back to their owner: ${echoChecks}`,
+    `declarations checked across a match: ${crossChecks}`,
+    `sides that declared something rather than nothing: ${declaredSomething}`,
+  ];
+  for (const failure of failures.slice(0, 20)) details.push(failure);
+  if (failures.length > 20) details.push(`... and ${failures.length - 20} more`);
+
+  return {
+    name: 'profile agreement',
+    status: failures.length > 0 ? 'fail' : crossChecks === 0 ? 'skipped' : 'pass',
+    summary:
+      failures.length > 0
+        ? `${failures.length} profile(s) did not survive the round trip`
+        : crossChecks === 0
+          ? 'no match had both sides declaring in the ledger'
+          : `${crossChecks} declarations agree on both sides of a match`,
+    details,
+  };
 }
 
 /** Percentile from an unsorted sample. Returns 0 for an empty one. */

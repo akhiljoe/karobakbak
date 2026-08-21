@@ -1,12 +1,13 @@
 /**
  * Running the oracles and collecting their verdicts.
  *
- * Stage one implements three of the five in `docs/LOADTEST-SCENARIOS.md` §7:
- * pair reconstruction, metric conservation and the log leak check. The Redis
- * residue and database agreement oracles need clients this package does not
- * yet depend on, and they are listed here as explicitly *not run* rather than
- * quietly omitted — an oracle nobody can see is missing is worse than one that
- * says so.
+ * Six of the seven run. Database agreement is the one that does not, and it is
+ * listed as explicitly *not run* rather than quietly omitted — an oracle nobody
+ * can see is missing is worse than one that says so.
+ *
+ * Profile agreement (oracle 6) is folded into the ledger pass rather than given
+ * its own read of the files: it needs the same events, and a second pass over
+ * a five-thousand-bot ledger to re-derive them would cost minutes for nothing.
  */
 import type { BotSpec } from '../bot';
 import { analyseLedger, type LedgerStats } from './ledger';
@@ -47,7 +48,7 @@ export interface OracleRunResult {
 }
 
 export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
-  const { stats, oracle: pairing } = await analyseLedger(input.ledgerPaths);
+  const { stats, oracle: pairing, profiles } = await analyseLedger(input.ledgerPaths);
   const matchedFrames = stats.matchLatency.length;
 
   const metrics = await checkMetrics({
@@ -100,6 +101,6 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     stats,
     matchedFrames,
     spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
-    oracles: [pairing, metrics, redis, spam.oracle, logs, ...notImplemented],
+    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, ...notImplemented],
   };
 }

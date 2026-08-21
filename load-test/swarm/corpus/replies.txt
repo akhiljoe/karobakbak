@@ -40,3 +40,105 @@ that is a bit much honestly
 never heard it put that way before
 right that makes more sense now
 i would have done exactly the same thing
+
+# ---------------------------------------------------------------------------
+# WHY THIS FILE IS LONG, AND WHY IT HAS TO STAY LONG
+# ---------------------------------------------------------------------------
+# The offline spam query in the report calls a bot a campaign when it sends the
+# same line in five or more *distinct* conversations. A rapid turn-taker sends
+# twenty to fifty messages a conversation, so with a forty-line corpus it will
+# repeat itself into five conversations within a couple of minutes and be
+# accused of running a campaign while doing nothing but chatting.
+#
+# That happened: a `human` run flagged two N6 bots as false positives, and both
+# were the query working correctly on a corpus too small to keep a fast talker
+# looking like a person. Growing the file does not hide the finding — a long
+# enough run will always produce some benign repetition, and real people repeat
+# themselves too — it just stops the harness manufacturing it in minutes.
+#
+# So: adding a persona that talks faster means checking this file is still big
+# enough for it. The false-positive count in the spam oracle is the measurement.
+that is a good point
+i had a similar week to be honest
+oh that is lovely
+you are probably right about that
+i had not considered that at all
+that is one way to look at it
+sounds about right to me
+that must have taken ages
+i would have done the same thing
+that is genuinely funny
+i can picture that
+what a strange coincidence
+that is very kind of you to say
+i am glad it worked out
+that sounds exhausting frankly
+oh i hate when that happens
+that is the dream honestly
+i wish i had your patience
+you have convinced me
+that is fair enough i suppose
+i keep meaning to try that
+sounds like hard work
+that is a relief
+i would not have guessed that
+oh that is a shame
+you are braver than me
+that made me laugh
+i completely understand that
+that is quite something
+i have been there myself
+that is oddly comforting
+sounds lovely to be fair
+i am not sure i agree
+that is a bold choice
+you make it sound easy
+i had the opposite experience
+that is worth thinking about
+oh that is clever
+i should try that sometime
+that is a lot to deal with
+i hear you
+that tracks
+same here more or less
+i can see why
+you are not wrong
+that is unusual
+i am impressed
+that is rough going
+sounds familiar
+i would be furious
+that is quietly brilliant
+i had forgotten about that entirely
+you have a point there
+that is better than nothing
+i am jealous of that
+oh that is fascinating
+that seems sensible
+i can never manage that
+that is very true
+you sound busy
+i would struggle with that
+that is nice to hear
+i am with you on that
+that is one of those things
+you get used to it i suppose
+that is surprisingly deep
+i had a feeling you would say that
+that seems like a lot of effort
+oh good i was wondering
+that is reassuring
+i am taking notes
+that could go either way
+i respect that
+that is a fair trade
+sounds worth it
+i would not last a week
+that is the tricky part
+you have done well there
+i keep hearing that
+that is a strange one
+oh absolutely
+i am on the fence about it
+that is the honest answer
+you are making me reconsider

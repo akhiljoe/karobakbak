@@ -25,19 +25,24 @@
  * and it is recorded either way.
  */
 import { WebSocket, type RawData } from 'ws';
-import type {
-  AnyServerEnvelope,
-  ClientEventType,
-  ConnectedPayload,
-  IncomingMessagePayload,
-  MatchedPayload,
-  MessageAckPayload,
-  ReportCategory,
-  ServerLimits,
-  SessionState,
+import {
+  BASE_PROTOCOL,
+  RESUME_PROTOCOL_PREFIX,
+  type AnyServerEnvelope,
+  type ClientEventType,
+  type ConnectedPayload,
+  type IncomingMessagePayload,
+  type MatchedPayload,
+  type MessageAckPayload,
+  type PartnerReconnectingPayload,
+  type Profile,
+  type ReportCategory,
+  type ServerLimits,
+  type SessionState,
 } from '../../../backend/src/protocol/types';
 import { moderationView } from '../../../backend/src/moderation/normalise';
 import { campaignView } from './campaign';
+import { isEmptyProfile, profileHash } from './declared';
 import { contentHash, type Ledger, type LedgerEvent } from './ledger';
 import { CLIENT_TOKEN_COOKIE, readClientToken } from './identity';
 import type { Rng } from './rng';
@@ -68,6 +73,21 @@ export interface Persona {
   onAck?(bot: Bot, payload: MessageAckPayload): void;
   /** The partner skipped, disconnected, or the match otherwise ended. */
   onPartnerGone?(bot: Bot, reason: 'skipped' | 'disconnected'): void;
+  /**
+   * The partner's socket dropped and the server is holding their seat (§28).
+   *
+   * The conversation has **not** ended. Nothing this bot sends now is delivered
+   * and nothing is buffered (D43), so a persona's correct response is to wait,
+   * exactly as the client's disabled composer makes a person wait.
+   */
+  onPartnerAway?(bot: Bot, payload: PartnerReconnectingPayload): void;
+  /** The partner made it back inside the window; the conversation carries on. */
+  onPartnerBack?(bot: Bot): void;
+  /**
+   * This bot's own reconnect reclaimed the session, and the conversation it was
+   * in came back with it. `payload` is the same `matched` shape as the original.
+   */
+  onResumed?(bot: Bot, payload: MatchedPayload): void;
   /** A protocol error arrived. The bot has already recorded it. */
   onError?(bot: Bot, code: string, retryable: boolean): void;
   /** The socket closed. A persona may ask the bot to reconnect. */
@@ -82,6 +102,15 @@ export interface BotSpec {
   readonly address: string;
   /** Ground-truth label, used by the spam oracles. Empty for ordinary bots. */
   readonly labels: readonly string[];
+  /**
+   * What this bot declares about itself on every `join_queue` (§26).
+   *
+   * On the spec rather than drawn per join, because the server keeps nothing
+   * between sessions: the *client* is the thing that remembers, so a bot that
+   * re-declared something different after every reconnect would be modelling a
+   * browser with amnesia rather than the one that ships.
+   */
+  readonly profile: Profile;
 }
 
 export interface BotDeps {
@@ -132,6 +161,16 @@ class Bucket {
  * commands whose limits the server does not publish need to be guessed; the
  * message and typing rates come from the wire.
  */
+/**
+ * Consecutive refused upgrades before a bot gives up for good.
+ *
+ * With the backoff in `onRefused` this is roughly two minutes of trying, which
+ * covers a container restart and a rolling deploy. Beyond that the stack is not
+ * coming back on its own, and a run that keeps retrying is a run that hides a
+ * dead environment behind a ledger full of noise.
+ */
+const MAX_CONNECT_FAILURES = 10;
+
 const UNPUBLISHED_LIMITS: Record<string, { perSecond: number; burst: number }> = {
   join_queue: { perSecond: 0.2, burst: 5 },
   leave_queue: { perSecond: 0.333, burst: 6 },
@@ -157,6 +196,30 @@ export class Bot {
   sessionId: string | null = null;
   limits: ServerLimits | null = null;
 
+  /**
+   * The last match this bot was in, kept after it ends.
+   *
+   * A block can now arrive after the conversation is over and still be recorded
+   * (D38, `chat:last_partner`), so the harness needs a name for the
+   * conversation a late block refers to — `matchId` is already null by then.
+   */
+  lastMatchId: string | null = null;
+
+  /**
+   * The partner's socket has dropped and the server is holding their seat.
+   *
+   * Not the same as "gone". While this is true the conversation is intact but
+   * nothing sent reaches anybody and nothing is buffered (D43), so `speak`
+   * refuses to send and the persona waits.
+   */
+  partnerAway = false;
+
+  /** What this bot tells strangers about itself. Re-sent on every join. */
+  declared: Profile;
+
+  /** How long the server says a dropped socket keeps its seat. 0 means off. */
+  resumeGraceSeconds = 0;
+
   /** Messages this bot has sent inside the current match. */
   turnsSent = 0;
   /** Messages the partner has sent inside the current match. */
@@ -166,6 +229,30 @@ export class Bot {
 
   private socket: WebSocket | null = null;
   private clientToken: string | null = null;
+  /**
+   * The single-use credential for reclaiming this session (§28).
+   *
+   * A bearer credential, held in memory only and replaced on every redemption,
+   * which mirrors where the browser keeps it: `sessionStorage`, so it dies with
+   * the tab. A persona modelling a *new* tab calls `forgetResumeToken`, and
+   * that difference is the whole of what separates L1 from L3.
+   */
+  private resumeToken: string | null = null;
+  /**
+   * A token value captured before a redemption, so it can be presented again
+   * afterwards.
+   *
+   * The credential is rotated on every successful resume, and "a captured token
+   * works once" is a claim with no other way to test it: the bot has to keep the
+   * old value and offer it after the new one has replaced it.
+   */
+  private stashedResumeToken: string | null = null;
+  /** Whether the next `connect()` should present a token, and which one. */
+  private resumeNext: false | 'current' | 'stashed' = false;
+  /** Set for one connection when a token was actually presented. */
+  private resumeAttempted = false;
+  /** Consecutive refused upgrades. Reset by a successful `connected`. */
+  private connectFailures = 0;
   private readonly deps: BotDeps;
   private readonly buckets = new Map<string, Bucket>();
   private readonly timers = new Set<NodeJS.Timeout>();
@@ -181,7 +268,10 @@ export class Bot {
    *
    * Trimmed by age instead, so a long-lived bot cannot grow this without bound.
    */
-  private readonly pending = new Map<string, { at: number; hash: string }>();
+  private readonly pending = new Map<
+    string,
+    { at: number; hash: string; matchId: string | null; away: boolean }
+  >();
   private readonly memo = new Map<string, number>();
   /** Lifetime markers, unlike `memo` which is cleared at every match boundary. */
   private readonly flags = new Set<string>();
@@ -192,6 +282,28 @@ export class Bot {
   private finished = false;
   /** Set by `stopHard` so the close handler knows a reset was deliberate. */
   private hardStop = false;
+  /**
+   * The pending "come back" from `reconnect`, held **outside** `timers`.
+   *
+   * ---------------------------------------------------------------------------
+   * THE BUG THIS FIELD EXISTS TO FIX
+   * ---------------------------------------------------------------------------
+   * `reconnect` tears the socket down and schedules the new connection. The
+   * teardown makes `ws` emit `close` on a later tick, and the close handler
+   * calls `clearTimers()` — which used to cancel the reconnect that had just
+   * been scheduled, because it lived in the same set as every other timer.
+   *
+   * The effect was silent and total: **no bot in this harness had ever
+   * reconnected.** Every run's `connect_attempt` count equalled its bot count
+   * exactly, which reads as "nothing went wrong" rather than as "five personas
+   * are dead". L1, L2, L9 and L10 dropped their sockets and simply stopped.
+   *
+   * It mattered less when a dropped socket ended the conversation: the partner
+   * was told, re-queued, and the population kept moving. Under §28 the seat is
+   * *held* for somebody who is never coming back, so the same bug now stalls
+   * the whole run — which is how it was finally noticed.
+   */
+  private reconnectTimer: NodeJS.Timeout | null = null;
   /** Set by `goSilent`: every outbound frame is dropped from here on. */
   private silent = false;
   /**
@@ -212,6 +324,7 @@ export class Bot {
     this.rng = deps.rng;
     this.corpus = deps.corpus;
     this.persona = deps.persona;
+    this.declared = spec.profile;
     for (const [command, limit] of Object.entries(UNPUBLISHED_LIMITS)) {
       this.buckets.set(command, new Bucket(limit.perSecond, limit.burst));
     }
@@ -238,8 +351,29 @@ export class Bot {
       headers['Cookie'] = `${CLIENT_TOKEN_COOKIE}=${this.clientToken}`;
     }
 
-    const socket = new WebSocket(this.deps.url, { headers, handshakeTimeout: 20_000 });
+    // The base protocol is offered on **every** connection, not only resuming
+    // ones, and it is not optional. `ws` refuses a handshake where the client
+    // offered subprotocols and the server selected none, and the server only
+    // ever selects `kbb.v1` — it deliberately never echoes the resume entry,
+    // because doing so would repeat a bearer token in the response headers.
+    // Offering the resume entry alone therefore fails the upgrade outright.
+    const offered =
+      this.resumeNext === 'stashed'
+        ? this.stashedResumeToken
+        : this.resumeNext === 'current'
+          ? this.resumeToken
+          : null;
+    const protocols =
+      offered === null
+        ? [BASE_PROTOCOL]
+        : [`${RESUME_PROTOCOL_PREFIX}${offered}`, BASE_PROTOCOL];
+    const presentingResume = offered !== null;
+    this.resumeNext = false;
+
+    const socket = new WebSocket(this.deps.url, protocols, { headers, handshakeTimeout: 20_000 });
     this.socket = socket;
+    this.resumeAttempted = presentingResume;
+    if (presentingResume) this.record({ type: 'resume_offered' });
 
     socket.on('upgrade', (response) => {
       const token = readClientToken(response.headers['set-cookie']);
@@ -247,10 +381,10 @@ export class Bot {
     });
 
     socket.on('unexpected-response', (_request, response) => {
-      this.record({ type: 'connect_refused', code: response.statusCode ?? 0 });
+      const status = response.statusCode ?? 0;
       response.resume();
       this.socket = null;
-      this.finish();
+      this.onRefused(status);
     });
 
     socket.on('message', (raw) => this.onFrame(raw));
@@ -267,8 +401,11 @@ export class Bot {
         clearInterval(this.heartbeat);
         this.heartbeat = null;
       }
+      this.abandonPendingAcks();
       this.state = 'IDLE';
+      if (this.matchId !== null) this.lastMatchId = this.matchId;
       this.matchId = null;
+      this.partnerAway = false;
       this.record({ type: 'closed', code, reason: this.hardStop ? 'harness_stop' : 'server' });
       this.hardStop = false;
       if (this.stopped) {
@@ -276,8 +413,10 @@ export class Bot {
         return;
       }
       this.persona.onClosed?.(this, code);
-      // A persona that did not ask to reconnect is done.
-      if (!this.socket) this.finish();
+      // A persona that did not ask to reconnect is done. A reconnect already
+      // scheduled counts: it lives outside `timers` precisely so this handler
+      // cannot cancel it, so it must not be read as "nothing is coming" either.
+      if (!this.socket && this.reconnectTimer === null) this.finish();
     });
   }
 
@@ -285,6 +424,7 @@ export class Bot {
   stop(): void {
     this.stopped = true;
     this.clearTimers();
+    this.cancelReconnect();
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.close(1000);
     } else {
@@ -301,6 +441,7 @@ export class Bot {
     this.stopped = true;
     this.hardStop = true;
     this.clearTimers();
+    this.cancelReconnect();
     if (this.socket) {
       this.socket.terminate();
     } else {
@@ -315,8 +456,23 @@ export class Bot {
    * *notice*, through the heartbeat and the TTL, rather than being told. That
    * is a different code path from a clean close and it is the one that decides
    * how long a partner waits, so both are available and personas choose.
+   *
+   * `resume` decides whether the new socket presents the token this bot holds
+   * (§28). It defaults to **false**, which is not an oversight: a reconnect
+   * that resumes and a reconnect that starts fresh are two different scenarios,
+   * the fresh one is what every L persona was written and verified against, and
+   * silently converting them all would delete that coverage while looking like
+   * an upgrade. Personas that model a page refresh ask for `resume` explicitly.
+   *
+   * `'stashed'` presents the value captured by `stashResumeToken` instead of
+   * the current one — a token that has already been redeemed, which the server
+   * must refuse into a fresh session.
    */
-  reconnect(afterMs: number, mode: 'hard' | 'clean' = 'hard'): void {
+  reconnect(
+    afterMs: number,
+    mode: 'hard' | 'clean' = 'hard',
+    options: { resume?: boolean | 'stashed' } = {},
+  ): void {
     if (this.stopped) return;
     const socket = this.socket;
     this.socket = null;
@@ -325,19 +481,30 @@ export class Bot {
       clearInterval(this.heartbeat);
       this.heartbeat = null;
     }
+    this.resumeNext =
+      options.resume === 'stashed'
+        ? this.stashedResumeToken !== null
+          ? 'stashed'
+          : false
+        : options.resume === true && this.resumeToken !== null
+          ? 'current'
+          : false;
+    this.abandonPendingAcks();
     this.state = 'IDLE';
+    if (this.matchId !== null) this.lastMatchId = this.matchId;
     this.matchId = null;
+    this.partnerAway = false;
     if (socket) {
       if (mode === 'clean' && socket.readyState === WebSocket.OPEN) socket.close(1000);
       else socket.terminate();
     }
-    // Timers were cleared above, so this one is registered afterwards on
-    // purpose: it is the only thing that must survive the teardown.
-    const timer = setTimeout(() => {
-      this.timers.delete(timer);
+    // Deliberately not in `timers`: the close this teardown is about to produce
+    // runs `clearTimers()`, and this is the one timer that must survive it.
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (!this.stopped) this.connect();
     }, afterMs);
-    this.timers.add(timer);
   }
 
   /**
@@ -362,6 +529,132 @@ export class Bot {
    */
   forgetClientToken(): void {
     this.clientToken = null;
+  }
+
+  /**
+   * A refused upgrade: decide whether this bot comes back.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY A REFUSAL USED TO BE FATAL, AND WHY THAT WAS WRONG
+   * ---------------------------------------------------------------------------
+   * This used to call `finish()` unconditionally: one refusal and the bot was
+   * gone for the rest of the run. It looked harmless because refusals were
+   * rare — until a backend restart mid-run, where nginx answers **502** for as
+   * long as it has no upstream. Every bot reconnecting into that window died,
+   * and 244 of 400 never came back. The run kept reporting "400 connected",
+   * because the progress count read a session id that outlived its socket.
+   *
+   * Same family as the reconnect-timer bug: a transient condition silently and
+   * permanently shrinks the population, and a smaller population passes every
+   * oracle. It also makes the whole C group unrunnable — pausing or restarting
+   * a backend is the *point* of those scenarios, and the harness would lose most
+   * of its bots each time.
+   *
+   * So a refusal that a real client would retry is retried, with backoff, and a
+   * refusal that means "you are not welcome" is not:
+   *
+   *   403  banned, or an origin that is not allowed. Terminal, and correct: a
+   *        banned client that kept hammering would be the bug.
+   *   429  rate limited or too many connections. This is the *expected* answer
+   *        to L7's thundering herd, and a real client backs off and returns.
+   *   502  no upstream — the edge is up and the backend is not.
+   *   503  draining, or a session could not be opened.
+   *
+   * The attempt cap exists so a stack that is genuinely down ends the run
+   * rather than filling the ledger with retries for ten minutes.
+   */
+  private onRefused(status: number): void {
+    const retryable = status === 429 || status === 502 || status === 503 || status === 0;
+    this.connectFailures += 1;
+    if (!retryable || this.connectFailures > MAX_CONNECT_FAILURES || this.stopped) {
+      this.record({
+        type: 'connect_refused',
+        code: status,
+        reason: retryable ? 'gave_up' : 'terminal',
+      });
+      this.finish();
+      return;
+    }
+    // Exponential with jitter, capped. The jitter matters more than the curve:
+    // four hundred bots refused by the same restart would otherwise return in
+    // one synchronised wave and refuse each other on the connection limiter.
+    const backoff = Math.min(15_000, 400 * 2 ** (this.connectFailures - 1));
+    const delay = backoff + this.rng.int(0, Math.floor(backoff / 2));
+    this.record({ type: 'connect_refused', code: status, reason: 'retrying', ms: delay });
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.stopped) this.connect();
+    }, delay);
+  }
+
+  /** True while this bot has an open socket. Not "has ever had a session". */
+  isConnected(): boolean {
+    return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Throw away the resume credential — a closed tab rather than a dropped
+   * socket. The seat the server is holding is then never claimed, and the
+   * conversation ends when the grace window does.
+   */
+  forgetResumeToken(): void {
+    this.resumeToken = null;
+    this.stashedResumeToken = null;
+    this.resumeNext = false;
+  }
+
+  /** Whether this bot could resume if it reconnected right now. */
+  canResume(): boolean {
+    return this.resumeToken !== null && this.resumeGraceSeconds > 0;
+  }
+
+  /**
+   * Keep the current resume token so it can be presented again after it has
+   * been redeemed and rotated away. See `stashedResumeToken`.
+   */
+  stashResumeToken(): void {
+    this.stashedResumeToken = this.resumeToken;
+  }
+
+  /** Whether a captured token is available to replay. */
+  hasStashedToken(): boolean {
+    return this.stashedResumeToken !== null;
+  }
+
+  /**
+   * Give up on acks for messages that were in flight when the socket died.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY THIS IS RECORDED RATHER THAN QUIETLY DROPPED
+   * ---------------------------------------------------------------------------
+   * A message can be accepted, delivered to the partner, and acked into a
+   * socket that is already gone. The partner records `received`; this bot never
+   * records `ack`. The pair oracle then sees a receiver holding a message the
+   * sender was never acked for — which is its definition of a delivery bug, and
+   * it is entirely an artefact of the socket dying at the wrong moment.
+   *
+   * It has always been possible; §28 makes it matter, because the conversation
+   * now *survives* the drop and the mismatch lands inside a live match instead
+   * of one that was ending anyway.
+   *
+   * So the correlation is written out as `ack_lost`, in send order, carrying
+   * the hash. The oracle treats those as "may have been delivered": present for
+   * ordering, tolerated if absent. That costs a little strictness in exactly one
+   * window — a handful of messages per dropped socket — and the alternative is
+   * a red run every time a phone changes network.
+   */
+  private abandonPendingAcks(): void {
+    if (this.pending.size === 0) return;
+    for (const [cid, entry] of this.pending) {
+      this.record({
+        type: 'ack_lost',
+        matchId: entry.matchId ?? undefined,
+        cid,
+        hash: entry.hash,
+      });
+    }
+    this.pending.clear();
   }
 
   private finish(): void {
@@ -396,9 +689,21 @@ export class Bot {
     this.timers.delete(timer);
   }
 
+  /**
+   * Cancel every timer this bot owns **except** a pending reconnect.
+   *
+   * The exception is the whole point — see `reconnectTimer`. Anything that
+   * genuinely means "this bot is finished" calls `cancelReconnect` as well.
+   */
   private clearTimers(): void {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer === null) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   /* ---------------------------------------------------------------------- */
@@ -450,12 +755,30 @@ export class Bot {
     return this.buckets.get(command)?.waitMs() ?? 0;
   }
 
-  joinQueue(): void {
+  /**
+   * Enter matchmaking, carrying whatever this bot declares about itself.
+   *
+   * The profile rides on **every** join because the server keeps nothing
+   * between sessions and there is no partial update: a join without a field
+   * clears it. `override` exists for the personas that deliberately declare
+   * something the server must refuse; it does not change what the bot declares
+   * from then on, so one probe cannot leave a bot permanently unable to queue.
+   */
+  joinQueue(override?: Profile): void {
+    // A resumed connection lands in `onConnected` already in a conversation,
+    // and almost every persona joins the queue from there. Refusing here rather
+    // than in each of them keeps a resume from spending a join token and asking
+    // the server to queue a session it has already matched.
+    if (this.state === 'MATCHED') return;
     if (!this.spend('join_queue')) return;
+    const profile = override ?? this.declared;
     this.queuedAt = Date.now();
     this.state = 'SEARCHING';
-    this.send('join_queue', {});
-    this.record({ type: 'queued' });
+    // An empty declaration is sent as an omitted field rather than four nulls.
+    // Both normalise to the same thing server-side, and omitting it is what the
+    // browser does for a user who declared nothing.
+    this.send('join_queue', isEmptyProfile(profile) ? {} : { profile });
+    this.record({ type: 'queued', hash: profileHash(profile) });
   }
 
   leaveQueue(): void {
@@ -492,13 +815,29 @@ export class Bot {
     this.record({ type: 'left_chat', matchId: previous ?? undefined });
   }
 
+  /**
+   * Block the current partner — or the one who just left.
+   *
+   * A block after the conversation ended is now recorded against the departed
+   * partner for `BLOCK_LATE_WINDOW_SECONDS` (D38), so `lastMatchId` is used
+   * when there is no live match. That is not a fallback for tidiness: the
+   * confirmation for a late block looks identical to a live one (a
+   * `queue_status` in IDLE), and correlating it to nothing would leave every
+   * late block counted as an unconfirmed intent and quietly excluded from the
+   * durability check that exists to prove blocks work.
+   */
   block(options: { force?: boolean } = {}): void {
     if (!options.force && !this.spend('block')) return;
-    const previous = this.matchId;
+    const previous = this.matchId ?? this.lastMatchId;
+    const late = this.matchId === null;
     this.endMatchLocally();
     this.state = 'IDLE';
     this.send('block', {});
-    this.record({ type: 'blocked', matchId: previous ?? undefined });
+    this.record({
+      type: 'blocked',
+      matchId: previous ?? undefined,
+      ...(late ? { reason: 'late' } : {}),
+    });
     if (previous) this.pendingBlock = { matchId: previous, at: Date.now() };
   }
 
@@ -552,7 +891,9 @@ export class Bot {
     // the finding, and it cannot be measured with only one of them.
     const nhash = contentHash(moderationView(trimmed));
     const chash = contentHash(campaignView(trimmed));
-    this.pending.set(cid, { at: Date.now(), hash });
+    // Whether the partner's seat was being held at the moment this was handed
+    // to the socket. It decides how the ack may be read — see `onAck`.
+    this.pending.set(cid, { at: Date.now(), hash, matchId: this.matchId, away: this.partnerAway });
     this.record({
       type: 'sent',
       matchId: this.matchId ?? undefined,
@@ -626,6 +967,24 @@ export class Bot {
         this.onPartnerGone('disconnected');
         break;
 
+      case 'partner_reconnecting': {
+        // The conversation is intact and the seat is held (§28). Nothing sent
+        // now is delivered and nothing is buffered (D43), so the bot stops
+        // talking rather than shouting into the gap — which is exactly what
+        // the client's disabled composer makes a person do.
+        this.partnerAway = true;
+        this.record({ type: 'partner_away', matchId: frame.payload.matchId });
+        this.persona.onPartnerAway?.(this, frame.payload);
+        break;
+      }
+
+      case 'partner_returned': {
+        this.partnerAway = false;
+        this.record({ type: 'partner_back', matchId: frame.payload.matchId });
+        this.persona.onPartnerBack?.(this);
+        break;
+      }
+
       case 'error': {
         const { code, retryable } = frame.payload;
         this.record({ type: 'protocol_error', code, matchId: this.matchId ?? undefined });
@@ -648,6 +1007,14 @@ export class Bot {
           // and the durability check must not count it.
           this.record({ type: 'block_refused', matchId: this.pendingBlock.matchId, code });
           this.pendingBlock = null;
+        }
+        if (code === 'AGE_BELOW_MINIMUM' || code === 'VALIDATION_FAILED') {
+          // A refused join leaves this bot believing it is SEARCHING while the
+          // server never queued it — a bot that sits out the rest of the run
+          // looking perfectly healthy. Both refusals a declared profile can
+          // produce arrive this way (D35, and the age floor), so the optimistic
+          // state is rolled back and the persona is told.
+          if (this.state === 'SEARCHING') this.state = 'IDLE';
         }
         if (code === 'NOT_MATCHED' || code === 'SESSION_GONE' || code === 'ALREADY_MATCHED') {
           // The server's view and this bot's view have diverged. The server is
@@ -701,6 +1068,12 @@ export class Bot {
       'typing',
       new Bucket(payload.limits.typingPerSecond, Math.max(2, Math.ceil(payload.limits.typingPerSecond * 2))),
     );
+    // Held in memory only, replaced on every redemption. Empty when the server
+    // has resumption switched off (`RESUME_GRACE_SECONDS=0`), which restores
+    // the pre-§28 behaviour and is a supported configuration, not a dead path.
+    this.resumeToken = payload.resumeToken === '' ? null : payload.resumeToken;
+    this.resumeGraceSeconds = payload.resumeGraceSeconds;
+    this.connectFailures = 0;
     this.record({ type: 'connected', sessionId: payload.sessionId });
 
     // A session TTL is refreshed by traffic; a quiet bot must ping or it is
@@ -708,12 +1081,38 @@ export class Bot {
     this.heartbeat = setInterval(() => this.ping(), 25_000);
     this.heartbeat.unref();
 
+    // The conversation came back with the session. `connected.resumed` carries
+    // the same payload the original `matched` did, so the bot restores from it
+    // and the persona picks the conversation up rather than being told about a
+    // new one — the whole point of §28 is that this is the *same* conversation.
+    const resumed = payload.resumed;
+    if (resumed !== undefined) {
+      this.state = 'MATCHED';
+      this.matchId = resumed.matchId;
+      this.lastMatchId = resumed.matchId;
+      this.partnerAway = false;
+      // Not reset: `matchedAt` is when the conversation started, and a persona
+      // deciding "have I been here long enough to leave" must not have its
+      // clock rewound by a network blip. `turnsSent`/`turnsReceived` survive
+      // for the same reason — this is one conversation, not two.
+      this.record({ type: 'resumed', matchId: resumed.matchId });
+      this.persona.onResumed?.(this, resumed);
+    } else if (this.resumeAttempted) {
+      // A token was presented and the window had closed, or the session was
+      // still attached. Either way this is a *fresh* session, which is the
+      // designed fallback and never an error.
+      this.record({ type: 'resume_expired', sessionId: payload.sessionId });
+    }
+    this.resumeAttempted = false;
+
     this.persona.onConnected?.(this);
   }
 
   private onMatched(payload: MatchedPayload): void {
     this.state = 'MATCHED';
     this.matchId = payload.matchId;
+    this.lastMatchId = payload.matchId;
+    this.partnerAway = false;
     this.matchedAt = Date.now();
     this.turnsSent = 0;
     this.turnsReceived = 0;
@@ -723,6 +1122,12 @@ export class Bot {
       type: 'matched',
       matchId: payload.matchId,
       ms: this.queuedAt > 0 ? Date.now() - this.queuedAt : undefined,
+      // Both sides of the declaration, hashed. The partner's is what this bot
+      // was shown; `you` is what the server made of what this bot declared.
+      // The two together let an oracle prove a profile survived the round trip
+      // without the ledger ever holding a name.
+      theirProfile: profileHash(payload.partner.profile),
+      myProfile: profileHash(payload.you.profile),
     });
     this.persona.onMatched?.(this, payload);
   }
@@ -755,6 +1160,13 @@ export class Bot {
       delivered: payload.delivered,
       route: payload.route,
       ms: sent ? Date.now() - sent.at : undefined,
+      // An ack for a message sent while the partner's seat was held says
+      // `delivered: true` and means "accepted and routed" — routed to a session
+      // with no socket. Nothing is buffered (D43), so the partner will never
+      // see it, and the sender is never told. Marked here so the pair oracle
+      // treats it as a hole rather than a reorder; the product question it
+      // raises is recorded in `docs/SWARM-HANDOFF.md`.
+      ...(sent?.away === true ? { unconfirmed: true } : {}),
     });
     this.persona.onAck?.(this, payload);
   }
@@ -768,7 +1180,12 @@ export class Bot {
   }
 
   private endMatchLocally(): void {
+    // `lastMatchId` survives on purpose: a block can arrive after the
+    // conversation ended and must still name the conversation it refers to
+    // (D38).
+    if (this.matchId !== null) this.lastMatchId = this.matchId;
     this.matchId = null;
+    this.partnerAway = false;
     this.memo.clear();
     this.clearTimers();
   }

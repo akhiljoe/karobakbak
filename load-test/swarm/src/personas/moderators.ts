@@ -395,3 +395,62 @@ export const repeatedReporter: Persona = {
     requeue(bot, 500, 2_500);
   },
 };
+
+/**
+ * M10 — blocks the partner who has already left (D38).
+ *
+ * The case that used to record nothing at all. Someone says something vile and
+ * skips; the person on the other end reaches for Block and the server answers
+ * `NOT_MATCHED`, because the match is gone. The user has done what the product
+ * told them to do and the system has kept no trace of it.
+ *
+ * `chat:last_partner:{sid}` now holds the departed partner's hashes for
+ * `BLOCK_LATE_WINDOW_SECONDS`, so the block lands. What this persona checks
+ * from outside is the shape of that landing:
+ *
+ *   * it is **confirmed**, not refused — `queue_status` in IDLE, same as a live
+ *     block, so the ledger's durability check counts it;
+ *   * it ends nothing and notifies nobody. There is no partner to tell, and a
+ *     `partner_skipped` for a match that ended minutes ago would reach whoever
+ *     holds that session id now;
+ *   * the record is **spent**. A second block inside the same window must not
+ *     land again — otherwise one departure would let a bot burn its whole
+ *     hourly budget on the same person.
+ *
+ * The second attempt is what makes the last point observable, and it is why
+ * this persona blocks twice on purpose.
+ */
+export const lateBlocker: Persona = {
+  scenario: 'M10',
+  label: 'late-blocker',
+  labels: ['benign', 'blocks'],
+
+  onConnected(bot) {
+    bot.joinQueue();
+  },
+
+  onMatched(bot) {
+    greet(bot);
+  },
+
+  onPartnerMessage(bot, payload) {
+    reply(bot, [...payload.text].length, 'replies.txt');
+  },
+
+  onPartnerGone(bot) {
+    // The partner is already gone — that is the whole scenario. A short pause
+    // first, because this is a person reacting to a conversation ending, not a
+    // client racing the teardown; M6 owns the race.
+    bot.after(bot.rng.int(1_200, 4_000), () => {
+      if (bot.state === 'MATCHED') return;
+      bot.block();
+      // Again, into the window that has now been spent. The expected answer is
+      // a refusal, and a refusal here is the correct behaviour rather than a
+      // fault — the ledger records which one arrived.
+      bot.after(bot.rng.int(800, 2_000), () => bot.block({ force: true }));
+      // Blocking does not advance to the next stranger (D39), so the re-queue
+      // is deliberate and unhurried, exactly as it is for M2.
+      requeue(bot, 4_000, 15_000);
+    });
+  },
+};

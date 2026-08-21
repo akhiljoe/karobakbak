@@ -5,9 +5,29 @@
  * does — state that outlives the socket it belonged to. Every one of them ends
  * in a way the server did not initiate, which is the only way to find out
  * whether the server's cleanup depends on being told.
+ *
+ * ---------------------------------------------------------------------------
+ * WHICH OF THESE RESUME, AND WHY IT IS NOT ALL OF THEM
+ * ---------------------------------------------------------------------------
+ * A dropped socket no longer ends a conversation (D42, §28), so a reconnect can
+ * now either reclaim the session or start a new one. The difference is not a
+ * detail of the harness — it is *which scenario this is* — and it follows the
+ * one thing that decides it in a browser: the resume token lives in
+ * `sessionStorage`, so it survives a refresh and dies with the tab.
+ *
+ *   L9  flaps on a mobile network. Same tab throughout, so it resumes. This is
+ *       the case §28 exists for, and the L personas that came before it were
+ *       all written when there was nothing to resume.
+ *   L1  closes the tab. The token goes with it, so it forgets deliberately.
+ *   L2  force-quits. Same.
+ *   L10 clears the browser. Forgets everything, which is its whole scenario.
+ *   L4  goes silent until the session expires — nothing left to reclaim.
+ *
+ * `L3`, `L13`, `L14` and `L15` in `resume.ts` are the ones written *for* the
+ * resume path.
  */
 import type { Persona } from '../bot';
-import { greet, reply, requeue } from './support';
+import { greet, reply, requeue, resumeTalking } from './support';
 
 /**
  * L1 — closes the tab mid-conversation.
@@ -26,9 +46,12 @@ export const tabCloser: Persona = {
 
   onMatched(bot) {
     greet(bot);
-    bot.after(bot.rng.int(8_000, 30_000), () =>
-      bot.reconnect(bot.rng.int(2_000, 15_000), 'clean'),
-    );
+    bot.after(bot.rng.int(8_000, 30_000), () => {
+      // The tab is gone, and so is `sessionStorage`. What comes back is a new
+      // person to the server, which is what makes this different from L3.
+      bot.forgetResumeToken();
+      bot.reconnect(bot.rng.int(2_000, 15_000), 'clean');
+    });
   },
 
   onPartnerMessage(bot, payload) {
@@ -58,7 +81,9 @@ export const rageQuitter: Persona = {
   onMatched(bot) {
     greet(bot);
     bot.after(bot.rng.int(5_000, 25_000), () => {
-      // No close frame, no FIN handshake the application ever sees.
+      // No close frame, no FIN handshake the application ever sees — and the
+      // application is gone too, so there is no token to come back with.
+      bot.forgetResumeToken();
       bot.reconnect(bot.rng.int(5_000, 20_000));
     });
   },
@@ -150,15 +175,34 @@ export const networkFlapper: Persona = {
 
   onConnected(bot) {
     bot.joinQueue();
-    bot.after(bot.rng.int(3_000, 12_000), () => bot.reconnect(bot.rng.int(200, 2_000)));
+    // Same tab, same page, a network that keeps going away: the token is still
+    // there and the client presents it. Whether there is anything to reclaim
+    // depends on where in its cycle this bot happens to be, and that mixture is
+    // the point — a flap while queued must not resurrect a conversation, and a
+    // flap while matched must not end one.
+    bot.after(bot.rng.int(3_000, 12_000), () =>
+      bot.reconnect(bot.rng.int(200, 2_000), 'hard', { resume: true }),
+    );
   },
 
   onMatched(bot) {
     greet(bot);
   },
 
+  onResumed(bot) {
+    resumeTalking(bot);
+  },
+
   onPartnerMessage(bot, payload) {
     reply(bot, [...payload.text].length, 'replies.txt');
+  },
+
+  onPartnerAway() {
+    // Waits. Nothing sent now is delivered and nothing is buffered (D43).
+  },
+
+  onPartnerBack(bot) {
+    resumeTalking(bot);
   },
 
   onPartnerGone(bot) {
@@ -185,6 +229,10 @@ export const cookieLoser: Persona = {
     greet(bot);
     bot.after(bot.rng.int(10_000, 30_000), () => {
       bot.forgetClientToken();
+      // A cleared browser loses `sessionStorage` too. Keeping the resume token
+      // here would make this bot half a new person, which is not a state any
+      // real client can be in.
+      bot.forgetResumeToken();
       bot.reconnect(bot.rng.int(500, 3_000));
     });
   },

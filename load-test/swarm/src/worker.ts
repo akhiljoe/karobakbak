@@ -115,7 +115,11 @@ async function start(command: WorkerStart): Promise<void> {
   progressTimer = setInterval(() => {
     send({
       type: 'progress',
-      connected: bots.filter((bot) => bot.sessionId !== null).length,
+      // Live sockets, not "has ever had a session". `sessionId` outlives the
+      // socket it was issued for, so counting it reported 400 connected through
+      // a backend restart that had killed 244 of them — the number that would
+      // have made the loss obvious was the one being printed wrong.
+      connected: bots.filter((bot) => bot.isConnected()).length,
       matched: bots.filter((bot) => bot.state === 'MATCHED').length,
       finished,
       lagP99: lag.percentile(99) / 1e6,

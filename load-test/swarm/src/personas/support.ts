@@ -48,15 +48,36 @@ export function line(bot: Bot, file: CorpusFile): string {
  * this bot is "typing" must not produce a send into a match that has ended.
  */
 export function speak(bot: Bot, text: string, extraDelayMs = 0): void {
+  // Nothing sent while the partner's seat is being held reaches them, and
+  // nothing is buffered (D43) — the shipped client disables the composer, and a
+  // bot that talked through the gap would produce a run full of messages the
+  // partner could never have received and blame delivery for it.
+  if (bot.partnerAway) return;
   const delay = extraDelayMs + typeTimeMs(bot, text.length);
   // Long messages get an indicator; a three-character "ok" does not, because
   // nobody sees an indicator that lasts 400 ms and it wastes a token.
   if (delay > 900) bot.typing(true);
   bot.after(delay, () => {
     if (bot.state !== 'MATCHED') return;
+    // Checked twice: the partner can drop between deciding to answer and
+    // finishing the typing pause, which for a long message is several seconds.
+    if (bot.partnerAway) return;
     if (delay > 900) bot.typing(false);
     bot.say(text);
   });
+}
+
+/**
+ * Pick the conversation back up after a gap — either side's.
+ *
+ * A person who watched "reconnecting…" for ten seconds says something when the
+ * other one comes back, and a bot that silently waits for the partner to speak
+ * first produces a pair of conversations that both stall. Short and drawn from
+ * small talk, because this is a lull rather than an opening.
+ */
+export function resumeTalking(bot: Bot): void {
+  if (bot.state !== 'MATCHED' || bot.partnerAway) return;
+  speak(bot, line(bot, 'smalltalk.txt'), bot.rng.int(400, 2_500));
 }
 
 /** Answer whatever just arrived, after a plausible pause. */

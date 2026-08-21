@@ -49,6 +49,7 @@ import {
   blockRacer,
   blocker,
   grudgeHolder,
+  lateBlocker,
   massBlocker,
   mutualBlocker,
   repeatedReporter,
@@ -56,6 +57,8 @@ import {
   reporter,
   reporterReconnect,
 } from './moderators';
+import { gapTalker, lateReturner, refresher, tokenReplayer } from './resume';
+import { anonymous, nameAdvertiser, profileChurner, underageDeclarer } from './declaring';
 
 export const PERSONAS: readonly Persona[] = [
   talker,
@@ -100,6 +103,15 @@ export const PERSONAS: readonly Persona[] = [
   mutualBlocker,
   reporterReconnect,
   repeatedReporter,
+  lateBlocker,
+  refresher,
+  gapTalker,
+  lateReturner,
+  tokenReplayer,
+  anonymous,
+  underageDeclarer,
+  nameAdvertiser,
+  profileChurner,
 ];
 
 const BY_SCENARIO = new Map(PERSONAS.map((persona) => [persona.scenario, persona]));
@@ -115,7 +127,13 @@ export interface MixEntry {
   readonly weight: number;
 }
 
-export type ProfileName = 'realistic' | 'adversarial' | 'capacity' | 'lifecycle' | 'tiny';
+export type ProfileName =
+  | 'realistic'
+  | 'adversarial'
+  | 'capacity'
+  | 'lifecycle'
+  | 'human'
+  | 'tiny';
 
 /**
  * `realistic` — the default, and the only profile whose latency numbers are
@@ -140,9 +158,19 @@ const REALISTIC: readonly MixEntry[] = [
   { scenario: 'S7', weight: 2 },
   { scenario: 'L1', weight: 4 },
   { scenario: 'L2', weight: 2 },
+  { scenario: 'L3', weight: 4 },
   { scenario: 'L4', weight: 1 },
   { scenario: 'L6', weight: 2 },
   { scenario: 'L9', weight: 1 },
+  { scenario: 'L13', weight: 2 },
+  { scenario: 'L14', weight: 1 },
+  // The declared-profile group. G1 carries real weight because "told us
+  // nothing" is the most common profile there is, and a population where
+  // everyone declares something would never exercise the null path that every
+  // renderer has to handle.
+  { scenario: 'G1', weight: 6 },
+  { scenario: 'G4', weight: 2 },
+  { scenario: 'G2', weight: 1 },
   // A small adversarial fraction even here. A "realistic" population with no
   // spam in it is not realistic, and the M personas need something to react to
   // or their reports and blocks measure nothing.
@@ -202,6 +230,14 @@ const ADVERSARIAL: readonly MixEntry[] = [
   { scenario: 'M7', weight: 2 },
   { scenario: 'M8', weight: 1 },
   { scenario: 'M9', weight: 1 },
+  // The block that arrives after the conversation ended (D38). Adversarial
+  // rather than realistic: it needs partners who leave abruptly, and this is
+  // the profile full of them.
+  { scenario: 'M10', weight: 3 },
+  // A name is a label on a person rather than one utterance, so it is refused
+  // rather than flagged (D35). The advertisers belong with the other payload
+  // adversaries.
+  { scenario: 'G3', weight: 2 },
 ];
 
 /**
@@ -225,12 +261,16 @@ const CAPACITY: readonly MixEntry[] = [
  * cleanup goes wrong. For chasing leaked sessions and orphaned queue entries.
  */
 const LIFECYCLE: readonly MixEntry[] = [
-  { scenario: 'L1', weight: 20 },
-  { scenario: 'L2', weight: 20 },
-  { scenario: 'L4', weight: 10 },
-  { scenario: 'L6', weight: 10 },
-  { scenario: 'L9', weight: 20 },
-  { scenario: 'L10', weight: 10 },
+  { scenario: 'L1', weight: 15 },
+  { scenario: 'L2', weight: 15 },
+  { scenario: 'L3', weight: 15 },
+  { scenario: 'L4', weight: 8 },
+  { scenario: 'L6', weight: 8 },
+  { scenario: 'L9', weight: 15 },
+  { scenario: 'L10', weight: 8 },
+  { scenario: 'L13', weight: 8 },
+  { scenario: 'L14', weight: 5 },
+  { scenario: 'L15', weight: 3 },
   { scenario: 'N1', weight: 10 },
 ];
 
@@ -246,11 +286,61 @@ const TINY: readonly MixEntry[] = [
   { scenario: 'N1', weight: 1 },
 ];
 
+/**
+ * `human` — the mix to run when a person is in the swarm.
+ *
+ * Not a softer `realistic`; a *differently shaped* one. Somebody sitting at
+ * http://localhost:8090 talking to the population has a sample size of one
+ * conversation at a time, so the proportions that make a five-thousand-bot run
+ * statistically honest make a human's ten minutes mostly disappointing: they
+ * meet a hyper-skipper, then a lurker, then somebody who rage-quits, and form
+ * the impression that the product does not work.
+ *
+ * So the talkers dominate, the personas that answer promptly are the ones with
+ * weight, and the abusive fraction is small but **not zero** — a person testing
+ * this needs to meet somebody worth blocking, or Block, Report and the whole
+ * safety half of the UI go untried. The declared profiles are here in force for
+ * the same reason: the header, the country, the age are what a person actually
+ * looks at, and they are the newest thing in the client.
+ *
+ * Numbers from a `human` run are not capacity numbers and should not be quoted
+ * as any. It is a mix for driving the product, not for measuring it.
+ */
+const HUMAN: readonly MixEntry[] = [
+  // Talkers, and the ones that reply quickly rather than after 90 seconds.
+  { scenario: 'N1', weight: 30 },
+  { scenario: 'N6', weight: 10 },
+  { scenario: 'N7', weight: 4 },
+  { scenario: 'N10', weight: 6 },
+  { scenario: 'N4', weight: 4 },
+  { scenario: 'N3', weight: 3 },
+  // Enough churn that "skip and talk to somebody else" finds somebody else
+  // immediately, which is the loop a person is there to feel.
+  { scenario: 'S1', weight: 12 },
+  { scenario: 'S2', weight: 4 },
+  { scenario: 'S4', weight: 2 },
+  // Declared profiles, heavily: this is what a person sees first.
+  { scenario: 'G4', weight: 6 },
+  { scenario: 'G1', weight: 5 },
+  // Something to block and something to report, at a rate where a person will
+  // meet one within a few conversations but not every conversation.
+  { scenario: 'A1', weight: 2 },
+  { scenario: 'A3', weight: 2 },
+  { scenario: 'A7', weight: 1 },
+  { scenario: 'M1', weight: 2 },
+  { scenario: 'M2', weight: 2 },
+  // Someone whose connection drops mid-sentence, so the reconnecting banner and
+  // the disabled composer are seen by a human rather than only by an oracle.
+  { scenario: 'L3', weight: 4 },
+  { scenario: 'L1', weight: 2 },
+];
+
 export const PROFILES: Record<ProfileName, readonly MixEntry[]> = {
   realistic: REALISTIC,
   adversarial: ADVERSARIAL,
   capacity: CAPACITY,
   lifecycle: LIFECYCLE,
+  human: HUMAN,
   tiny: TINY,
 };
 

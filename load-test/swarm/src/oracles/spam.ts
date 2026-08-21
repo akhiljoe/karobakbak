@@ -442,6 +442,18 @@ export async function checkSpamDetection(input: SpamOracleInput): Promise<SpamOr
     otherAdversariesFlagged,
   };
 
+  // Denominators for the false-positive line. A count on its own is unreadable:
+  // "251 flagged" means one thing out of 260 benign bots and another out of
+  // 4,000, and it means something different again when each of them held six
+  // hundred conversations rather than six.
+  const benignMatchCounts = [...bots.values()]
+    .filter((entry) => isBenign(entry))
+    .map((entry) => entry.matches.size)
+    .sort((a, b) => a - b);
+  const benignBots = benignMatchCounts.length;
+  const medianBenignMatches =
+    benignBots === 0 ? 0 : (benignMatchCounts[Math.floor(benignBots / 2)] ?? 0);
+
   const details: string[] = [];
 
   if (labelledSpammers === 0) {
@@ -490,12 +502,60 @@ export async function checkSpamDetection(input: SpamOracleInput): Promise<SpamOr
   }
 
   for (const line of falsePositives.slice(0, 8)) details.push(`  false positive: ${line}`);
+  if (falsePositives.length > 8) {
+    details.push(`  ... and ${falsePositives.length - 8} more`);
+  }
+  if (falsePositives.length > 0) {
+    // Stated in full every time, because a false-positive count reads as an
+    // accusation against the detector and it is at least as often the run.
+    details.push(
+      `  ${falsePositives.length} of ${benignBots} benign bots, over a median of ${medianBenignMatches} conversations each.`,
+    );
+    details.push(
+      '  This number rises with run length and falls with corpus size, and it does not',
+    );
+    details.push(
+      '  fail the run: it is a property of a detector nobody has built yet, not of the',
+    );
+    details.push(
+      '  server. A benign bot draws from a finite vocabulary, so given enough',
+    );
+    details.push(
+      '  conversations it repeats a line into five of them by arithmetic — and so do',
+    );
+    details.push(
+      '  real users, who say the same greeting to more than five strangers. Read it as',
+    );
+    details.push(
+      '  the precision budget any campaign detector would have to pay. See §6.',
+    );
+  }
   for (const line of blockViolations.slice(0, 8)) details.push(`  BLOCK VIOLATION: ${line}`);
   if (blockViolations.length > 8) {
     details.push(`  ... and ${blockViolations.length - 8} more block violations`);
   }
 
-  const failures = blockViolations.length + falsePositivesNormalised;
+  // ---------------------------------------------------------------------------
+  // WHAT FAILS THIS ORACLE, AND WHAT ONLY GETS REPORTED
+  // ---------------------------------------------------------------------------
+  // Only a **block durability violation** fails: a pair that matched again
+  // after a confirmed block between them. That is a property of the server, it
+  // is invariant D18, and it is either true or it is not.
+  //
+  // The false-positive count used to fail the run too, and that was wrong in a
+  // way that took a long run to expose. A 90-second run produced two of them
+  // and looked like a corpus problem; a 25-minute run produced 251 out of 400
+  // benign bots, because the criterion — the same line in five distinct
+  // conversations — is met by *any* bot with a finite vocabulary given enough
+  // conversations. The number scales with run length and corpus size, and moves
+  // not at all with anything the server does. Gating on it meant the oracle
+  // could not pass an endurance run (E10) no matter how correct the product
+  // was, which is the definition of a bad test.
+  //
+  // It is still printed loudly, and it is arguably the most interesting number
+  // here: it is the precision budget a real campaign detector would have to
+  // pay, measured rather than guessed.
+  const failures = blockViolations.length;
 
   return {
     summary,
@@ -505,11 +565,12 @@ export async function checkSpamDetection(input: SpamOracleInput): Promise<SpamOr
       summary:
         blockViolations.length > 0
           ? `${blockViolations.length} pair(s) matched again after a block between them (D18)`
-          : falsePositivesNormalised > 0
-            ? `${falsePositivesNormalised} benign bot(s) would be flagged as spammers`
-            : labelledSpammers === 0
-              ? 'no labelled spammers in this profile'
-              : `blocks held; ${detectedCampaign}/${labelledSpammers} spammers detectable offline, ${caughtLive} live`,
+          : labelledSpammers === 0
+            ? 'no labelled spammers in this profile'
+            : `blocks held; ${detectedCampaign}/${labelledSpammers} spammers detectable offline, ${caughtLive} live` +
+              (falsePositivesNormalised > 0
+                ? `, at a cost of ${falsePositivesNormalised} benign bot(s) flagged`
+                : ''),
       details,
     },
   };

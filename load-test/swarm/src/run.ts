@@ -19,10 +19,11 @@ import { cpus } from 'node:os';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { BotSpec } from './bot';
-import { loadCorpus } from './corpus';
+import { loadCorpus, type Corpus } from './corpus';
+import { declaredProfile } from './declared';
 import { syntheticAddress } from './identity';
 import { expandMix, isProfileName, personaFor, PROFILES, type ProfileName } from './personas';
-import { createRng } from './rng';
+import { botRng, createRng } from './rng';
 import type { WorkerCommand, WorkerMessage } from './worker';
 import { runOracles, scrapeAll } from './oracles';
 import { printReport } from './report';
@@ -48,6 +49,17 @@ interface Options {
   /** Must match REDIS_KEY_PREFIX and the matchmaking segment on the target. */
   keyPrefix: string;
   segment: string;
+  /**
+   * A person took part in this run, at the same stack, through a browser.
+   *
+   * Purely a statement for the report. It changes no behaviour, and it exists
+   * because a human in the population is invisible to the ledger and shows up
+   * only as its consequences: conversations with one side missing, partners who
+   * were never matched from this harness's point of view, messages counted by
+   * the server that no bot sent. Without a line saying so, the next person to
+   * read the report has to guess whether those numbers mean a bug.
+   */
+  human: boolean;
 }
 
 function parseArgs(argv: readonly string[]): Options {
@@ -104,6 +116,7 @@ function parseArgs(argv: readonly string[]): Options {
     redisContainer: flags.get('redis') ?? '',
     keyPrefix: flags.get('key-prefix') ?? 'chat',
     segment: flags.get('segment') ?? 'default',
+    human: flags.get('human') === 'true',
   };
 }
 
@@ -115,7 +128,7 @@ function parseArgs(argv: readonly string[]): Options {
  * seed, so the same seed produces the same person at the same address every
  * time — which is what makes "this blocked party came back" reproducible.
  */
-function buildRoster(options: Options): BotSpec[] {
+function buildRoster(options: Options, corpus: Corpus): BotSpec[] {
   const rng = createRng(options.seed).fork('roster');
   const scenarios = expandMix(PROFILES[options.profile], options.bots, rng);
   const width = String(options.bots).length;
@@ -130,6 +143,12 @@ function buildRoster(options: Options): BotSpec[] {
     // assumed — "everything unlabelled is innocent" is the assumption that
     // turns a false positive into a silent one.
     labels: personaFor(scenario).labels ?? ['benign'],
+    // Drawn from a *forked* stream rather than the bot's own, so adding or
+    // removing a profile field cannot shift every think-time and corpus draw
+    // that bot makes for the rest of the run — which would make two runs with
+    // the same seed incomparable for a reason that has nothing to do with what
+    // changed.
+    profile: declaredProfile(botRng(options.seed, index).fork('declared'), corpus),
   }));
 }
 
@@ -158,7 +177,7 @@ async function main(): Promise<void> {
   // The lint runs here, before a single socket is opened. A benign corpus line
   // that trips a moderation rule would silently corrupt every flag count in
   // the report, and finding that out after a five-minute run is expensive.
-  const { findings } = loadCorpus(corpusDir);
+  const { corpus, findings } = loadCorpus(corpusDir);
   if (findings.length > 0) {
     console.error('corpus lint failed:');
     for (const finding of findings) {
@@ -185,7 +204,7 @@ async function main(): Promise<void> {
     console.log(`swarm: metrics baseline from ${metricsBaseline.length} samples`);
   }
 
-  const roster = buildRoster(options);
+  const roster = buildRoster(options, corpus);
   const shards = shard(roster, options.workers);
   const startedAt = Date.now();
 
@@ -194,6 +213,9 @@ async function main(): Promise<void> {
       `${options.workers} worker(s), ${options.rampSeconds}s ramp, ${options.durationSeconds}s run`,
   );
   console.log(`swarm: target ${options.url}`);
+  if (options.human) {
+    console.log('swarm: a person is in this run; one-sided conversations include theirs');
+  }
   console.log(`swarm: run directory ${runDir}`);
 
   const workerPath = join(__dirname, 'worker.ts');
@@ -320,6 +342,7 @@ async function main(): Promise<void> {
     lag: { p99: worstLagP99, max: worstLagMax },
     result,
     lostWorkers: lost.length,
+    human: options.human,
   });
 
   const oraclesPassed = result.oracles.every((oracle) => oracle.status !== 'fail');

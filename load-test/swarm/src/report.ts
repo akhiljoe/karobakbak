@@ -38,6 +38,15 @@ export interface ReportInput {
    * on eleven conversations out of an intended thousand.
    */
   readonly lostWorkers: number;
+  /**
+   * A person was in the population, through a browser, at the same stack.
+   *
+   * Printed rather than acted on. A human is invisible to the ledger and shows
+   * up only as its consequences — a conversation with one side missing, server
+   * counters ahead of what the bots sent — and those look exactly like a lost
+   * worker to anybody reading the report cold.
+   */
+  readonly human?: boolean;
 }
 
 const MARK: Record<string, string> = {
@@ -68,6 +77,14 @@ export function printReport(input: ReportInput): void {
   lines.push(`reproduce: npm run swarm -- --seed ${input.options.seed} ` +
     `--bots ${input.options.bots} --profile ${input.options.profile} ` +
     `--duration ${input.options.durationSeconds} --url ${input.options.url}`);
+  if (input.human === true) {
+    lines.push(
+      'a person took part in this run: conversations with one side missing, and server',
+    );
+    lines.push(
+      'counters running ahead of the ledger, include theirs. Not capacity numbers.',
+    );
+  }
   lines.push('='.repeat(72));
 
   lines.push('');
@@ -89,6 +106,26 @@ export function printReport(input: ReportInput): void {
   if (stats.routes.size > 0) {
     lines.push('  delivery route:');
     lines.push(...top(stats.routes));
+  }
+
+  if (stats.resumesOffered > 0 || stats.partnersHeld > 0) {
+    lines.push('');
+    lines.push('RESUMPTION  (a dropped socket no longer ends a conversation — D42)');
+    lines.push(`  resume tokens presented:  ${stats.resumesOffered}`);
+    lines.push(`  conversations reclaimed:  ${stats.resumesSucceeded}`);
+    lines.push(`  fell back to a new session:${stats.resumesExpired}`);
+    lines.push(`  partners held, then told:  ${stats.partnersHeld}`);
+    lines.push(`  partners who came back:    ${stats.partnersReturned}`);
+    lines.push(`  acks lost with the socket: ${stats.acksLost}`);
+    if (stats.resumesOffered > 0) {
+      const kept = Math.round((stats.resumesSucceeded / stats.resumesOffered) * 100);
+      lines.push(
+        `  ${kept}% of reconnections kept their conversation. A low figure is not a fault —`,
+      );
+      lines.push(
+        '  it is the grace window being shorter than the reconnections people make.',
+      );
+    }
   }
 
   lines.push('');
@@ -134,6 +171,11 @@ export function printReport(input: ReportInput): void {
       `  a campaign canonical form:      ${spam.detectedCampaign}/${spam.labelledSpammers}` +
         `   (${spam.falsePositivesCampaign} false positive(s))  <- would need building`,
     );
+    if (spam.falsePositivesNormalised > 0) {
+      lines.push('  the false positives are the point, not a fault: they are what a campaign');
+      lines.push('  detector would cost in wrongly-accused ordinary users, and they rise with');
+      lines.push('  run length because a person with a finite vocabulary eventually repeats.');
+    }
     lines.push(`  strangers reached per spammer:  median ${spam.medianReach}, worst ${spam.maxReach}`);
     if (spam.medianTimeToSanction === null) {
       lines.push('  time to first block or report:  never, for any of them');

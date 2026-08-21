@@ -23,7 +23,15 @@ import { join } from 'node:path';
 import { moderationView } from '../../../backend/src/moderation/normalise';
 import { RULES } from '../../../backend/src/moderation/rules';
 
-/** Files whose lines must fire no rule. */
+/**
+ * Files whose lines must fire no rule.
+ *
+ * `names.txt` is in here for a stronger reason than the rest. A declared name
+ * is **refused** when any rule fires (D35) rather than flagged and delivered,
+ * so a single bad line would stop every bot that draws it from ever joining the
+ * queue — a hole in the population that no oracle is looking for, because the
+ * bots involved connect perfectly and then do nothing.
+ */
 export const BENIGN_FILES = [
   'openers.txt',
   'smalltalk.txt',
@@ -31,6 +39,7 @@ export const BENIGN_FILES = [
   'questions.txt',
   'farewells.txt',
   'unicode.txt',
+  'names.txt',
 ] as const;
 
 /** Files whose lines must fire at least one rule. */

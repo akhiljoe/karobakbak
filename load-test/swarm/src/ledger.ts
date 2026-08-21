@@ -31,6 +31,7 @@ export type LedgerEventType =
   | 'connected'
   /** The upgrade was refused. `status` says how. */
   | 'connect_refused'
+  /** `join_queue` was sent. `hash` identifies the profile declared with it. */
   | 'queued'
   | 'matched'
   /** This bot handed a message to the socket. */
@@ -57,6 +58,32 @@ export type LedgerEventType =
   | 'block_confirmed'
   | 'reported'
   | 'partner_gone'
+  /**
+   * The partner's socket dropped and the server is holding their seat (Section 28).
+   * The conversation is intact; nothing sent during it is delivered (D43).
+   */
+  | 'partner_away'
+  /** The partner reclaimed their session inside the window. */
+  | 'partner_back'
+  /** A resume token was presented on this connection's handshake. */
+  | 'resume_offered'
+  /** The token was accepted and the conversation came back with the session. */
+  | 'resumed'
+  /**
+   * A token was presented and there was nothing to reclaim — the window had
+   * closed, or the session was still attached. A fresh session, which is the
+   * designed fallback and not an error.
+   */
+  | 'resume_expired'
+  /**
+   * A message was in flight when the socket died, so its ack can never arrive.
+   *
+   * Not a delivery failure: the server may well have accepted and delivered it.
+   * The oracle treats these as "may have been delivered" — present for
+   * ordering, tolerated if the partner never got them — because the alternative
+   * is reporting a delivery bug every time a socket dies mid-send.
+   */
+  | 'ack_lost'
   | 'protocol_error'
   | 'closed'
   /** The harness itself misbehaved — recorded so a bad run cannot look clean. */
@@ -78,7 +105,14 @@ export interface LedgerEvent {
   cid?: string;
   /** Server message id on `ack`/`received`. */
   messageId?: string;
-  /** Content identity. See the note at the top of this file. */
+  /**
+   * Content identity. See the note at the top of this file.
+   *
+   * On `queued` this is the *declared profile's* identity rather than a
+   * message's — same reasoning, one step further: a declared name is user
+   * content, so the ledger proves the partner was shown what was declared
+   * without ever writing down what that was.
+   */
   hash?: string;
   /**
    * Content identity **after** the server's normalisation view.
@@ -98,12 +132,36 @@ export interface LedgerEvent {
    * canonical forms that actually exist would have caught.
    */
   chash?: string;
+  /**
+   * On `matched`: the hash of the **partner's** declared profile, as this bot
+   * was shown it. Compared against what that bot declared on its own
+   * `join_queue`, which is the only end-to-end proof that a declaration crosses
+   * the wire intact — through validation, the session hash, the read beside
+   * `tryMatch` and the identity builder — without the harness ever writing down
+   * what was declared.
+   */
+  theirProfile?: string;
+  /** On `matched`: this bot's own profile as the server echoed it back. */
+  myProfile?: string;
   /** Character count of the body, which is safe and occasionally diagnostic. */
   chars?: number;
   /** Per-match monotonic counter, so ordering survives a merge across workers. */
   seq?: number;
   /** `message_ack.delivered` — false means moderation withheld it (D20). */
   delivered?: boolean;
+  /**
+   * This ack cannot be read as proof the partner got it.
+   *
+   * Set when the message was handed to the socket while the partner's seat was
+   * being held (§28): the server accepted it, routed it at a session with no
+   * socket, and buffered nothing (D43). `delivered` is still true, because it
+   * has always meant "accepted and routed" rather than "arrived".
+   *
+   * The pair oracle skips these when the receiver does not have them and holds
+   * everything else to strict order — which is what keeps the check strong
+   * while a reconnect is in flight.
+   */
+  unconfirmed?: boolean;
   /** `message_ack.route` — local or remote, i.e. whether Pub/Sub carried it. */
   route?: string;
   /** Protocol error code, or a close code, or an HTTP status. */
