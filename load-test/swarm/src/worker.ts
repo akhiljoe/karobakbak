@@ -145,6 +145,32 @@ async function stop(): Promise<void> {
   });
 }
 
+/**
+ * The orchestrator is gone: take the bots with it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS NOT HOUSEKEEPING
+ * ---------------------------------------------------------------------------
+ * Without it a killed orchestrator leaves this process holding every socket it
+ * had. Nothing here notices — the progress timer writes into a closed channel
+ * and the failure is swallowed, the bots keep talking, and the run that somebody
+ * starts next shares the stack with a population that is not in any ledger.
+ *
+ * That happened: a stopped run kept 156 bots alive for 179 seconds into its
+ * replacement, and the two swarms matched with **each other**. The next run's
+ * ledger held 853 conversations with one side missing and its metric
+ * conservation oracle failed on a mismatch it could not explain — correctly, and
+ * for a reason that had nothing to do with the server.
+ *
+ * `disconnect` fires when the IPC channel closes, which is the one signal that
+ * means the parent is gone regardless of how it died.
+ */
+process.on('disconnect', () => {
+  void stop()
+    .catch(() => undefined)
+    .then(() => process.exit(0));
+});
+
 process.on('message', (message: WorkerCommand) => {
   if (message.type === 'start') {
     void start(message).catch((error: unknown) => {

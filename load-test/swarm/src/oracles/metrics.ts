@@ -349,7 +349,15 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
   const queued = delta(samples, input.baseline, 'chat_retention_queued_total');
   const flushed = delta(samples, input.baseline, 'chat_retention_flushed_total');
   details.push(`retention: queued ${queued}, flushed ${flushed}, dropped ${dropped}`);
-  if (queued > 0 && flushed + dropped > queued) {
+  // A handful of records can legitimately be flushed without having been
+  // queued *within the window*: the counters are diffed against a baseline
+  // taken before the first socket opened, so anything already in the queue at
+  // that moment is flushed inside the run and queued outside it. The identity
+  // is exact over the process lifetime and only approximate over a slice of it,
+  // and the slack is bounded by the queue's depth rather than by the run's
+  // size — which is why this is a small constant and not a percentage.
+  const inFlightSlack = 64;
+  if (queued > 0 && flushed + dropped > queued + inFlightSlack) {
     failures.push(`retention flushed+dropped (${flushed + dropped}) exceeds queued (${queued})`);
   }
 
