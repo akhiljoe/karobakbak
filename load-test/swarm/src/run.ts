@@ -124,9 +124,17 @@ function parseArgs(argv: readonly string[]): Options {
     postgresContainer: flags.get('postgres') ?? '',
     postgresUser: flags.get('postgres-user') ?? 'karobakbak',
     postgresDatabase: flags.get('postgres-db') ?? 'karobakbak',
-    // Generous, because the comparison is worthless while records are still in
-    // flight — the whole trap this oracle had to be built around.
-    drainTimeoutSeconds: Math.max(5, Math.floor(num('drain-timeout', 60))),
+    // Scaled with the population, because the backlog is. A 5,000-bot run left
+    // 27,000 records in flight at the end and drained them at roughly 200 a
+    // second — about two minutes, where the flat 60s default gave up at half
+    // way and reported a shortfall that was simply still being written.
+    //
+    // The comparison is worthless while records are in flight, so the oracle
+    // refusing to make it was correct; the default was what was wrong.
+    drainTimeoutSeconds: Math.max(
+      30,
+      Math.floor(num('drain-timeout', Math.min(600, 30 + bots / 20))),
+    ),
     keyPrefix: flags.get('key-prefix') ?? 'chat',
     segment: flags.get('segment') ?? 'default',
     human: flags.get('human') === 'true',

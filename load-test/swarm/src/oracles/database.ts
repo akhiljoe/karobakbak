@@ -76,6 +76,14 @@ export interface DatabaseOracleInput {
 interface LedgerFacts {
   /** Messages the server acknowledged as accepted, by content hash. */
   accepted: number;
+  /**
+   * Messages handed to a socket, acked or not.
+   *
+   * The upper bound on what can be stored. A message whose ack never came back
+   * may still have been accepted and written — the ack is lost when the socket
+   * dies, not the row.
+   */
+  sent: number;
   /** Content hashes of accepted messages, for the body comparison. */
   hashes: Map<string, number>;
   /** Conversations the ledger saw, by match id. */
@@ -102,6 +110,7 @@ async function psql(input: DatabaseOracleInput, sql: string): Promise<string[]> 
 async function readLedger(paths: readonly string[]): Promise<LedgerFacts> {
   const facts: LedgerFacts = {
     accepted: 0,
+    sent: 0,
     hashes: new Map(),
     matches: new Set(),
     reports: [],
@@ -119,7 +128,9 @@ async function readLedger(paths: readonly string[]): Promise<LedgerFacts> {
         continue;
       }
 
-      if (event.type === 'ack') {
+      if (event.type === 'sent') {
+        facts.sent += 1;
+      } else if (event.type === 'ack') {
         // An ack is the server saying it accepted and recorded the message —
         // which is what produces a row. `withheld` counts too: policy stopped
         // it reaching the partner, and D20 is explicit that it is still stored.
@@ -223,13 +234,37 @@ export async function checkDatabaseAgreement(
   const stored = Number(storedRaw ?? 0);
   // Drops are counted per class; only the message classes matter here, but the
   // total is the safe upper bound and a mismatch is reported either way.
-  const expected = ledger.accepted - drain.dropped;
-  details.push(`messages: ${stored} stored, ${ledger.accepted} acked, ${drain.dropped} dropped`);
-  if (stored !== expected) {
+  // A range, not an equality, and the large run is what taught that.
+  //
+  // The obvious check is `stored == acked - dropped`, and it held on every
+  // small run. At 1,000 bots it reported five *surplus* rows — and the surplus
+  // was correct: 24 acks were lost with their sockets that run, and a message
+  // the server accepted and wrote before the socket died has a row and no ack
+  // in the ledger. The ledger counts acks a bot *received*, which is not the
+  // same as messages the server accepted.
+  //
+  // So everything acked must be stored or counted as dropped, and nothing may
+  // be stored that was never sent. The gap between the bounds is exactly the
+  // messages whose fate the client never learned.
+  const lowerBound = ledger.accepted - drain.dropped;
+  const upperBound = ledger.sent - drain.dropped;
+  details.push(
+    `messages: ${stored} stored, ${ledger.accepted} acked, ${ledger.sent} sent, ` +
+      `${drain.dropped} dropped`,
+  );
+  if (stored < lowerBound) {
     problems.push(
-      `stored ${stored} messages, expected ${expected} (acked ${ledger.accepted} minus ` +
-        `${drain.dropped} counted drops). The write-behind path is lossy under ` +
-        'overflow by design, but never silently — an unaccounted difference is a bug.',
+      `stored ${stored} messages but ${ledger.accepted} were acknowledged and only ` +
+        `${drain.dropped} counted as dropped. Every acknowledged message must be a row ` +
+        'or a counted drop — the write-behind path is lossy under overflow by design, ' +
+        'but never silently.',
+    );
+  }
+  if (stored > upperBound) {
+    problems.push(
+      `stored ${stored} messages but only ${ledger.sent} were ever sent. A row nobody ` +
+        'sent means the message path produced content of its own, which nothing in ' +
+        'this system is allowed to do.',
     );
   }
 
