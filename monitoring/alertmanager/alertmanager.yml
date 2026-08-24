@@ -1,0 +1,84 @@
+# Where an alert actually goes.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS FILE EXISTS
+# ---------------------------------------------------------------------------
+# Eight alert rules were evaluating and reaching nobody. Two of them carry
+# `severity: page`, which without an Alertmanager is a label on a row in a web
+# UI that nobody has open at three in the morning. The rules were good and the
+# delivery was missing, which is the worst of both: the monitoring looked
+# finished.
+#
+# ---------------------------------------------------------------------------
+# THE WEBHOOK URL IS READ FROM A FILE, NOT THE ENVIRONMENT
+# ---------------------------------------------------------------------------
+# Alertmanager does not expand environment variables in its config, so the
+# usual options are an entrypoint that rewrites the file or a URL committed
+# here. Neither is good: one adds a build step to an official image, the other
+# puts a credential in git.
+#
+# `url_file` is the third option and the right one. The operator writes the URL
+# once into `monitoring/alertmanager/webhook-url`, which is gitignored, and it
+# is mounted read-only. It never appears in `docker inspect`, in compose output,
+# or in this repository — and a webhook URL is a bearer credential, because
+# anyone holding it can post alerts that look like they came from your service.
+#
+# Any push service that accepts a POST works: ntfy, Pushover, Discord, Slack,
+# a phone-notification app, your own endpoint. For a single operator, something
+# that reaches a phone is the point — email at 3am is not a page.
+#
+# ---------------------------------------------------------------------------
+# TWO SEVERITIES, TWO RHYTHMS
+# ---------------------------------------------------------------------------
+# `page` means users are affected right now: it goes out fast and repeats every
+# hour until it stops, because an unacknowledged outage is still an outage.
+# `ticket` means a promise is quietly not being kept — degraded retention, a
+# filling spool, stale backups. It waits longer, groups harder, and repeats
+# twice a day. Paging somebody for a ticket is how a person learns to ignore
+# pages.
+
+global:
+  # How long without a fresh evaluation before an alert is assumed resolved.
+  # Comfortably above Prometheus's 15s evaluation interval, so a slow scrape
+  # does not read as a recovery.
+  resolve_timeout: 5m
+
+route:
+  # One notification per alert name rather than per firing series. A backend
+  # that vanishes should wake somebody once, not once per instance.
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: operator-ticket
+
+  routes:
+    - matchers:
+        - severity = "page"
+      receiver: operator-page
+      # Users are affected. Wait only long enough to batch a burst that is
+      # obviously one incident.
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 1h
+
+inhibit_rules:
+  # A backend that is gone explains a backend that is not being scraped, and
+  # explains an event loop that stopped reporting. Send the cause, not the
+  # symptoms.
+  - source_matchers:
+      - alertname = "BackendAbsent"
+    target_matchers:
+      - alertname =~ "BackendDown|EventLoopLagHigh"
+    equal: ["job"]
+
+receivers:
+  - name: operator-page
+    webhook_configs:
+      - url_file: /etc/alertmanager/webhook-url
+        send_resolved: true
+
+  - name: operator-ticket
+    webhook_configs:
+      - url_file: /etc/alertmanager/webhook-url
+        send_resolved: true

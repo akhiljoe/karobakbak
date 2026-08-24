@@ -9,6 +9,24 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Where a firing rule goes.
+#
+# Without this block every rule in `alerts.yml` evaluated, turned red in this
+# server's own web UI, and notified nobody — including the two labelled
+# `severity: page`. Rules that reach no one are not monitoring; they are a
+# dashboard that looks finished.
+#
+# Discovered by DNS for the same reason the backends are: the service name is
+# the membership list, and a container replaced later keeps working without a
+# config change.
+alerting:
+  alertmanagers:
+    - dns_sd_configs:
+        - names: ["alertmanager"]
+          type: A
+          port: 9093
+          refresh_interval: 30s
+
 scrape_configs:
   - job_name: karobakbak-backend
     metrics_path: /metrics
@@ -38,3 +56,13 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # The notifier is scraped too, because a notifier that is down is
+  # indistinguishable from a quiet night. `AlertmanagerAbsent` in `alerts.yml`
+  # is the rule that would otherwise have no data to fire on.
+  - job_name: alertmanager
+    dns_sd_configs:
+      - names: ["alertmanager"]
+        type: A
+        port: 9093
+        refresh_interval: 30s

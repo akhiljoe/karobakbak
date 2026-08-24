@@ -42,6 +42,11 @@ load-test/swarm/runs/
 
 # runtime volumes
 data/
+# The alert webhook URL is a bearer credential: anyone holding it can post
+# alerts that look like they came from this service. The .example beside it is
+# committed; this is not.
+monitoring/alertmanager/webhook-url
+
 monitoring/grafana/data/
 monitoring/prometheus/data/
 

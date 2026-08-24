@@ -33,6 +33,38 @@ groups:
             container leaves DNS discovery, which looks quieter than a healthy
             system rather than louder. Every user is affected.
 
+      # ---------------------------------------------------------------------
+      # THE TWO RULES THAT WATCH THE WATCHER
+      # ---------------------------------------------------------------------
+      # Every other rule here assumes notifications work. These two are what
+      # make that assumption checkable, and both failure modes are silent:
+      # a notifier that is gone, and a notifier that is running and posting to
+      # a URL that rejects it.
+      - alert: AlertmanagerAbsent
+        expr: absent(up{job="alertmanager"}) or up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Alerts have nowhere to go"
+          description: >-
+            Prometheus cannot reach Alertmanager, so every other rule in this
+            file is evaluating into nothing. Until this clears, silence from
+            the monitoring means nothing at all.
+
+      - alert: AlertNotificationsFailing
+        expr: increase(alertmanager_notifications_failed_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Alertmanager cannot deliver notifications"
+          description: >-
+            The receiver is rejecting or unreachable — most often a webhook URL
+            that is wrong, expired, or rate limiting. This is the failure that
+            looks exactly like a quiet week, and it is the first thing to
+            suspect after changing the URL.
+
       - alert: RetentionDeletionFailing
         expr: increase(chat_deletion_failures_total[1h]) > 0
         for: 5m
@@ -77,16 +109,42 @@ groups:
           summary: "The outage spool is filling"
           description: "Records are dropped once it is full, oldest policy first."
 
+      # `> 0` is load-bearing, and was found by running this stack rather than
+      # by reading it. `chat_backup_last_success_timestamp` is an unlabelled
+      # gauge, and `prom-client` emits those at zero from the moment they are
+      # registered — so `time() - 0` is always enormous and this rule went
+      # pending on a completely healthy, freshly started deployment. An alert
+      # that is red on day one for a reason unrelated to its subject is how an
+      # operator learns to ignore the alert that matters.
+      #
+      # Guarding it means "never backed up at all" is no longer covered here,
+      # so the rule below covers it explicitly — which is the better shape
+      # anyway: the two states have different causes and different fixes.
       - alert: BackupsStale
-        expr: time() - chat_backup_last_success_timestamp > 93600
+        expr: chat_backup_last_success_timestamp > 0
+          and time() - chat_backup_last_success_timestamp > 93600
         for: 30m
         labels:
           severity: ticket
         annotations:
           summary: "No successful backup observed within the window"
           description: >-
-            An unmonitored backup is indistinguishable from no backup until the
-            restore (§8.1).
+            Backups were running and have stopped. An unmonitored backup is
+            indistinguishable from no backup until the restore (§8.1).
+
+      - alert: BackupsNeverObserved
+        expr: chat_backup_last_success_timestamp == 0
+          and time() - chat_process_process_start_time_seconds > 93600
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "This instance has never seen a backup succeed"
+          description: >-
+            The process has been up longer than the backup window and has still
+            never been told a backup completed. Either nothing is taking them,
+            or whatever takes them is not reporting back. Both mean there is
+            nothing to restore from.
 
       - alert: EventLoopLagHigh
         expr: chat_process_nodejs_eventloop_lag_p99_seconds > 0.25

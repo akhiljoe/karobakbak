@@ -259,6 +259,29 @@ services:
       - backend
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # WHERE AN ALERT GOES
+  # ---------------------------------------------------------------------------
+  # Prometheus decides *that* something is wrong; this decides who hears about
+  # it. Without it the rules in `alerts.yml` evaluated and reached nobody, which
+  # is the failure mode that looks most like success.
+  #
+  # The webhook URL is a file rather than an environment variable — Alertmanager
+  # does not expand env vars, and a URL that can post alerts as your service is
+  # a credential. Copy `webhook-url.example` to `webhook-url` and put yours in
+  # it; the real file is gitignored.
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertdata:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.4.0
     environment:
@@ -277,6 +300,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  alertdata:
   pgdata:
   promdata:
   grafanadata:
