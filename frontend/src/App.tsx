@@ -44,16 +44,19 @@ export function App(): JSX.Element {
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
 
-  const phase = phaseOf(state.screen);
+  const phase = phaseOf(state);
   const connection = connectionOf(state.screen);
 
-  // Any sheet about the current conversation is meaningless once it ends.
+  // Any sheet about the current conversation is meaningless once it ends — but
+  // a dropped socket is not the conversation ending (§28), and closing a report
+  // dialog mid-blip would throw away a note somebody was part-way through
+  // writing. Keyed on the phase, which knows the difference.
   useEffect(() => {
-    if (state.screen !== 'chatting') {
+    if (phase !== 'chatting') {
       setSafetyOpen(false);
       setReporting(false);
     }
-  }, [state.screen]);
+  }, [phase]);
 
   /**
    * Whether anything is layered over the conversation.

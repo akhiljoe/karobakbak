@@ -6,12 +6,17 @@
  * what lets the interesting behaviour be tested without a browser.
  *
  * ---------------------------------------------------------------------------
- * RECONNECTING STARTS A NEW SESSION
+ * RECONNECTING RESUMES THE SESSION
  * ---------------------------------------------------------------------------
- * There is no resumption (D7). A dropped connection means the conversation is
- * over, not paused, and this client does not pretend otherwise — it reconnects
- * with backoff and lands on a fresh session. Anything else would need a
- * resumption token, which is a thing to steal.
+ * A dropped connection is a pause, not an ending (§28, D42 — which reverses
+ * D7). The server holds the seat for `RESUME_GRACE_SECONDS`, and this client
+ * offers its resume token on the handshake so the conversation comes back with
+ * the socket. A resume that fails is not an error: it opens a fresh session,
+ * which is exactly what every connection used to do.
+ *
+ * The token is a bearer credential — whoever holds it can reclaim the
+ * conversation — so it lives in `sessionStorage`, is replaced on every
+ * redemption, and dies with the tab. See `resume.ts`.
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
@@ -25,7 +30,7 @@ import {
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
-import { loadResumeToken } from '../resume';
+import { clearResumeToken, loadResumeToken } from '../resume';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
 function socketUrl(): string {
@@ -226,7 +231,24 @@ export function useChat(): ChatApi {
     // can be matched again before the second frame is read, so the user would
     // land in a new conversation instead of on the landing screen. `leave_chat`
     // ends the match and stops, in one server-side transition.
-    if (sendCommand('leave_chat')) dispatch({ type: 'user_left' });
+    if (sendCommand('leave_chat')) {
+      dispatch({ type: 'user_left' });
+      return;
+    }
+
+    // The socket is down. Since a conversation now stays on screen through a
+    // reconnect (§28), this is reachable: the back button and the home button
+    // are both live during the grace window, and before this they simply did
+    // nothing there — a control that ignores a deliberate press is worse than
+    // one that is absent.
+    //
+    // So leave locally. The token goes with it, because reconnecting would
+    // otherwise resume straight back into the conversation this person just
+    // chose to walk out of. Nothing is told to the server and nothing needs to
+    // be: the session's TTL and the janitor end an abandoned match anyway, and
+    // the partner sees the same "they left" they would have seen regardless.
+    clearResumeToken();
+    dispatch({ type: 'user_left' });
   }, [sendCommand, stopTyping]);
 
   const block = useCallback(() => {

@@ -827,6 +827,21 @@ export const PROTOCOL_ERROR_CODES = [
    * profile value.
    */
   'AGE_BELOW_MINIMUM',
+  /**
+   * A declared name that moderation refused.
+   *
+   * Its own code for the same reason as `AGE_BELOW_MINIMUM`: the client can
+   * say which field was refused and that changing it will work, where
+   * `VALIDATION_FAILED` — which every malformed frame in the protocol also
+   * produces — would leave the user staring at "invalid input" for a name that
+   * is perfectly well-formed and simply not allowed.
+   *
+   * A name is refused where a message would be flagged and delivered (D20 vs
+   * D35), because a name is a label shown to everyone this person meets rather
+   * than one utterance in context. The join does not happen; nothing about the
+   * name is stored.
+   */
+  'NAME_REFUSED',
   /** Token bucket exhausted. */
   'RATE_LIMITED',
   /** Operation requires an active match and there is none. */

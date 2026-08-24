@@ -104,6 +104,27 @@ export interface ChatState {
    * the searching layout on the way to the landing one.
    */
   readonly leaving: boolean;
+  /**
+   * A join has been sent and the server has not confirmed it yet.
+   *
+   * `start()` moves the screen to `searching` the moment the frame goes out,
+   * because waiting a round trip to acknowledge a button press reads as a dead
+   * interface. The server, though, can refuse a join — the bucket is empty, the
+   * declared age is below the floor, the declared name was moderated — and on
+   * every one of those paths it replies with an error and **no**
+   * `queue_status`, because it never queued anything. Nothing else was ever
+   * coming, so the optimistic screen stayed on "Looking for someone…" for the
+   * rest of the session while the user waited for a match that could not
+   * arrive.
+   *
+   * This flag is what makes the rollback precise. An error while a join is
+   * still unconfirmed means the join did not happen; an error while genuinely
+   * queued — the server said `SEARCHING` — means something else went wrong and
+   * the search is untouched. Same shape as `leaving` above, for the same
+   * reason: an optimistic transition needs to know whether it has been
+   * confirmed before anything can undo it.
+   */
+  readonly searchPending: boolean;
 }
 
 /**
@@ -138,6 +159,7 @@ export const initialState: ChatState = {
   partnerAway: null,
   reportSent: false,
   leaving: false,
+  searchPending: false,
 };
 
 export type Action =
@@ -197,6 +219,12 @@ export function reduce(state: ChatState, action: Action): ChatState {
         features: action.payload.features ?? NO_FEATURES,
         resumeGraceSeconds: action.payload.resumeGraceSeconds ?? 0,
         notice: null,
+        // Both flags track a command in flight on the *previous* socket. That
+        // socket is gone, so nothing is coming to confirm either of them, and a
+        // stale `leaving` would swallow the `SEARCHING` status of the next
+        // genuine search.
+        leaving: false,
+        searchPending: false,
       };
 
       // A conversation came back with the connection (§28). Restored here
@@ -245,12 +273,17 @@ export function reduce(state: ChatState, action: Action): ChatState {
       const searching = action.payload.state === 'SEARCHING';
       // While a leave is in flight, a SEARCHING status is our own skip coming
       // back. The IDLE that follows it is the confirmation, and clears the flag.
-      if (state.leaving && searching) return { ...state, waiting: action.payload.waiting };
+      if (state.leaving && searching) {
+        return { ...state, waiting: action.payload.waiting, searchPending: false };
+      }
       return {
         ...state,
         screen: searching ? 'searching' : 'idle',
         waiting: action.payload.waiting,
         leaving: false,
+        // The server has spoken about the queue, so the join is no longer
+        // unconfirmed either way.
+        searchPending: false,
         // A queue_status is the end of whatever came before it.
         ...(searching ? {} : { matchId: null }),
       };
@@ -266,6 +299,7 @@ export function reduce(state: ChatState, action: Action): ChatState {
       return {
         ...clearedConversation(state),
         screen: 'chatting',
+        searchPending: false,
         matchId: action.payload.matchId,
         matchStartedAt: action.payload.startedAt,
         you: action.payload.you,
@@ -364,13 +398,21 @@ export function reduce(state: ChatState, action: Action): ChatState {
       };
 
     case 'user_searching':
-      return { ...state, screen: 'searching', leaving: false, endReason: null, notice: null };
+      return {
+        ...state,
+        screen: 'searching',
+        leaving: false,
+        searchPending: true,
+        endReason: null,
+        notice: null,
+      };
 
     case 'user_skipped':
       return {
         ...clearedConversation(state),
         screen: 'searching',
         leaving: false,
+        searchPending: true,
         endReason: 'you_skipped',
         notice: null,
       };
@@ -400,8 +442,17 @@ export function reduce(state: ChatState, action: Action): ChatState {
       // and promising more than it says would be a promise nobody kept.
       return { ...state, reportSent: true, notice: 'Report sent. Thank you.' };
 
-    case 'server_error':
-      return applyError(state, action.payload);
+    case 'server_error': {
+      // An error is the server's answer to something this client asked for. If
+      // a join is still unconfirmed, that answer is the only one coming and it
+      // means the join did not happen — so the optimistic "searching" is undone
+      // here, once, rather than in each code's branch below. Codes that own the
+      // screen outright (`SESSION_GONE`) still set it afterwards.
+      const base = state.searchPending
+        ? { ...state, screen: 'idle' as Screen, searchPending: false }
+        : state;
+      return applyError(base, action.payload);
+    }
 
     case 'server_shutdown':
       return {
@@ -440,6 +491,14 @@ function applyError(state: ChatState, error: ErrorPayload): ChatState {
       return state;
     case 'MESSAGE_WITHHELD':
       return { ...state, notice: 'That message was not delivered.' };
+    case 'NAME_REFUSED':
+      // Its own code precisely so this line can name the field and say that
+      // changing it works. A name is a label shown to everyone this person
+      // meets, which is why it is refused where a message would be flagged and
+      // delivered (D35).
+      return { ...state, notice: 'That name cannot be used. Try a different one.' };
+    case 'AGE_BELOW_MINIMUM':
+      return { ...state, notice: 'You must be 18 or over to use this service.' };
     case 'DUPLICATE_MESSAGE':
       // The first copy was delivered. Nothing went wrong from the user's side.
       return state;

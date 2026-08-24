@@ -234,7 +234,9 @@ export function ChatShell({
               messages={state.messages}
               partnerTyping={state.partnerTyping}
               partnerColour={colourFor(state.partner)}
-              conversationOpen={chatting}
+              // The conversation, not the socket: a blip must not take the
+              // opening line out of a transcript that is still on screen.
+              conversationOpen={state.matchId !== null}
               reported={state.reportSent}
             />
           </div>

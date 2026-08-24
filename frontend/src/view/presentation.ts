@@ -46,13 +46,30 @@ export function connectionOf(screen: Screen): ConnectionView {
 /**
  * Which layout to show.
  *
- * `connecting` and `disconnected` both fall back to the landing layout: there
- * is no session to show, and the connection state is already communicated by
- * the banner and the status pill. Inventing a fifth full-screen layout for
- * "the socket is briefly away" would be a lot of screen for a transient.
+ * Takes the state rather than the screen, because a dropped socket is not by
+ * itself an answer to "what is this person looking at". Under §28 the server
+ * holds the seat for `RESUME_GRACE_SECONDS` and the reducer deliberately keeps
+ * `matchId` and the transcript through a `socket_closed` — but this function
+ * read the screen alone, mapped `disconnected` to `idle`, and sent the user to
+ * the landing page. Mid-conversation, on any blip, the transcript vanished and
+ * was replaced by a headline offering to find them somebody new.
+ *
+ * Three things followed from that, all of them invisible because the layout
+ * they lived in never rendered: `ReconnectBanner` could not display at all,
+ * `ConnectionStatus` was pinned to "connected", and the countdown built for
+ * §28 never ran. The one signal a user got was a toast. Meanwhile the screen
+ * said the opposite of what the server was doing — and the obvious response to
+ * a landing page is to close the tab, which takes the `sessionStorage` resume
+ * token with it and destroys the conversation the server was holding.
+ *
+ * So: a session that still holds a match is in a conversation, whatever its
+ * socket is doing. `connecting` and `disconnected` *without* a match still fall
+ * back to the landing layout, where there is genuinely nothing to show.
  */
-export function phaseOf(screen: Screen): PhaseView {
-  switch (screen) {
+export function phaseOf(state: ChatState): PhaseView {
+  if (state.screen === 'disconnected' && state.matchId !== null) return 'chatting';
+
+  switch (state.screen) {
     case 'searching':
       return 'searching';
     case 'chatting':

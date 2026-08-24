@@ -566,6 +566,19 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       command.type !== 'typing' &&
       !(await withinRateLimit(command.type, connection))
     ) {
+      // A refused join is the one refusal that leaves the client believing
+      // something happened. It moves to "searching" as soon as the frame goes
+      // out, and every other path into that screen ends in a `queue_status`
+      // this one never sends — so without a word here the client waits for a
+      // match that was never being looked for. The client also rolls its own
+      // optimistic transition back, but it should not have to infer this from
+      // an error code: the session state is the server's to report.
+      //
+      // IDLE is accurate on this path because the bucket is checked before
+      // `joinQueue` runs, so nothing was queued by the frame being refused.
+      if (command.type === 'join_queue') {
+        connection.sendEvent('queue_status', { state: 'IDLE', waiting: 0 });
+      }
       return;
     }
 
@@ -623,7 +636,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
             // Rule ids only. The name itself is user content and must not reach
             // a log line (I8).
             logger.info('refused a declared name', { flags: verdict.flags });
-            connection.sendError('VALIDATION_FAILED', 'that name cannot be used');
+            connection.sendError('NAME_REFUSED', 'that name cannot be used');
+            // Same reason as the rate-limited path above: the join did not
+            // happen and nothing else will say so.
+            connection.sendEvent('queue_status', { state: 'IDLE', waiting: 0 });
             return;
           }
         }

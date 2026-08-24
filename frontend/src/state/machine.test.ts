@@ -8,7 +8,7 @@ import { canSend, initialState, reduce, type ChatState } from './machine';
 import { loadResumeToken } from '../resume';
 import { messageKindFor } from '../components/MessageList';
 import { toAction } from '../hooks/useChat';
-import type { AnyServerEnvelope, ServerFeatures } from '../protocol/types';
+import type { AnyServerEnvelope, ErrorPayload, ServerFeatures } from '../protocol/types';
 
 const FEATURES: ServerFeatures = { typing: true, presence: true, report: true, block: true };
 
@@ -554,5 +554,104 @@ describe('the resume token', () => {
     // The server rotates on redemption; keeping the old one would offer a
     // spent credential and lose a conversation that could have resumed.
     expect(loadResumeToken()).toBe('t_rotated_once');
+  });
+});
+
+/**
+ * A refused join used to leave the screen searching for ever.
+ *
+ * `start()` moves to `searching` as soon as the frame goes out. The server can
+ * refuse a join — an empty bucket, an age below the floor, a moderated name —
+ * and every one of those paths replies with an error and no `queue_status`,
+ * because nothing was queued. Nothing else was ever coming, so the optimistic
+ * screen stayed on "Looking for someone…" and the user waited for a match that
+ * could not arrive. Auto-search made it reachable in ordinary use, and its own
+ * backoff was switched off by the bug it exists to handle: the countdown only
+ * runs from `ended`, and the stuck screen is `searching`.
+ */
+describe('a refused join', () => {
+  const searching = (): ChatState => reduce(connected(), { type: 'user_searching' });
+
+  const refuse = (state: ChatState, code: ErrorPayload['code']): ChatState =>
+    reduce(state, {
+      type: 'server_error',
+      payload: { code, message: 'refused', retryable: false },
+    });
+
+  it('rolls the optimistic search back when the bucket was empty', () => {
+    const state = searching();
+    expect(state.screen).toBe('searching');
+    expect(state.searchPending).toBe(true);
+
+    const after = refuse(state, 'RATE_LIMITED');
+
+    expect(after.screen).toBe('idle');
+    expect(after.searchPending).toBe(false);
+    // Auto-search reads this to lengthen its countdown rather than retrying
+    // into the same refusal.
+    expect(after.rateLimitedAt).not.toBeNull();
+  });
+
+  it('rolls back and names the field when a declared name is refused', () => {
+    const after = refuse(searching(), 'NAME_REFUSED');
+
+    expect(after.screen).toBe('idle');
+    // Its own code rather than VALIDATION_FAILED, which every malformed frame
+    // in the protocol also produces — "invalid input" for a well-formed name
+    // tells the user nothing they can act on.
+    expect(after.notice).toBe('That name cannot be used. Try a different one.');
+  });
+
+  it('rolls back and says what the service is when the age is below the floor', () => {
+    const after = refuse(searching(), 'AGE_BELOW_MINIMUM');
+
+    expect(after.screen).toBe('idle');
+    expect(after.notice).toBe('You must be 18 or over to use this service.');
+  });
+
+  it('rolls back on a code it has no copy for, rather than staying stuck', () => {
+    const after = refuse(searching(), 'VALIDATION_FAILED');
+
+    expect(after.screen).toBe('idle');
+    expect(after.notice).toBe('Something went wrong. Please try again.');
+  });
+
+  it('leaves a confirmed search alone', () => {
+    // Once the server has said SEARCHING the session really is queued, and an
+    // error after that is about something else. Rolling back on any error
+    // would drop a genuinely queued user out of the queue on screen.
+    const queued = reduce(searching(), {
+      type: 'queue_status',
+      payload: { state: 'SEARCHING', waiting: 3 },
+    });
+    expect(queued.screen).toBe('searching');
+    expect(queued.searchPending).toBe(false);
+
+    const after = refuse(queued, 'RATE_LIMITED');
+    expect(after.screen).toBe('searching');
+  });
+
+  it('is confirmed by a match as well as by a queue status', () => {
+    const matchedFromPending = reduce(searching(), {
+      type: 'matched',
+      payload: {
+        matchId: 'm_9',
+        startedAt: '2026-08-19T10:00:00.000Z',
+        you: YOU,
+        partner: PARTNER,
+      },
+    });
+    expect(matchedFromPending.searchPending).toBe(false);
+  });
+
+  it('does not carry a pending join across a reconnection', () => {
+    // The socket that would have confirmed it is gone. A stale flag would roll
+    // back the next unrelated error, and a stale `leaving` would swallow the
+    // next genuine SEARCHING status.
+    const dropped = reduce(searching(), { type: 'socket_closed', code: 1006 });
+    const fresh = connected(dropped);
+
+    expect(fresh.searchPending).toBe(false);
+    expect(fresh.leaving).toBe(false);
   });
 });
