@@ -119,6 +119,64 @@ export function newEnforcementId(): string {
 }
 
 /**
+ * The dimensions an enforcement decision is written across. One row each, all
+ * sharing a base id with the dimension folded onto the end.
+ */
+export const ENFORCEMENT_DIMENSIONS = ['ip', 'client'] as const;
+
+/**
+ * `enf_` plus exactly the 22 base64url characters `randomToken()` produces from
+ * 16 bytes. Anchored at both ends, so nothing else is a valid base id.
+ */
+const ENFORCEMENT_BASE_ID = /^enf_[A-Za-z0-9_-]{22}$/;
+
+/**
+ * Turn whatever the console supplied into the exact row ids it may act on.
+ *
+ * Callers used to interpolate this value into `enforcement_id like $1 || '%'`,
+ * which had two faults, one of them severe:
+ *
+ *  * `%` and `_` are wildcards in SQL `LIKE`. A console session submitting `%`
+ *    matched — and revoked — every enforcement row in the table, and the audit
+ *    entry recorded the wildcard rather than the sanctions it lifted.
+ *  * base64url includes `_`, so even a well-formed, server-generated id was a
+ *    pattern with single-character wildcards scattered through it. Two ids
+ *    differing only where an underscore fell would have matched each other.
+ *
+ * A prefix match was never what was wanted anyway: the rows to act on are
+ * known exactly, because this process generates the only ids that exist. So
+ * validate the shape and return the exhaustive list, for `= any($1::text[])`.
+ *
+ * Accepts either form the console holds — the base id returned by `issueBan`,
+ * or one of the per-dimension ids returned by the listings. A base id whose
+ * random part happens to end in `_ip` is still read as a base id, because the
+ * stripped candidate would be the wrong length.
+ *
+ * Returns null for anything that is not a well-formed id. Null is a refusal,
+ * never an empty match.
+ *
+ * The `base` comes back beside the rows because that is what belongs in an
+ * audit entry: the decision, rather than whichever of its two forms the console
+ * happened to be holding.
+ */
+export function enforcementRowIds(
+  supplied: string,
+): { base: string; rowIds: string[] } | null {
+  let base = supplied;
+  for (const dimension of ENFORCEMENT_DIMENSIONS) {
+    const suffix = `_${dimension}`;
+    if (!supplied.endsWith(suffix)) continue;
+    const candidate = supplied.slice(0, -suffix.length);
+    if (ENFORCEMENT_BASE_ID.test(candidate)) {
+      base = candidate;
+      break;
+    }
+  }
+  if (!ENFORCEMENT_BASE_ID.test(base)) return null;
+  return { base, rowIds: ENFORCEMENT_DIMENSIONS.map((dimension) => `${base}_${dimension}`) };
+}
+
+/**
  * Identifies this backend process. Stable for the process lifetime and used
  * for the Redis liveness beacon that lets other instances detect a crash.
  *

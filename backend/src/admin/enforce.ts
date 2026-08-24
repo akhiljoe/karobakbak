@@ -37,7 +37,7 @@ import type { Logger } from '../logger';
 import { dbErrorFields } from '../logger';
 import type { RedisStore } from '../redis/store';
 import type { Database } from '../storage/pool';
-import { newAuditId, newEnforcementId } from '../util/ids';
+import { enforcementRowIds, newAuditId, newEnforcementId } from '../util/ids';
 import type { AdminIdentity } from './auth';
 
 /** The sanctions the console can issue. Only `ban` has an effect today. */
@@ -132,7 +132,9 @@ export class EnforcementService {
           [
             // One id per dimension row would make the Redis value ambiguous
             // about which row it came from, so the dimension is folded into
-            // the id instead and both rows stay findable by prefix.
+            // the id instead. The two forms are reconstructed exactly by
+            // `enforcementRowIds`, never matched by prefix — see the note
+            // there on why `like` was the wrong tool for this.
             `${enforcementId}_${subject.dimension}`,
             subject.key,
             request.reason,
@@ -242,12 +244,22 @@ export class EnforcementService {
     identity: AdminIdentity,
     nowMs = Date.now(),
   ): Promise<boolean> {
+    // Exactly the two rows this decision could have written, or nothing at all.
+    // Never the caller's string as a `LIKE` pattern: `%` revoked the whole
+    // table, and the audit row recorded the wildcard rather than what it lifted.
+    const target = enforcementRowIds(enforcementId);
+    if (target === null) {
+      this.logger.warn('console sent a malformed enforcement id', { actor: identity.accountId });
+      return false;
+    }
+    const { base, rowIds } = target;
+
     const affected = await this.db.transaction(async (client) => {
       const updated = await client.query(
         `update enforcement
             set revoked_at = $2, revoked_by = $3
-          where enforcement_id like $1 || '%' and revoked_at is null`,
-        [enforcementId, new Date(nowMs), identity.accountId],
+          where enforcement_id = any($1::text[]) and revoked_at is null`,
+        [rowIds, new Date(nowMs), identity.accountId],
       );
       if (updated.rowCount === 0) return 0;
 
@@ -260,7 +272,8 @@ export class EnforcementService {
           newAuditId(),
           identity.accountId,
           identity.role,
-          enforcementId,
+          // The decision, not the form of the id the console happened to send.
+          base,
           justification,
           new Date(nowMs),
           new Date(nowMs + this.config.retention.days.adminAudit * 24 * 60 * 60 * 1000),
@@ -272,11 +285,11 @@ export class EnforcementService {
     if (affected === 0) return false;
 
     const { rows } = await this.db.query<{ subject_key: string }>(
-      `select subject_key from enforcement where enforcement_id like $1 || '%'`,
-      [enforcementId],
+      `select subject_key from enforcement where enforcement_id = any($1::text[])`,
+      [rowIds],
     );
     for (const row of rows) await this.store.revokeBan(row.subject_key);
-    this.logger.info('console revoked a ban', { enforcementId });
+    this.logger.info('console revoked a ban', { enforcementId: base });
     return true;
   }
 
@@ -340,11 +353,16 @@ export class EnforcementService {
 
   private async markApplyFailed(enforcementId: string, nowMs: number): Promise<void> {
     try {
+      // Exact rows, not a prefix. This id is server-generated so `%` cannot
+      // reach here, but base64url contains `_` — a single-character wildcard —
+      // so even a well-formed id was a pattern rather than a value.
+      const target = enforcementRowIds(enforcementId);
+      if (target === null) return;
       await this.db.query(
         `update enforcement
             set revoked_at = $2, revoked_by = 'system:apply_failed'
-          where enforcement_id like $1 || '%' and revoked_at is null`,
-        [enforcementId, new Date(nowMs)],
+          where enforcement_id = any($1::text[]) and revoked_at is null`,
+        [target.rowIds, new Date(nowMs)],
       );
     } catch (err) {
       // Now the record and reality genuinely disagree, which is worth an error

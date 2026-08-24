@@ -180,6 +180,80 @@ describe('revoking a ban', () => {
     expect(audit.map((row) => row.action).sort()).toEqual(['issued_ban', 'revoked_ban']);
   });
 
+  /**
+   * The console's revoke route accepts a string from a request body. That
+   * string used to become a SQL `LIKE` pattern — `enforcement_id like $1 ||
+   * '%'` — for both the database update and the Redis key removal, so a
+   * console session submitting `%` lifted every non-revoked sanction in the
+   * system in one request, and the audit row recorded the wildcard rather than
+   * the decisions it undid.
+   */
+  it('refuses a wildcard instead of revoking every sanction in the table', async () => {
+    const first = await enforcement.issueBan(request(), NOW);
+    const second = await enforcement.issueBan(
+      request({ ipHash: fakeHash('secondip'), clientHash: fakeHash('secondclient') }),
+      NOW,
+    );
+    if (first.status !== 'applied' || second.status !== 'applied') {
+      throw new Error('expected two bans');
+    }
+
+    for (const hostile of ['%', 'enf_%', '_', 'enf_', '%_ip']) {
+      expect(await enforcement.revokeBan(hostile, 'lift everything', MODERATOR, NOW)).toBe(false);
+    }
+
+    // Nothing lifted, in either store.
+    const rows = await pg.rows<{ revoked_at: Date | null }>('select revoked_at from enforcement');
+    expect(rows).toHaveLength(4);
+    expect(rows.every((row) => row.revoked_at === null)).toBe(true);
+    expect((await redis.store.checkBan(request().ipHash!, fakeHash('other'))).banned).toBe(true);
+    expect((await redis.store.checkBan(fakeHash('secondip'), fakeHash('other'))).banned).toBe(true);
+
+    // And nothing recorded: a refusal is not a decision, so it leaves no audit
+    // row claiming one was made.
+    expect(await pg.count('admin_audit')).toBe(2);
+  });
+
+  it('lifts only the decision it was given, never its neighbours', async () => {
+    const target = await enforcement.issueBan(request(), NOW);
+    const bystander = await enforcement.issueBan(
+      request({ ipHash: fakeHash('bystanderip'), clientHash: fakeHash('bystanderclient') }),
+      NOW,
+    );
+    if (target.status !== 'applied' || bystander.status !== 'applied') {
+      throw new Error('expected two bans');
+    }
+
+    expect(await enforcement.revokeBan(target.enforcementId, 'appealed', MODERATOR, NOW)).toBe(true);
+
+    const rows = await pg.rows<{ enforcement_id: string; revoked_at: Date | null }>(
+      'select enforcement_id, revoked_at from enforcement',
+    );
+    const lifted = rows.filter((row) => row.revoked_at !== null).map((row) => row.enforcement_id);
+    expect(lifted.sort()).toEqual(
+      [`${target.enforcementId}_client`, `${target.enforcementId}_ip`].sort(),
+    );
+    expect((await redis.store.checkBan(fakeHash('bystanderip'), fakeHash('other'))).banned).toBe(
+      true,
+    );
+  });
+
+  it('accepts a per-dimension id and still lifts both dimensions', async () => {
+    // `issueBan` hands back the base id; the listings hand back per-dimension
+    // ids. Both circulate in the console and both must mean the same decision.
+    const input = request();
+    const issued = await enforcement.issueBan(input, NOW);
+    if (issued.status !== 'applied') throw new Error('expected a ban');
+
+    expect(
+      await enforcement.revokeBan(`${issued.enforcementId}_client`, 'appealed', MODERATOR, NOW),
+    ).toBe(true);
+
+    expect((await redis.store.checkBan(input.ipHash!, input.clientHash!)).banned).toBe(false);
+    const rows = await pg.rows<{ revoked_at: Date | null }>('select revoked_at from enforcement');
+    expect(rows.every((row) => row.revoked_at !== null)).toBe(true);
+  });
+
   it('reports a no-op rather than claiming success', async () => {
     expect(await enforcement.revokeBan(newEnforcementId(), 'nothing there', MODERATOR, NOW)).toBe(
       false,
