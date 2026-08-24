@@ -102,9 +102,22 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const subscriber = new SessionSubscriber(clients.subscriber, keys, registry, logger);
   const pipeline = new MessagePipeline(store, dispatcher, config, logger, retention);
   const janitor = new Janitor(config, logger, store, dispatcher, (counts) => {
-    // Cluster-wide gauges, refreshed by whichever instance held the lock. They
+    // Cluster-wide gauges, refreshed by whichever instance holds the lock. They
     // are the same Redis cardinalities the presence frame reports, so the
     // dashboard and the UI cannot disagree.
+    //
+    // A follower publishes zero rather than leaving its series frozen at
+    // whatever it last observed while it was the leader. Zero is the honest
+    // answer to "what does this instance know about the cluster", and it makes
+    // `max` and `sum` both correct: one live value beside any number of zeros.
+    // `reset()` is deliberately not used — it clears a labelled gauge's series
+    // and re-zeroes an unlabelled one, so the two here would behave
+    // differently for no reason a reader could infer.
+    if (counts === null) {
+      metrics.activeMatches.set(0);
+      metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(0);
+      return;
+    }
     metrics.activeMatches.set(counts.conversations);
     metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(counts.queueDepth);
   });
@@ -474,8 +487,24 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     void (async () => {
       let resumed: MatchedPayload | undefined;
       if (session.matchId != null && session.matchId !== '') {
-        resumed = (await lifecycle.restoreMatch(sessionId, session.matchId)) ?? undefined;
-        if (resumed) await lifecycle.announceReturn(sessionId, session.matchId);
+        // Both calls read Redis and neither catches. This task is detached, so
+        // an unhandled rejection here is an uncaught exception — Node's default
+        // for one is to terminate the process, which would turn a Redis blip
+        // during a single reconnection into the loss of every socket on this
+        // instance. Degrade the reconnection instead: the frame goes out
+        // without `resumed`, which the client already handles as "the resume
+        // did not take", and lands it on the landing screen rather than on a
+        // conversation this process could not confirm.
+        try {
+          resumed = (await lifecycle.restoreMatch(sessionId, session.matchId)) ?? undefined;
+          if (resumed) await lifecycle.announceReturn(sessionId, session.matchId);
+        } catch (err) {
+          resumed = undefined;
+          logger.warn('could not restore a resumed conversation', {
+            sessionId,
+            errName: err instanceof Error ? err.name : 'unknown',
+          });
+        }
       }
       connection.sendEvent('connected', {
         sessionId,
@@ -488,7 +517,17 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         ...(resumed ? { resumed } : {}),
       });
       void sendPresence(connection);
-    })();
+    })().catch((err: unknown) => {
+      // The backstop. The inner catch handles the one failure worth degrading
+      // gracefully; this one exists so that *no* future addition to this task
+      // can reach Node's unhandled-rejection handler and take the process with
+      // it. One socket failing to receive its opening frame is a lost
+      // connection, which the client retries; the alternative is an outage.
+      logger.warn('could not complete a connection handshake', {
+        sessionId,
+        errName: err instanceof Error ? err.name : 'unknown',
+      });
+    });
   }
 
   /**

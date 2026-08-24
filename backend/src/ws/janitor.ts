@@ -79,12 +79,21 @@ export class Janitor {
     private readonly logger: Logger,
     private readonly store: JanitorStore,
     private readonly dispatcher: EventDispatcher,
-    /** Called with fresh cluster counts each pass, for the gauges. */
-    private readonly onCounts?: (counts: {
-      online: number;
-      conversations: number;
-      queueDepth: number;
-    }) => void,
+    /**
+     * Called every pass, for the cluster gauges.
+     *
+     * `null` means "this instance is not the leader and has no counts". It is
+     * passed rather than skipped because the counts are cluster-wide: only the
+     * lock holder can produce them, and a follower that simply stayed quiet
+     * left its gauge frozen at whatever it last published — for ever, since a
+     * Prometheus gauge holds its value until overwritten. `max()` over one live
+     * series and one frozen one returns the frozen one whenever it is larger,
+     * which is exactly what happens after a busy period or a leadership change.
+     * Telling the follower so lets it withdraw its series instead.
+     */
+    private readonly onCounts?: (
+      counts: { online: number; conversations: number; queueDepth: number } | null,
+    ) => void,
   ) {}
 
   start(): void {
@@ -112,6 +121,9 @@ export class Janitor {
       await this.store.refreshInstanceBeacon(this.config.instanceId);
 
       if (!(await this.store.acquireJanitorLock(this.config.instanceId))) {
+        // Not the leader: withdraw any cluster gauge this instance published
+        // while it was. See the note on `onCounts`.
+        this.onCounts?.(null);
         return { ...IDLE_PASS };
       }
 

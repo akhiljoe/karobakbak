@@ -15,6 +15,24 @@ groups:
         annotations:
           summary: "A backend instance is not being scraped"
 
+      # The rule above only fires for a target that is *discovered and failing*.
+      # Targets come from Docker DNS, which stops answering for a container that
+      # has crashed or been killed — so the instance leaves the target list, its
+      # `up` series goes stale, and `up == 0` matches nothing at all. Production
+      # runs a single replica, so the likeliest outage there is the one the rule
+      # above cannot see: the whole job disappearing. This is that alert.
+      - alert: BackendAbsent
+        expr: absent(up{job="karobakbak-backend"})
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "No backend instance is being discovered at all"
+          description: >-
+            Prometheus has no target for the backend job. A crashed or stopped
+            container leaves DNS discovery, which looks quieter than a healthy
+            system rather than louder. Every user is affected.
+
       - alert: RetentionDeletionFailing
         expr: increase(chat_deletion_failures_total[1h]) > 0
         for: 5m
