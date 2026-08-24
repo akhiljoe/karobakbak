@@ -1,0 +1,122 @@
+# The checks this repository already had, run by something other than memory.
+#
+# `npm run verify` and the integration suite existed and were good. Nothing ran
+# them: there was no CI, no build, and no pre-commit hook, so every check was
+# opt-in at the moment somebody remembered.
+#
+# That matters more here than it would in most repositories, because a dozen of
+# this system's load-bearing invariants are enforced *by tests* rather than by
+# types, and each fails silently when it regresses:
+#
+#   * the logger's recursive field denylist, which is the primary control
+#     keeping message content inside the trusted boundary (I8)
+#   * the ban on `innerHTML` in `console.js`, on an origin whose session can
+#     read every retained conversation
+#   * the two database roles being genuinely separated — `karobakbak_app`
+#     denied `admin_accounts`, `karobakbak_console` unable to delete a
+#     conversation (D32)
+#   * blocks and bans living in separate namespaces, so revoking a ban cannot
+#     delete a user's own block (D29)
+#   * the byte-identity of the two protocol files
+#   * every declared metric having a write site
+#
+# A control that is only checked when remembered is not a control.
+
+name: verify
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A newer push supersedes an older run on the same ref. Not on the default
+# branch, where every commit's result is worth having on its own.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    name: protocol, types, unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm run install:all
+
+      # Protocol drift check, both typechecks, the backend unit suite and the
+      # frontend suite — the same command a developer runs locally, so there is
+      # one definition of "verified" rather than two that can disagree.
+      - name: Verify
+        run: npm run verify
+
+      # `.gitattributes` normalises everything to LF because the backend and
+      # frontend both run in Linux containers, where a CRLF in a shell script,
+      # a Dockerfile or an nginx config breaks the image. Git will normalise on
+      # commit, but a file committed from a tool that wrote CRLF and bypassed
+      # that would not be caught by any test — so it is caught here.
+      - name: No CRLF in tracked files
+        run: |
+          if git ls-files --eol | grep -v 'w/lf' | grep -v 'w/none'; then
+            echo "::error::tracked files above are not LF in the working tree"
+            exit 1
+          fi
+
+  integration:
+    name: integration (redis + postgres)
+    runs-on: ubuntu-latest
+
+    # The race tests, the janitor tests and the database-role assertions live
+    # here. They are the checks least likely to be run by hand and the most
+    # expensive to be wrong about, which is the whole argument for this job.
+    services:
+      redis:
+        image: redis:7-alpine
+        # Default configuration, unlike docker-compose.test.yml, which starts
+        # Redis with persistence off to match production (D12). A service
+        # container takes docker *options* and not a command, so those flags
+        # cannot be passed here. Nothing in the suite depends on them: the tests
+        # flush between contexts and none asserts anything about what does or
+        # does not reach disk.
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+        ports:
+          - 6380:6379
+
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: karobakbak
+          POSTGRES_PASSWORD: karobakbak
+          POSTGRES_DB: karobakbak_test
+        options: >-
+          --health-cmd "pg_isready -U karobakbak -d karobakbak_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+        ports:
+          - 5433:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: npm --prefix backend install
+
+      - name: Integration suite
+        run: npm run test:integration
+        env:
+          TEST_REDIS_URL: redis://localhost:6380
+          TEST_DATABASE_URL: postgres://karobakbak:karobakbak@localhost:5433/karobakbak_test

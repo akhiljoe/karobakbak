@@ -35,9 +35,17 @@ export const REJECT_REASONS = [
   'error',
 ] as const;
 export const MODERATION_ACTIONS = ['allow', 'flag', 'withhold', 'block'] as const;
+/** Why a match attempt gave up. Every value the matchmaker can report. */
+export const MATCHMAKING_FAILURES = ['already_matched', 'session_gone', 'unknown'] as const;
+/** Why a frame was refused before it became a command. */
+export const FRAME_REJECTIONS = ['unreadable', 'invalid', 'oversized'] as const;
+/** Breaker states, as transition targets. */
+export const BREAKER_STATES = ['CLOSED', 'OPEN', 'HALF_OPEN'] as const;
 export const PRIORITY_CLASSES: readonly RetentionPriority[] = ['p0', 'p1', 'p2', 'p3'];
 
 export type RejectReason = (typeof REJECT_REASONS)[number];
+export type MatchmakingFailure = (typeof MATCHMAKING_FAILURES)[number];
+export type FrameRejection = (typeof FRAME_REJECTIONS)[number];
 export type DeliveryRouteLabel = (typeof DELIVERY_ROUTES)[number];
 
 export interface Metrics {
@@ -49,7 +57,7 @@ export interface Metrics {
   readonly connectionsRejected: Counter<'reason'>;
   readonly disconnects: Counter<string>;
   readonly oversizedFrames: Counter<string>;
-  readonly invalidFrames: Counter<string>;
+  readonly invalidFrames: Counter<'reason'>;
   readonly socketErrors: Counter<string>;
   readonly rateLimited: Counter<'command'>;
   /**
@@ -86,9 +94,24 @@ export interface Metrics {
   readonly deliveryLatency: Histogram<'route'>;
 
   /* safety */
+  /**
+   * Enforcement actions are deliberately **not** here.
+   *
+   * `chat_enforcement_actions_total` used to be declared beside these and was
+   * never written, because the only process that issues or revokes a sanction
+   * is the moderation console — which runs on its own, deliberately isolated
+   * (D32), and exposes no scrape endpoint at all. The metric could not have
+   * been collected from anywhere, and a dashboard panel read it and showed an
+   * empty graph that looked like "no enforcement" rather than "no data".
+   *
+   * Measuring it means giving the console its own metrics endpoint and
+   * Prometheus job. That is a change to what the console *is*, not a wiring
+   * fix, so it is not made here. What the chat process can see — a banned
+   * connection being refused at the upgrade — is already
+   * `chat_connections_rejected_total`.
+   */
   readonly reports: Counter<string>;
   readonly blocks: Counter<'dimension'>;
-  readonly enforcementActions: Counter<'action'>;
   readonly moderationFlags: Counter<'action'>;
 
   /* retention */
@@ -158,7 +181,9 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     connectionsRejected: counter('chat_connections_rejected_total', 'Upgrades refused, by reason', ['reason']),
     disconnects: counter('chat_disconnects_total', 'Sockets closed'),
     oversizedFrames: counter('chat_oversized_frames_total', 'Frames refused for exceeding the size limit'),
-    invalidFrames: counter('chat_invalid_frames_total', 'Malformed protocol frames'),
+    invalidFrames: counter('chat_invalid_frames_total', 'Malformed protocol frames, by reason', [
+      'reason',
+    ]),
     socketErrors: counter('chat_socket_errors_total', 'Transport-level socket errors'),
     rateLimited: counter('chat_rate_limited_total', 'Commands refused by a token bucket', ['command']),
     profilesRefused: counter('chat_profiles_refused_total', 'Declared profiles refused at join, by reason', [
@@ -190,7 +215,6 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
 
     reports: counter('chat_reports_total', 'Reports filed'),
     blocks: counter('chat_blocks_total', 'Block dimensions recorded', ['dimension']),
-    enforcementActions: counter('chat_enforcement_actions_total', 'Enforcement actions taken', ['action']),
     moderationFlags: counter('chat_moderation_flags_total', 'Moderation outcomes, by action', ['action']),
 
     retentionQueueDepth: gauge('chat_retention_queue_depth', 'Records waiting to be written', ['class']),
@@ -238,6 +262,9 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const route of DELIVERY_ROUTES) metrics.messagesDelivered.labels(route).inc(0);
   for (const action of MODERATION_ACTIONS) metrics.moderationFlags.labels(action).inc(0);
   for (const priority of PRIORITY_CLASSES) metrics.retentionQueueDepth.labels(priority).set(0);
+  for (const reason of MATCHMAKING_FAILURES) metrics.matchmakingFailures.labels(reason).inc(0);
+  for (const reason of FRAME_REJECTIONS) metrics.invalidFrames.labels(reason).inc(0);
+  for (const state of BREAKER_STATES) metrics.breakerTransitions.labels(state).inc(0);
 
   return metrics;
 }

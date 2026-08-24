@@ -20,7 +20,7 @@ import type { Logger } from '../logger';
 import { encodeFrame } from '../protocol/envelope';
 import { CLOSE_CODES } from '../protocol/types';
 import type { RedisKeys } from '../redis/keys';
-import { decodeSessionEvent, toClientFrame } from './events';
+import { decodeSessionEvent, toClientFrame, type SessionEventName } from './events';
 import type { ConnectionRegistry } from './registry';
 
 export class SessionSubscriber {
@@ -29,6 +29,14 @@ export class SessionSubscriber {
     private readonly keys: RedisKeys,
     private readonly registry: ConnectionRegistry,
     private readonly logger: Logger,
+    /**
+     * Called when an event from another instance is handed to a local socket.
+     *
+     * The remote half of the pair in `EventDispatcher`: a session matched by a
+     * different instance learns about it here, and this is where its wait ends
+     * on the instance that has been timing it. Optional, and must not throw.
+     */
+    private readonly onDelivered?: (sessionId: string, event: SessionEventName) => void,
   ) {
     this.subscriber.on('message', (channel: string, payload: string) => {
       this.deliver(channel, payload);
@@ -85,6 +93,7 @@ export class SessionSubscriber {
       return;
     }
 
+    this.onDelivered?.(sessionId, event.event);
     const frame = toClientFrame(event);
     if (frame !== null) connection.send(encodeFrame(frame));
   }

@@ -1,6 +1,6 @@
 {
   "uid": "karobakbak-overview",
-  "title": "karobakbak — overview",
+  "title": "karobakbak \u2014 overview",
   "tags": [
     "karobakbak"
   ],
@@ -281,7 +281,7 @@
     {
       "type": "stat",
       "title": "Database circuit breaker",
-      "description": "0 closed · 1 half-open · 2 open. Open means chat is fine and retention is degraded (D25).",
+      "description": "0 closed \u00b7 1 half-open \u00b7 2 open. Open means chat is fine and retention is degraded (D25).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -422,7 +422,7 @@
     {
       "type": "timeseries",
       "title": "Declared profiles refused",
-      "description": "A declared name is refused outright when any moderation rule fires (D35), unlike a message, which is flagged and delivered. `age_below_minimum` is a minor-safety signal and a count only — never who, never what age.",
+      "description": "A declared name is refused outright when any moderation rule fires (D35), unlike a message, which is flagged and delivered. `age_below_minimum` is a minor-safety signal and a count only \u2014 never who, never what age.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -482,31 +482,6 @@
           },
           "expr": "histogram_quantile(0.99, sum by (le, route) (rate(chat_delivery_latency_seconds_bucket[5m])))",
           "legendFormat": "p99 {{route}}"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Enforcement",
-      "description": "Bans applied and lifted from the moderation console. Distinct from blocks: a block is one user refusing one peer, a ban is absolute and read at the upgrade before a session exists.",
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 48
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "karobakbak-prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "karobakbak-prometheus"
-          },
-          "expr": "sum by (action) (rate(chat_enforcement_actions_total[30m]))",
-          "legendFormat": "{{action}}/s"
         }
       ]
     },

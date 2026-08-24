@@ -72,6 +72,70 @@ async function pairOnOneInstance(): Promise<{ alice: TestClient; bob: TestClient
   return { alice, bob, matchId: match.matchId };
 }
 
+/**
+ * The product's headline indicator, measured through the real socket path.
+ *
+ * `chat_matchmaking_latency_seconds` was declared, documented and charted on
+ * three dashboard panels, and written by nothing — so those panels had read
+ * "No data" since the day they were built, which on a graph is
+ * indistinguishable from a healthy service nobody is using.
+ *
+ * Measuring it is not a one-liner, which is presumably why it was skipped: the
+ * clock starts when a session is told it is queued and stops when it is told it
+ * matched, and in the ordinary case those are two different requests, on two
+ * different sockets, decided by whichever instance won. So the assertion that
+ * matters is the one below — a sample exists for the side that actually
+ * waited.
+ */
+describe('the matchmaking wait is measured', () => {
+  it('records a sample for the session that waited to be matched', async () => {
+    const alice = await TestClient.connect(one.url);
+    const bob = await TestClient.connect(one.url);
+    await alice.waitForFrame('connected');
+    await bob.waitForFrame('connected');
+
+    try {
+      // Alice joins an empty queue and waits. Her clock starts here.
+      alice.command('join_queue');
+      await alice.waitForFrame('queue_status');
+
+      // Bob arrives and is matched immediately, which ends Alice's wait.
+      bob.command('join_queue');
+      await bob.waitForFrame('matched');
+      await alice.waitForFrame('matched');
+
+      const scrape = await one.metrics.scrape();
+      const sum = /^chat_matchmaking_latency_seconds_sum\{[^}]*\} ([\d.e+-]+)$/m.exec(scrape);
+      const count = /^chat_matchmaking_latency_seconds_count\{[^}]*\} (\d+)$/m.exec(scrape);
+
+      expect(count).not.toBeNull();
+      // Exactly one: Alice waited, and Bob was matched by his own join without
+      // ever being queued, so he never started a clock.
+      expect(Number(count?.[1])).toBe(1);
+      expect(Number(sum?.[1])).toBeGreaterThan(0);
+    } finally {
+      alice.close();
+      bob.close();
+    }
+  });
+
+  it('counts the attempts the matchmaker made', async () => {
+    const solo = await TestClient.connect(one.url);
+    await solo.waitForFrame('connected');
+    try {
+      solo.command('join_queue');
+      await solo.waitForFrame('queue_status');
+
+      const scrape = await one.metrics.scrape();
+      const attempts = /^chat_match_attempts_total\{[^}]*\} (\d+)$/m.exec(scrape);
+      expect(attempts).not.toBeNull();
+      expect(Number(attempts?.[1])).toBeGreaterThan(0);
+    } finally {
+      solo.close();
+    }
+  });
+});
+
 describe('delivery across two instances', () => {
   it('carries a message from one instance to the other', async () => {
     const { alice, bob, matchId } = await pairAcrossInstances();

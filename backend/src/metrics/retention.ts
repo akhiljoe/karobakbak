@@ -72,6 +72,27 @@ export class RetentionMetricsPublisher {
     this.advance('spoolExpired', snapshot.spool.expired, this.metrics.spoolExpired);
 
     this.metrics.breakerState.set(BREAKER_STATE_CODE[snapshot.breaker as BreakerState]);
+
+    // Both keyed by a value from a fixed vocabulary — a breaker state, a
+    // SQLSTATE — so the label cardinality is bounded by the vocabulary and not
+    // by traffic.
+    for (const [to, count] of Object.entries(snapshot.counters.breakerTransitions)) {
+      const delta = count - (this.last[`breaker:${to}`] ?? 0);
+      if (delta > 0) this.metrics.breakerTransitions.labels(to).inc(delta);
+      this.last[`breaker:${to}`] = count;
+    }
+
+    for (const [code, count] of Object.entries(snapshot.counters.writeFailures)) {
+      const delta = count - (this.last[`dbfail:${code}`] ?? 0);
+      if (delta > 0) this.metrics.dbWriteFailures.labels(code).inc(delta);
+      this.last[`dbfail:${code}`] = count;
+    }
+
+    // Drained rather than diffed: a histogram needs each observation once, and
+    // there is no cumulative total to subtract a previous sample from.
+    for (const seconds of this.writer.takeWriteDurations()) {
+      this.metrics.dbWriteLatency.observe(seconds);
+    }
   }
 
   private publishDeletion(): void {

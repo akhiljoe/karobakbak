@@ -129,6 +129,20 @@ export type SearchOutcome =
   | { kind: 'idle' }
   | { kind: 'session_gone' };
 
+/**
+ * What the matchmaker did, for whoever is counting.
+ *
+ * A callback pair rather than a metrics registry, so this class keeps its
+ * dependencies to Redis, the dispatcher and the retention sink. Neither may
+ * throw.
+ */
+export interface MatchmakingObserver {
+  /** One `tryMatch` invocation, whatever came back. */
+  attempt(): void;
+  /** An attempt that aborted rather than reporting a queue state. */
+  aborted(reason: 'already_matched' | 'session_gone' | 'unknown'): void;
+}
+
 export type LeaveOutcome =
   | { kind: 'idle' }
   | { kind: 'already_matched'; matchId: string }
@@ -177,6 +191,8 @@ export class SessionLifecycle {
     private readonly config: Config,
     private readonly logger: Logger,
     private readonly retention: RetentionSink,
+    /** Optional, and last, so every existing construction site is unchanged. */
+    private readonly observer?: MatchmakingObserver,
   ) {
     this.segment = config.matchmaking.defaultSegment;
     this.resumeEnabled = config.resume.graceSeconds > 0;
@@ -556,6 +572,7 @@ export class SessionLifecycle {
   private async search(sessionId: string): Promise<SearchOutcome> {
     let waiting = 0;
     for (let attempt = 0; attempt < this.config.matchmaking.retryAttempts; attempt += 1) {
+      this.observer?.attempt();
       const result = await this.store.tryMatch(sessionId, this.segment, newMatchId());
 
       if (result.status === 'matched') {
@@ -563,8 +580,19 @@ export class SessionLifecycle {
       }
 
       if (result.status === 'abort') {
-        if (result.reason === 'already_matched') return { kind: 'matched_elsewhere' };
-        if (result.reason === 'session_gone') return { kind: 'session_gone' };
+        // An abort is the attempt failing, not the queue being empty: the
+        // session was already matched, or it is gone. A run of these is a
+        // different problem from a quiet queue, which is why they are counted
+        // apart from `chat_matchmaking_latency_seconds` having no samples.
+        if (result.reason === 'already_matched') {
+          this.observer?.aborted('already_matched');
+          return { kind: 'matched_elsewhere' };
+        }
+        if (result.reason === 'session_gone') {
+          this.observer?.aborted('session_gone');
+          return { kind: 'session_gone' };
+        }
+        this.observer?.aborted('unknown');
         return { kind: 'idle' };
       }
 

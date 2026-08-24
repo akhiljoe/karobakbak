@@ -97,9 +97,62 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const { config, logger, store, clients, retention, metrics } = deps;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
-  const dispatcher = new EventDispatcher(registry, store, logger);
-  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention);
-  const subscriber = new SessionSubscriber(clients.subscriber, keys, registry, logger);
+  /**
+   * The wait ends when the session is told it matched.
+   *
+   * Both delivery paths land here — the dispatcher when the winning instance
+   * also holds the socket, the subscriber when it does not — and both run on
+   * the instance that started the clock, because that is the instance the
+   * socket is attached to.
+   *
+   * A session with no entry is one that was never queued: the searcher whose
+   * own join found somebody waited for nothing, and putting a zero in the
+   * histogram for it would drag the distribution toward a wait nobody had.
+   */
+  function onEventDelivered(sessionId: string, event: string): void {
+    if (event !== 'matched') return;
+    const startedAt = searchStartedAt.get(sessionId);
+    if (startedAt === undefined) return;
+    searchStartedAt.delete(sessionId);
+    metrics.matchmakingLatency.observe(secondsSince(startedAt));
+  }
+
+  const dispatcher = new EventDispatcher(registry, store, logger, onEventDelivered);
+  const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention, {
+    attempt: () => metrics.matchAttempts.inc(),
+    aborted: (reason) => metrics.matchmakingFailures.labels(reason).inc(),
+  });
+
+  /**
+   * When each locally-attached session started looking, for the wait histogram.
+   *
+   * `chat_matchmaking_latency_seconds` is the product's headline indicator —
+   * "how long does it take to find somebody a stranger" — and it was declared,
+   * documented, charted on three dashboard panels, and written by nothing. It
+   * needs a start and an end, and the two do not happen in the same call: a
+   * session usually joins the queue, finds nobody, and is matched later by
+   * *another* session's attempt, learning about it through a Pub/Sub event
+   * from whichever instance won.
+   *
+   * So the start is recorded here, on the instance holding the socket, and the
+   * end is the `matched` frame reaching that socket — which is the moment the
+   * user actually stops waiting, and is the same moment however the match was
+   * made. The alternative, stamping the join time into the session hash, would
+   * mean changing the `joinQueue` Lua script, and `tryMatch` and its
+   * neighbours are the most race-tested code in this repository; a metric is
+   * not worth re-verifying them for.
+   *
+   * Bounded by the sockets this instance holds: an entry appears when a search
+   * starts and is removed when the match is announced or the socket closes.
+   */
+  const searchStartedAt = new Map<string, number>();
+  const subscriber = new SessionSubscriber(
+    clients.subscriber,
+    keys,
+    registry,
+    logger,
+    onEventDelivered,
+  );
   const pipeline = new MessagePipeline(store, dispatcher, config, logger, retention);
   const janitor = new Janitor(config, logger, store, dispatcher, (counts) => {
     // Cluster-wide gauges, refreshed by whichever instance holds the lock. They
@@ -459,7 +512,16 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       config,
       logger,
       onCommand: (command, conn) => handleCommand(command, conn),
+      observe: {
+        frameRejected: (reason) => {
+          if (reason === 'oversized') metrics.oversizedFrames.inc();
+          metrics.invalidFrames.labels(reason).inc();
+        },
+        socketError: () => metrics.socketErrors.inc(),
+      },
       onClose: async (conn) => {
+        // Whatever this socket was waiting for, it is not waiting any more.
+        searchStartedAt.delete(conn.sessionId);
         // A socket closing while Redis is unavailable — a restart, a failover,
         // a test tearing its server down — must not produce an unhandled
         // rejection. The TTLs and the janitor are the recovery net for whatever
@@ -787,6 +849,12 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   }
 
   function replyToSearch(connection: SocketConnection, outcome: SearchOutcome): void {
+    // `searching` means the server put this session in the queue and it is now
+    // waiting. That is the clock starting, and it is the only outcome that
+    // starts it: `matched` was instantaneous, and the rest are not searches.
+    if (outcome.kind === 'searching') {
+      searchStartedAt.set(connection.sessionId, monotonicMs());
+    }
     switch (outcome.kind) {
       case 'matched':
         metrics.matchesCreated.inc();

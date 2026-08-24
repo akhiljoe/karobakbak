@@ -23,7 +23,7 @@
  */
 import { encodeFrame } from '../protocol/envelope';
 import type { Logger } from '../logger';
-import { encodeSessionEvent, toClientFrame, type SessionEvent } from './events';
+import { encodeSessionEvent, toClientFrame, type SessionEvent, type SessionEventName } from './events';
 import type { ConnectionRegistry } from './registry';
 
 export type DeliveryRoute = 'local' | 'remote' | 'dropped';
@@ -38,6 +38,16 @@ export class EventDispatcher {
     private readonly registry: ConnectionRegistry,
     private readonly publisher: EventPublisher,
     private readonly logger: Logger,
+    /**
+     * Called when an event is handed to a socket on *this* instance.
+     *
+     * The one point where "this session was told" is known together with what
+     * it was told, on the instance that holds the socket — which is what
+     * `chat_matchmaking_latency_seconds` needs, since the wait ends when the
+     * user is told and the instance that ends it may not be the one that
+     * started it. Optional, and must not throw.
+     */
+    private readonly onDelivered?: (sessionId: string, event: SessionEventName) => void,
   ) {}
 
   /**
@@ -78,6 +88,7 @@ export class EventDispatcher {
     event: SessionEvent,
     send: (frame: string) => boolean,
   ): DeliveryRoute {
+    this.onDelivered?.(sessionId, event.event);
     const frame = toClientFrame(event);
     if (frame === null) {
       // `session_evicted` has no client frame: the socket gets closed by the

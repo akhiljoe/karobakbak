@@ -43,6 +43,19 @@ export interface SocketConnectionDeps {
   onCommand(command: ValidatedCommand, connection: SocketConnection): Promise<void>;
   /** Called exactly once, after the socket is gone. */
   onClose(connection: SocketConnection): Promise<void>;
+  /**
+   * Observers, for metrics.
+   *
+   * Callbacks rather than a registry, so this class keeps knowing nothing
+   * about Prometheus: it reports what happened and the caller decides whether
+   * anything counts it. All optional, and none may throw.
+   */
+  observe?: {
+    /** A frame refused before it became a command. */
+    frameRejected(reason: 'unreadable' | 'invalid' | 'oversized'): void;
+    /** A transport-level error on this socket. */
+    socketError(): void;
+  };
 }
 
 export class SocketConnection implements Connection {
@@ -76,7 +89,14 @@ export class SocketConnection implements Connection {
     this.socket.on('pong', () => {
       this.lastPongAt = nowMs();
     });
-    this.socket.on('close', () => {
+    this.socket.on('close', (code: number) => {
+      // `ws` enforces `maxPayload` itself and closes with 1009 before this
+      // process ever allocates the payload, so an oversized frame never
+      // reaches `handleFrame` and cannot be counted there. The close code is
+      // the only place it is observable.
+      if (code === CLOSE_CODES.MESSAGE_TOO_BIG) {
+        this.deps.observe?.frameRejected('oversized');
+      }
       void this.cleanup();
     });
     this.socket.on('error', (err: Error) => {
@@ -84,6 +104,7 @@ export class SocketConnection implements Connection {
       // one. It is logged at debug and handled by the same cleanup path as a
       // clean close, which is why that path has to be idempotent.
       this.logger.debug('socket error', { sessionId: this.sessionId, errName: err.name });
+      this.deps.observe?.socketError();
       void this.cleanup();
     });
   }
@@ -174,6 +195,7 @@ export class SocketConnection implements Connection {
   private async handleFrame(data: unknown, isBinary: boolean): Promise<void> {
     const raw = toFrameData(data);
     if (raw === null) {
+      this.deps.observe?.frameRejected('unreadable');
       this.strike('BAD_ENVELOPE', 'unreadable frame');
       return;
     }
@@ -184,6 +206,7 @@ export class SocketConnection implements Connection {
     });
 
     if (!parsed.ok) {
+      this.deps.observe?.frameRejected('invalid');
       this.strike(parsed.code, parsed.message);
       return;
     }

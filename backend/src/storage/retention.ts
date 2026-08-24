@@ -33,6 +33,29 @@ import { priorityFor } from './records';
 import { Repositories } from './repositories';
 import type { RetentionSink } from './sink';
 import type { Spool } from './spool';
+import { monotonicMs, secondsSince } from '../util/time';
+
+/**
+ * How many unobserved batch durations to keep.
+ *
+ * Generous next to the publish interval, and bounded so a process with metrics
+ * switched off does not accumulate an array for its whole life.
+ */
+const MAX_PENDING_DURATIONS = 512;
+
+/**
+ * The SQLSTATE of a driver error, or a placeholder.
+ *
+ * A code and nothing else. The error object itself is never read further here
+ * for the same reason `dbErrorFields` exists: `pg` echoes the parameters of the
+ * failing statement on a constraint violation, and those parameters are message
+ * bodies (I8). SQLSTATE is a fixed five-character vocabulary, which is also
+ * what makes it safe as a metric label.
+ */
+function sqlStateOf(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? code : 'unknown';
+}
 
 export interface RetentionCounters {
   queued: number;
@@ -42,6 +65,15 @@ export interface RetentionCounters {
   spooled: number;
   drained: number;
   quotaEvictions: number;
+  /**
+   * Failed batch writes by SQL state, cumulative.
+   *
+   * A code, never a driver error object: `pg` echoes the parameters of the
+   * failing statement, and those parameters are message bodies (I8).
+   */
+  writeFailures: Record<string, number>;
+  /** Breaker state changes by target state, cumulative. */
+  breakerTransitions: Record<string, number>;
 }
 
 export type EnqueueResult =
@@ -86,7 +118,20 @@ export class RetentionWriter implements RetentionSink {
     spooled: 0,
     drained: 0,
     quotaEvictions: 0,
+    writeFailures: {},
+    breakerTransitions: {},
   };
+
+  /**
+   * How long recent batch writes took, in seconds, waiting to be observed.
+   *
+   * A histogram cannot be reconstructed from a cumulative total the way a
+   * counter can, so this is the one thing the publisher has to *drain* rather
+   * than diff. Bounded by `MAX_PENDING_DURATIONS`: if nothing ever collects
+   * them — metrics disabled, publisher not running — the oldest are dropped
+   * rather than accumulating for the life of the process.
+   */
+  private readonly writeDurations: number[] = [];
 
   constructor(
     private readonly config: Config,
@@ -96,7 +141,13 @@ export class RetentionWriter implements RetentionSink {
   ) {
     this.queue = new RetentionQueue(config);
     this.repositories = new Repositories(config);
-    this.breaker = new CircuitBreaker(config, logger);
+    this.breaker = new CircuitBreaker(config, logger, (to) => {
+      // The breaker already had this hook and nothing used it. Counting here
+      // keeps the write path free of any metrics dependency: this increments a
+      // number on `counters`, exactly like every other total the publisher
+      // pulls.
+      this.counters.breakerTransitions[to] = (this.counters.breakerTransitions[to] ?? 0) + 1;
+    });
     this.pacer = new DrainPacer(config.breaker.drainBatchesPerSec);
   }
 
@@ -211,6 +262,22 @@ export class RetentionWriter implements RetentionSink {
     }
   }
 
+  /**
+   * Take the batch durations recorded since the last call.
+   *
+   * Explicitly draining, and named so, because `snapshot()` is a read and must
+   * stay one. A histogram needs each observation once; leaving them in place
+   * would replay every duration on every publish.
+   */
+  takeWriteDurations(): number[] {
+    return this.writeDurations.splice(0, this.writeDurations.length);
+  }
+
+  private recordWriteDuration(startedAtMs: number): void {
+    if (this.writeDurations.length >= MAX_PENDING_DURATIONS) this.writeDurations.shift();
+    this.writeDurations.push(secondsSince(startedAtMs));
+  }
+
   snapshot(): {
     queue: QueueStats;
     breaker: BreakerState;
@@ -228,12 +295,17 @@ export class RetentionWriter implements RetentionSink {
   /* --- internals ----------------------------------------------------------- */
 
   private async writeBatch(batch: QueuedRecord[], nowMs: number): Promise<void> {
+    const startedAt = monotonicMs();
     try {
       await this.repositories.writeBatch(this.db, batch, nowMs);
+      this.recordWriteDuration(startedAt);
       this.breaker.recordSuccess();
       this.counters.written += batch.length;
       return;
     } catch (err) {
+      this.recordWriteDuration(startedAt);
+      const code = sqlStateOf(err);
+      this.counters.writeFailures[code] = (this.counters.writeFailures[code] ?? 0) + 1;
       // Never the error object: the driver echoes the parameters of the failing
       // statement, and those parameters are message bodies (I8).
       if (!isPermanentWriteError(err)) {
