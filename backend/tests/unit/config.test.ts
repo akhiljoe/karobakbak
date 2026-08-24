@@ -345,9 +345,25 @@ describe('configWarnings', () => {
     const prod = configWarnings(loadConfig(baseEnv({ NODE_ENV: 'production' })));
     expect(prod.join(' ')).toMatch(/IP_HASH_SALT/);
 
+    // Narrowed to the subject rather than asserting the whole list is empty:
+    // this used to be `toEqual([])`, which made every unrelated warning added
+    // later fail a test about the salt.
     const salted = configWarnings(
       loadConfig(baseEnv({ NODE_ENV: 'production', IP_HASH_SALT: 'a-real-secret' })),
     );
-    expect(salted).toEqual([]);
+    expect(salted.join(' ')).not.toMatch(/IP_HASH_SALT/);
+  });
+
+  it('warns when nothing can report a backup', () => {
+    // `BackupMonitor` reports `unknown` until something tells it otherwise, and
+    // the report endpoint does not exist without a token — so an unconfigured
+    // deployment has no way to ever leave that state.
+    const silent = configWarnings(loadConfig(baseEnv()));
+    expect(silent.join(' ')).toMatch(/BACKUP_REPORT_TOKEN/);
+
+    const configured = configWarnings(
+      loadConfig(baseEnv({ BACKUP_REPORT_TOKEN: 'a-shared-secret' })),
+    );
+    expect(configured.join(' ')).not.toMatch(/BACKUP_REPORT_TOKEN/);
   });
 });

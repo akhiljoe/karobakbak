@@ -100,6 +100,12 @@ services:
       # nginx is the only thing in front, so exactly one hop is trusted and the
       # client address is the rightmost entry of X-Forwarded-For (§6.5).
       TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-1}"
+      # The shared secret the backup job presents when it reports a run. Empty
+      # means the report route does not exist at all, which is the correct
+      # posture for a deployment that is not taking backups — but it also means
+      # `BackupMonitor` can never leave `unknown`, so `configWarnings` says so
+      # at startup.
+      BACKUP_REPORT_TOKEN: "${BACKUP_REPORT_TOKEN:-}"
       # An empty allowlist is a startup failure in production (R9). Every entry
       # must match scheme, host *and* port exactly — testing from a phone means
       # adding `http://<lan-ip>:8081`, which is a different origin.
@@ -260,6 +266,40 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
+  # THE THING THAT TAKES BACKUPS
+  # ---------------------------------------------------------------------------
+  # `BackupMonitor` in the application exists to notice when backups stop. Until
+  # now nothing took one, so it reported `unknown` for ever and the alert that
+  # watches it could only ever be wrong in one direction or the other.
+  #
+  # Two secrets, both files rather than environment variables, both gitignored:
+  # the passphrase that encrypts the dump, and the token it presents when
+  # reporting in. Files because `docker inspect` shows environment variables,
+  # and because the passphrase must outlive this host — copy it into a password
+  # manager the day you set it.
+  backup:
+    build:
+      context: ./ops/backup
+    environment:
+      PGHOST: postgres
+      PGUSER: "${POSTGRES_USER:-karobakbak}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:-karobakbak}"
+      PGDATABASE: "${POSTGRES_DB:-karobakbak}"
+      BACKUP_INTERVAL_SECONDS: "${BACKUP_INTERVAL_SECONDS:-86400}"
+      BACKUP_KEEP: "${BACKUP_KEEP:-7}"
+      BACKUP_PASSPHRASE_FILE: /run/secrets/backup-passphrase
+      BACKUP_REPORT_URL: "http://backend:8080/internal/backup-observed"
+      BACKUP_REPORT_TOKEN_FILE: /run/secrets/backup-report-token
+    volumes:
+      - backups:/backups
+      - ./ops/backup/passphrase:/run/secrets/backup-passphrase:ro
+      - ./ops/backup/report-token:/run/secrets/backup-report-token:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # WHERE AN ALERT GOES
   # ---------------------------------------------------------------------------
   # Prometheus decides *that* something is wrong; this decides who hears about
@@ -301,6 +341,7 @@ services:
 
 volumes:
   alertdata:
+  backups:
   pgdata:
   promdata:
   grafanadata:

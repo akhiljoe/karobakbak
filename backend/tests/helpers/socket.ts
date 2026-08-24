@@ -22,6 +22,8 @@ export interface TestServer {
   server: ChatServer;
   clients: RedisClients;
   metrics: Metrics;
+  /** Every backup report the server accepted, in order. */
+  backupReports: boolean[];
   url: string;
   stop(): Promise<void>;
 }
@@ -37,7 +39,10 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
   await clients.waitUntilReady();
   const metrics = createMetrics(ctx.config, { processMetrics: false });
 
+  const backupReports: boolean[] = [];
+
   const server = createChatServer({
+    onBackupReported: (ok) => backupReports.push(ok),
     config: ctx.config,
     logger,
     store: ctx.store,
@@ -54,6 +59,7 @@ export async function startTestServer(overrides: Env = {}): Promise<TestServer> 
     server,
     clients,
     metrics,
+    backupReports,
     url: `ws://127.0.0.1:${port}${ctx.config.http.wsPath}`,
     async stop(): Promise<void> {
       await server.stop();

@@ -29,6 +29,110 @@ afterEach(async () => {
   await http.ctx.flush();
 });
 
+/**
+ * The one route on this process that changes anything.
+ *
+ * `BackupMonitor` can only ever report `unknown` unless something tells it a
+ * backup happened, and the alternative — the chat process reaching into the
+ * backup system to look — would hand it credentials to the thing backups exist
+ * to protect against. So the report comes inward, and this is the surface that
+ * accepts it. Being the only mutating route, it is worth testing as a surface
+ * and not just as a happy path.
+ */
+describe('the backup report endpoint', () => {
+  let secured: TestServer;
+  const TOKEN = 'a-long-shared-secret-for-the-backup-job';
+
+  async function post(
+    server: TestServer,
+    init: RequestInit = {},
+  ): Promise<{ status: number }> {
+    const base = server.url.replace('ws://', 'http://').replace(/\/ws$/, '');
+    const response = await fetch(`${base}/internal/backup-observed`, {
+      method: 'POST',
+      ...init,
+    });
+    return { status: response.status };
+  }
+
+  const auth = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
+
+  beforeAll(async () => {
+    secured = await startTestServer({ BACKUP_REPORT_TOKEN: TOKEN });
+  });
+
+  afterAll(async () => {
+    await secured.stop();
+  });
+
+  afterEach(() => {
+    secured.backupReports.length = 0;
+  });
+
+  it('does not exist at all when no token is configured', async () => {
+    // Not "exists and refuses". A deployment that has not configured backups
+    // should have no extra surface, so the route is absent rather than
+    // advertising itself with a 401.
+    expect(await post(http, { headers: auth(TOKEN) })).toEqual({ status: 404 });
+    expect(http.backupReports).toEqual([]);
+  });
+
+  it('records a success for a correctly authorised report', async () => {
+    expect(await post(secured, { headers: auth(TOKEN) })).toEqual({ status: 204 });
+    expect(secured.backupReports).toEqual([true]);
+  });
+
+  it('records a failure when the job says it ran and failed', async () => {
+    // A different signal from silence: this one means backups are running and
+    // broken, which `chat_backup_failures_total` shows and staleness does not.
+    const response = await post(secured, {
+      headers: { ...auth(TOKEN), 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: false }),
+    });
+    expect(response).toEqual({ status: 204 });
+    expect(secured.backupReports).toEqual([false]);
+  });
+
+  it('refuses every wrong credential the same way, and records nothing', async () => {
+    for (const header of [
+      undefined,
+      auth(''),
+      auth('wrong'),
+      auth(`${TOKEN}x`),
+      auth(TOKEN.slice(0, -1)),
+      { authorization: TOKEN },
+    ]) {
+      const response = await post(secured, header ? { headers: header } : {});
+      expect(response).toEqual({ status: 401 });
+    }
+    expect(secured.backupReports).toEqual([]);
+  });
+
+  it('refuses a body larger than a report could possibly need', async () => {
+    const response = await post(secured, {
+      headers: { ...auth(TOKEN), 'content-type': 'application/json' },
+      body: JSON.stringify({ ok: true, padding: 'x'.repeat(2048) }),
+    });
+    expect(response).toEqual({ status: 413 });
+    expect(secured.backupReports).toEqual([]);
+  });
+
+  it('refuses a body that is not JSON rather than guessing', async () => {
+    const response = await post(secured, {
+      headers: { ...auth(TOKEN), 'content-type': 'application/json' },
+      body: 'not json at all',
+    });
+    expect(response).toEqual({ status: 400 });
+    expect(secured.backupReports).toEqual([]);
+  });
+
+  it('is still a GET-only server for everything else', async () => {
+    const base = secured.url.replace('ws://', 'http://').replace(/\/ws$/, '');
+    const posted = await fetch(`${base}/health`, { method: 'POST' });
+    expect(posted.status).toBe(405);
+  });
+});
+
 describe('health and readiness', () => {
   it('serves /health from the process alone', async () => {
     const { status, body } = await get('/health');

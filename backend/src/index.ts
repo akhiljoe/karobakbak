@@ -101,7 +101,19 @@ async function main(): Promise<void> {
   const metricsTimer = setInterval(() => publisher.publish(), Math.max(1000, config.metrics.cacheMs));
   metricsTimer.unref();
 
-  const server = createChatServer({ config, logger, store, clients, retention, metrics });
+  const server = createChatServer({
+    config,
+    logger,
+    store,
+    clients,
+    retention,
+    metrics,
+    // The backup job reports inward; nothing here reaches out to look.
+    onBackupReported: (ok) => {
+      if (ok) backup.recordSuccess();
+      else backup.recordFailure();
+    },
+  });
   await server.listen();
 
   let stopping = false;

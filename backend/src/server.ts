@@ -18,7 +18,7 @@
  * serves chat correctly and must stay in the load balancer (§10.18); one whose
  * Redis is down cannot serve a single transition and must leave it.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 
@@ -60,6 +60,15 @@ import {
 export interface ChatServerDeps {
   config: Config;
   logger: Logger;
+  /**
+   * Told when the backup job reports in.
+   *
+   * The application deliberately does not reach into the backup system — that
+   * would hand the chat process credentials to the thing backups exist to
+   * protect against. The report comes inward instead, and this is where it
+   * lands.
+   */
+  onBackupReported?: (ok: boolean) => void;
   store: RedisStore;
   clients: RedisClients;
   /** Where retained records go. Never awaited on the chat path (D16). */
@@ -215,8 +224,80 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
 
   /* --- HTTP --------------------------------------------------------------- */
 
+  /**
+   * The one route on this process that changes anything.
+   *
+   * It exists because `BackupMonitor` can only ever report `unknown` unless
+   * something tells it a backup happened, and the alternative — the chat
+   * process reaching into the backup system to look — would give it
+   * credentials to the thing backups protect against.
+   *
+   * Four things keep it small. It is off entirely when no token is configured,
+   * so an unconfigured deployment has no extra surface rather than a surface
+   * that refuses. The token is compared in constant time. It is never proxied:
+   * the edge forwards `/ws`, `/health` and `/ready` and nothing else, and the
+   * backend publishes no host port in production, so this is reachable only
+   * from the compose network. And it carries no user data in either direction.
+   */
+  function handleBackupReport(req: IncomingMessage, res: ServerResponse): void {
+    const expected = config.backup.reportToken;
+    if (expected === '') {
+      json(res, 404, { error: 'not_found' });
+      return;
+    }
+
+    const header = req.headers.authorization ?? '';
+    const presented = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!constantTimeEquals(presented, expected)) {
+      // No detail, and the same shape whatever was wrong with it.
+      json(res, 401, { error: 'unauthorized' });
+      return;
+    }
+
+    // A tiny bounded body, or none at all. `{"ok": false}` is how a job that
+    // ran and failed says so, which is a different signal from silence: one
+    // means backups are broken, the other means they stopped happening.
+    let raw = '';
+    let oversized = false;
+    req.on('data', (chunk: Buffer) => {
+      if (oversized) return;
+      if (raw.length + chunk.length > 512) {
+        oversized = true;
+        raw = '';
+        return;
+      }
+      raw += chunk.toString('utf8');
+    });
+    req.on('end', () => {
+      if (oversized) {
+        json(res, 413, { error: 'payload_too_large' });
+        return;
+      }
+      let ok = true;
+      if (raw.trim() !== '') {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (typeof parsed === 'object' && parsed !== null && 'ok' in parsed) {
+            ok = (parsed as { ok: unknown }).ok !== false;
+          }
+        } catch {
+          json(res, 400, { error: 'bad_json' });
+          return;
+        }
+      }
+      deps.onBackupReported?.(ok);
+      logger.info('backup reported', { backupOk: ok });
+      json(res, 204, {});
+    });
+  }
+
   function handleHttp(req: IncomingMessage, res: ServerResponse): void {
     const path = (req.url ?? '/').split('?')[0];
+
+    if (req.method === 'POST' && path === '/internal/backup-observed') {
+      handleBackupReport(req, res);
+      return;
+    }
 
     if (req.method !== 'GET') {
       json(res, 405, { error: 'method_not_allowed' });
@@ -257,6 +338,18 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
 
     json(res, 404, { error: 'not_found' });
+  }
+
+  /**
+   * Compare a presented secret without leaking its length or contents through
+   * timing. Hashing both sides first is what makes it safe for values of
+   * different lengths — `timingSafeEqual` throws on a length mismatch, and
+   * returning early on one would leak the length of the real token.
+   */
+  function constantTimeEquals(presented: string, expected: string): boolean {
+    const a = createHash('sha256').update(presented).digest();
+    const b = createHash('sha256').update(expected).digest();
+    return timingSafeEqual(a, b);
   }
 
   function json(res: ServerResponse, status: number, body: unknown): void {

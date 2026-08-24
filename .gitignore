@@ -47,6 +47,11 @@ data/
 # committed; this is not.
 monitoring/alertmanager/webhook-url
 
+# The backup passphrase. Losing it means losing every backup it encrypted, so
+# it belongs in a password manager as well as here — and never in git.
+ops/backup/passphrase
+ops/backup/report-token
+
 monitoring/grafana/data/
 monitoring/prometheus/data/
 

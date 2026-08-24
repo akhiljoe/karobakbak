@@ -319,6 +319,14 @@ export interface Config {
   };
 
   readonly backup: {
+    /**
+     * Shared secret the backup job presents when it reports in.
+     *
+     * Empty disables the report endpoint entirely — the route does not exist
+     * rather than existing and refusing, so a deployment that has not
+     * configured backups has no extra surface at all.
+     */
+    readonly reportToken: string;
     /** Alert when no successful backup has been observed within this window. */
     readonly maxAgeSeconds: number;
   };
@@ -641,6 +649,7 @@ export function loadConfig(env: Env = process.env): Config {
     },
 
     backup: {
+      reportToken: str(env, 'BACKUP_REPORT_TOKEN', ''),
       maxAgeSeconds: int(env, 'BACKUP_MAX_AGE_SECONDS', 93_600, 60, 2_592_000),
     },
 
@@ -794,6 +803,14 @@ export function configWarnings(config: Config): string[] {
       'ALLOWED_ORIGINS is empty: WebSocket upgrades from ANY origin are accepted. ' +
         'Set an explicit allowlist before exposing this service; it is a startup ' +
         'failure under NODE_ENV=production.',
+    );
+  }
+  if (config.retention.enabled && config.backup.reportToken === '') {
+    warnings.push(
+      'BACKUP_REPORT_TOKEN is empty: the backup report endpoint is disabled, so ' +
+        'nothing can tell this process a backup succeeded. `BackupsNeverObserved` ' +
+        'will fire once the process has been up longer than BACKUP_MAX_AGE_SECONDS, ' +
+        'which is correct — there is nothing to restore from.',
     );
   }
   if (!config.blocks.ipDimensionEnabled && !config.blocks.clientDimensionEnabled) {
