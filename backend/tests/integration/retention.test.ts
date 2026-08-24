@@ -14,6 +14,7 @@ import { newMatchId, newMessageId } from '../../src/util/ids';
 
 import { brokenDatabase, createPostgresContext, type PostgresContext } from '../helpers/postgres';
 import { createNullLogger } from '../../src/logger';
+import { ReportQueueMonitor } from '../../src/storage/reportqueue';
 import { RetentionWriter } from '../../src/storage/retention';
 import { FileSpool } from '../../src/storage/spool';
 import type { MessageRecord, RetentionRecord } from '../../src/storage/records';
@@ -65,6 +66,88 @@ function message(id: string, sessionId = 's_a'): MessageRecord {
     moderationFlags: [],
   };
 }
+
+/**
+ * The number a response target is set against.
+ *
+ * With a single moderator there is no rota to notice a queue growing
+ * overnight, so "how long has the oldest person been waiting" has to be a
+ * metric an alert can watch rather than a screen somebody remembers to open.
+ */
+describe('the report queue monitor', () => {
+  async function seedReport(ageMinutes: number, state = 'OPEN'): Promise<void> {
+    const id = conversationId();
+    await ctx.db.query(
+      `insert into conversations
+         (conversation_id, session_a, session_b, segment, started_at, retention_expires_at)
+       values ($1, 's_a', 's_b', 'default', now(), now() + interval '30 days')`,
+      [id],
+    );
+    await ctx.db.query(
+      `insert into reports (report_id, conversation_id, reporter_session_id, reported_session_id,
+                            category, created_at, state, retention_expires_at)
+       values ($1, $2, 's_a', 's_b', 'harassment', now() - ($3 || ' minutes')::interval, $4,
+               now() + interval '90 days')`,
+      [newMessageId(), id, String(ageMinutes), state],
+    );
+  }
+
+  function monitor(): ReportQueueMonitor {
+    return new ReportQueueMonitor(ctx.db, createNullLogger(), 60_000);
+  }
+
+  it('publishes nothing until a sample has succeeded', () => {
+    // A zero from a monitor that has never read the database is
+    // indistinguishable from an empty queue, and "nobody is waiting" is the
+    // most reassuring thing this process could wrongly claim.
+    expect(monitor().snapshot()).toMatchObject({ known: false, open: 0, oldestSeconds: 0 });
+  });
+
+  it('reports an empty queue as genuinely empty once it has looked', async () => {
+    const m = monitor();
+    await m.sample();
+    expect(m.snapshot()).toMatchObject({ known: true, open: 0, oldestSeconds: 0 });
+  });
+
+  it('counts open reports and ages the oldest', async () => {
+    await seedReport(90);
+    await seedReport(10);
+    const m = monitor();
+    await m.sample();
+
+    const snapshot = m.snapshot();
+    expect(snapshot.open).toBe(2);
+    // The oldest, not the newest and not an average: the question is how long
+    // the person who has waited longest has been waiting.
+    expect(snapshot.oldestSeconds).toBeGreaterThanOrEqual(90 * 60 - 5);
+    expect(snapshot.oldestSeconds).toBeLessThan(95 * 60);
+  });
+
+  it('ignores reports somebody has already dealt with', async () => {
+    await seedReport(240, 'ACTIONED');
+    await seedReport(240, 'DISMISSED');
+    const m = monitor();
+    await m.sample();
+    expect(m.snapshot()).toMatchObject({ known: true, open: 0, oldestSeconds: 0 });
+  });
+
+  it('keeps the last good answer when a sample fails, rather than reporting zero', async () => {
+    await seedReport(30);
+    const m = monitor();
+    await m.sample();
+    expect(m.snapshot().open).toBe(1);
+
+    const broken = new ReportQueueMonitor(
+      { ...ctx.db, query: async () => { throw new Error('connection terminated'); } },
+      createNullLogger(),
+      60_000,
+    );
+    await broken.sample();
+    // Never read anything, so it still declines to publish.
+    expect(broken.snapshot()).toMatchObject({ known: false, failures: 1 });
+  });
+});
+
 
 describe('the happy path', () => {
   it('accepts without blocking and writes on the next flush', async () => {

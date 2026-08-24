@@ -14,6 +14,7 @@
 import type { BackupMonitor } from '../storage/backup';
 import { BREAKER_STATE_CODE, type BreakerState } from '../storage/breaker';
 import type { DeletionWorker } from '../storage/deletion';
+import type { ReportQueueMonitor } from '../storage/reportqueue';
 import type { RetentionWriter } from '../storage/retention';
 import type { Metrics } from './registry';
 
@@ -29,6 +30,8 @@ export class RetentionMetricsPublisher {
     private readonly writer: RetentionWriter | null,
     private readonly deletion: DeletionWorker | null,
     private readonly backup: BackupMonitor | null,
+    private readonly reportQueue: ReportQueueMonitor | null = null,
+    private readonly reportTargetSeconds = 0,
   ) {}
 
   /** Sample every source once. Cheap: all of it is in-memory state. */
@@ -36,6 +39,24 @@ export class RetentionMetricsPublisher {
     this.publishWriter();
     this.publishDeletion();
     this.publishBackup(nowMs);
+    this.publishReportQueue();
+  }
+
+  /**
+   * The moderation queue, and the target it is measured against.
+   *
+   * Nothing is published until a sample has succeeded. A zero from a monitor
+   * that has never managed to read the database is indistinguishable from an
+   * empty queue, and "nobody is waiting" is the most reassuring thing this
+   * process could wrongly claim.
+   */
+  private publishReportQueue(): void {
+    if (!this.reportQueue) return;
+    const snapshot = this.reportQueue.snapshot();
+    if (!snapshot.known) return;
+    this.metrics.reportsOpen.set(snapshot.open);
+    this.metrics.reportQueueOldest.set(snapshot.oldestSeconds);
+    this.metrics.reportResponseTarget.set(this.reportTargetSeconds);
   }
 
   private publishWriter(): void {

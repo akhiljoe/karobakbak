@@ -15,6 +15,7 @@ import { RedisStore } from './redis/store';
 import { createMetrics } from './metrics/registry';
 import { RetentionMetricsPublisher } from './metrics/retention';
 import { BackupMonitor } from './storage/backup';
+import { ReportQueueMonitor } from './storage/reportqueue';
 import { createChatServer } from './server';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
@@ -97,7 +98,23 @@ async function main(): Promise<void> {
   // dependency. The interval is the scrape cache window: sampling faster would
   // publish numbers nobody reads.
   const backup = new BackupMonitor(config);
-  const publisher = new RetentionMetricsPublisher(metrics, writer, deletion, backup);
+
+  // How long the oldest untriaged report has waited. With one moderator there
+  // is no rota to notice a queue growing overnight, so it is a number and an
+  // alert rather than a screen somebody has to remember to open.
+  const reportQueue = database
+    ? new ReportQueueMonitor(database, logger, config.moderation_response.sampleIntervalMs)
+    : null;
+  reportQueue?.start();
+
+  const publisher = new RetentionMetricsPublisher(
+    metrics,
+    writer,
+    deletion,
+    backup,
+    reportQueue,
+    config.moderation_response.targetSeconds,
+  );
   const metricsTimer = setInterval(() => publisher.publish(), Math.max(1000, config.metrics.cacheMs));
   metricsTimer.unref();
 
@@ -129,6 +146,7 @@ async function main(): Promise<void> {
     clearInterval(metricsTimer);
     if (banReloadTimer) clearInterval(banReloadTimer);
     deletion?.stop();
+    reportQueue?.stop();
     if (writer) await writer.stop();
     if (database) await database.close();
     await clients.close();

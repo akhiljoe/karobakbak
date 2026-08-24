@@ -318,6 +318,20 @@ export interface Config {
     readonly batch: number;
   };
 
+  readonly moderation_response: {
+    /**
+     * How long an untriaged report may wait before it is a problem.
+     *
+     * Exported as a metric so the alert compares against it rather than
+     * repeating the number — a threshold copied into a rule file drifts out of
+     * step with the configuration the moment somebody tunes one and not the
+     * other.
+     */
+    readonly targetSeconds: number;
+    /** How often the report queue is sampled. */
+    readonly sampleIntervalMs: number;
+  };
+
   readonly backup: {
     /**
      * Shared secret the backup job presents when it reports in.
@@ -646,6 +660,11 @@ export function loadConfig(env: Env = process.env): Config {
       enabled: bool(env, 'DELETION_WORKER_ENABLED', true),
       intervalMs: int(env, 'DELETION_INTERVAL_MS', 3_600_000, 1000, 86_400_000),
       batch: int(env, 'DELETION_BATCH', 500, 1, 100_000),
+    },
+
+    moderation_response: {
+      targetSeconds: int(env, 'REPORT_RESPONSE_TARGET_SECONDS', 86_400, 60, 2_592_000),
+      sampleIntervalMs: int(env, 'REPORT_QUEUE_SAMPLE_MS', 60_000, 5_000, 3_600_000),
     },
 
     backup: {

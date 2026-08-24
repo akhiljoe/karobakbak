@@ -5,11 +5,17 @@
  * commits and the effect does not, and what happens after Redis — which holds
  * no persistence by design (D12) — loses every key it had.
  */
-import { EnforcementService, InvalidBanDurationError } from '../../src/admin/enforce';
+import {
+  EnforcementService,
+  IMPLEMENTED_ACTIONS,
+  InvalidBanDurationError,
+  isEnforceable,
+} from '../../src/admin/enforce';
 import type { AdminIdentity } from '../../src/admin/auth';
 import type { RedisStore } from '../../src/redis/store';
 import { newAdminAccountId, newEnforcementId } from '../../src/util/ids';
 import { createTestContext, fakeHash, type TestContext } from '../helpers/redis';
+import { silentLogger } from '../helpers/fakes';
 import { createPostgresContext, type PostgresContext } from '../helpers/postgres';
 
 let pg: PostgresContext;
@@ -259,6 +265,73 @@ describe('revoking a ban', () => {
       false,
     );
     expect(await pg.count('admin_audit')).toBe(0);
+  });
+});
+
+/**
+ * The gap between what the schema allows and what this build can carry out.
+ *
+ * `enforcement.action` accepts five words and `source` already accepts
+ * `'automated'`, so the table is ready for sanctions nothing implements. A row
+ * written with one of those would be recorded, would report success, and would
+ * change nothing — the moderator believes the user was dealt with and the user
+ * notices no difference. That failure is completely silent, so it is made loud
+ * here instead.
+ */
+describe('sanctions this build cannot carry out', () => {
+  async function writeSanction(action: string): Promise<void> {
+    await pg.db.query(
+      `insert into enforcement
+         (enforcement_id, subject_key, action, reason, source, created_at, expires_at,
+          retention_expires_at)
+       values ($1, $2, $3, 'spam', 'automated', now(), now() + interval '1 day',
+               now() + interval '90 days')`,
+      [newEnforcementId() + '_ip', fakeHash('subjectip'), action],
+    );
+  }
+
+  it('names every action it declares, so a new one must be classified', () => {
+    // Adding a word to `EnforcementAction` without deciding whether this build
+    // can perform it is the mistake this guards. The set below is the decision.
+    for (const action of IMPLEMENTED_ACTIONS) {
+      expect(isEnforceable(action)).toBe(true);
+    }
+    for (const action of ['warn', 'ratelimit', 'quarantine']) {
+      expect(isEnforceable(action)).toBe(false);
+    }
+    expect(isEnforceable('ban')).toBe(true);
+    expect(isEnforceable('nonsense')).toBe(false);
+  });
+
+  it('does not apply one, and does not silently ignore it either', async () => {
+    await writeSanction('quarantine');
+
+    // Its own service with a recording logger: the shared context uses a null
+    // one, and the whole point of this test is what gets said.
+    const recorder = silentLogger();
+    const watched = new EnforcementService(pg.db, redis.store, pg.config, recorder);
+    const applied = await watched.reapplyActiveBans(NOW);
+
+    // Nothing was applied, because nothing can apply it.
+    expect(applied).toBe(0);
+    expect((await redis.store.checkBan(fakeHash('subjectip'), fakeHash('other'))).banned).toBe(
+      false,
+    );
+    // And it was reported rather than passed over — a live sanction that does
+    // nothing is exactly what an operator must be told about, because no other
+    // number will move.
+    const reported = recorder.lines.find((line) => line.msg.includes('cannot be carried out'));
+    expect(reported).toBeDefined();
+    expect(reported?.fields).toMatchObject({ enforcementAction: 'quarantine', count: 1 });
+  });
+
+  it('still applies a suspension, which is a ban with an end date', async () => {
+    await writeSanction('suspend');
+
+    const applied = await enforcement.reapplyActiveBans(NOW);
+
+    expect(applied).toBe(1);
+    expect((await redis.store.checkBan(fakeHash('subjectip'), fakeHash('other'))).banned).toBe(true);
   });
 });
 

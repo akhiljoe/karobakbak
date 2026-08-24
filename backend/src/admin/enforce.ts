@@ -40,11 +40,52 @@ import type { Database } from '../storage/pool';
 import { enforcementRowIds, newAuditId, newEnforcementId } from '../util/ids';
 import type { AdminIdentity } from './auth';
 
-/** The sanctions the console can issue. Only `ban` has an effect today. */
+/**
+ * The vocabulary the `enforcement` table accepts.
+ *
+ * Wider than what this build enforces, deliberately: the words are reserved by
+ * the schema so adding one later is not a migration, and `source` already
+ * allows `'automated'` for a heuristic that does not exist yet.
+ *
+ * That reservation is also the hazard. A row written with an action nothing
+ * reads is a sanction that was recorded, reports success, and changes nothing —
+ * the moderator believes the user was dealt with and the user notices no
+ * difference. The two sets below are what keep that from happening quietly.
+ */
 export type EnforcementAction = 'warn' | 'ratelimit' | 'quarantine' | 'suspend' | 'ban';
 
-/** Actions that are enforced at the upgrade rather than merely recorded. */
+/**
+ * Actions that are enforced at the upgrade rather than merely recorded.
+ *
+ * `suspend` is here because it is a ban with an end date and the upgrade path
+ * treats the two identically; nothing issues one today, but a row carrying it
+ * would be honoured rather than ignored.
+ */
 const REFUSING_ACTIONS: ReadonlySet<EnforcementAction> = new Set(['ban', 'suspend']);
+
+/**
+ * Everything this build can actually carry out.
+ *
+ * Identical to `REFUSING_ACTIONS` today and separate from it on purpose: they
+ * answer different questions. This one is "can we do it at all", that one is
+ * "does it refuse a connection". An action that warns a user or narrows their
+ * rate limits would belong here and not there, and conflating the two is how
+ * the first such action would come to be silently ignored.
+ *
+ * `warn`, `ratelimit` and `quarantine` are absent because nothing reads them.
+ * Each needs a delivery mechanism this build does not have — a way to show a
+ * user a notice, a per-identity limiter, a segregated queue — so they are
+ * deferred rather than half-built (`PHASES.md`).
+ */
+export const IMPLEMENTED_ACTIONS: ReadonlySet<EnforcementAction> = new Set([
+  'ban',
+  'suspend',
+]);
+
+/** Whether this build can carry out a sanction, as opposed to recording one. */
+export function isEnforceable(action: string): action is EnforcementAction {
+  return IMPLEMENTED_ACTIONS.has(action as EnforcementAction);
+}
 
 export interface BanRequest {
   /** The report this came from. Carried into the audit row as the case id. */
@@ -325,6 +366,28 @@ export class EnforcementService {
         [[...REFUSING_ACTIONS], new Date(nowMs)],
       );
       rows = result.rows;
+
+      // Anything live that this build cannot carry out. Counted separately and
+      // reported, because the failure is otherwise perfectly silent: a
+      // moderator sees a sanction in the record, the subject notices nothing,
+      // and no number moves. The schema reserves these words and `source`
+      // already allows `'automated'`, so the first heuristic that writes one
+      // will find out here rather than in a complaint.
+      const unenforceable = await this.db.query<{ action: string; count: string }>(
+        `select action, count(*)::text as count
+           from enforcement
+          where not (action = any($1))
+            and revoked_at is null
+            and (expires_at is null or expires_at > $2)
+          group by action`,
+        [[...IMPLEMENTED_ACTIONS], new Date(nowMs)],
+      );
+      for (const row of unenforceable.rows) {
+        this.logger.error('a live sanction cannot be carried out by this build', {
+          enforcementAction: row.action,
+          count: Number(row.count),
+        });
+      }
     } catch (err) {
       // A database outage must never become a chat outage (D16), and this runs
       // on the chat instance. Report and move on: the bans that are already in

@@ -111,6 +111,17 @@ export interface Metrics {
    * `chat_connections_rejected_total`.
    */
   readonly reports: Counter<string>;
+  /**
+   * Reports nobody has triaged yet, and how long the oldest has waited.
+   *
+   * The pair that makes a moderation response target measurable rather than
+   * intended — and the target itself is exported beside them, so an alert can
+   * compare the two instead of hardcoding a number that drifts out of step
+   * with configuration.
+   */
+  readonly reportsOpen: Gauge<string>;
+  readonly reportQueueOldest: Gauge<string>;
+  readonly reportResponseTarget: Gauge<string>;
   readonly blocks: Counter<'dimension'>;
   readonly moderationFlags: Counter<'action'>;
 
@@ -214,6 +225,15 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     ),
 
     reports: counter('chat_reports_total', 'Reports filed'),
+    reportsOpen: gauge('chat_reports_open', 'Reports waiting to be triaged'),
+    reportQueueOldest: gauge(
+      'chat_report_queue_oldest_seconds',
+      'Age of the oldest untriaged report, in seconds',
+    ),
+    reportResponseTarget: gauge(
+      'chat_report_response_target_seconds',
+      'The configured response target, exported so alerts compare against it',
+    ),
     blocks: counter('chat_blocks_total', 'Block dimensions recorded', ['dimension']),
     moderationFlags: counter('chat_moderation_flags_total', 'Moderation outcomes, by action', ['action']),
 

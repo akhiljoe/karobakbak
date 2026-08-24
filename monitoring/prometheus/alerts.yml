@@ -88,6 +88,24 @@ groups:
             Reaching its capacity requires a sustained database outage and a
             report flood at once (§14.3).
 
+      # Compared against the target the application exports rather than a number
+      # copied into this file. A threshold repeated in two places drifts the
+      # moment somebody tunes one of them, which is how an alert quietly stops
+      # meaning what its name says (the same mistake `SpoolNearCapacity` still
+      # makes with its hardcoded 40000).
+      - alert: ReportsWaitingTooLong
+        expr: chat_report_queue_oldest_seconds > chat_report_response_target_seconds
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: "Somebody asked for help and is still waiting"
+          description: >-
+            The oldest untriaged report has been open longer than the configured
+            response target. A report is a person saying something went wrong;
+            with a single moderator there is no rota to notice this, which is
+            why it pages rather than waits for somebody to open the console.
+
       - alert: DatabaseCircuitOpen
         expr: chat_db_breaker_state == 2
         for: 5m
