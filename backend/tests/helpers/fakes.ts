@@ -22,6 +22,7 @@ import type {
   HeartbeatResult,
   JoinQueueResult,
   LeaveQueueResult,
+  SaveIdentitiesResult,
   SessionIdentity,
   TryMatchResult,
 } from '../../src/redis/store';
@@ -77,6 +78,16 @@ export class FakeStore implements LifecycleStore {
 
   seedMatch(matchId: string, a: string, b: string, segment = 'default'): void {
     this.matches.set(matchId, { a, b, segment });
+    // The real `tryMatch` writes the match hash as part of creating the match,
+    // so a match always has a record to write identities onto. The fake kept
+    // the two apart, which was invisible while the identity write recreated
+    // whatever it was given and became a difference the moment it stopped.
+    this.matchRecords.set(matchId, {
+      ...(this.matchRecords.get(matchId) ?? {}),
+      a,
+      b,
+      segment,
+    });
     for (const sid of [a, b]) {
       const session = this.sessions.get(sid);
       if (session) {
@@ -130,9 +141,23 @@ export class FakeStore implements LifecycleStore {
     return this.matchRecords.get(matchId) ?? null;
   }
 
-  async saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void> {
-    const existing = this.matchRecords.get(matchId) ?? {};
+  /**
+   * Conditional, exactly like the script it stands in for.
+   *
+   * This used to be `{ ...(existing ?? {}) }` — which recreated the record for
+   * a match that had already ended, and so faithfully reproduced the bug
+   * rather than the behaviour. A fake that is wrong in the same way as the code
+   * cannot fail a test about it.
+   */
+  async saveMatchIdentities(
+    matchId: string,
+    identityA: string,
+    identityB: string,
+  ): Promise<SaveIdentitiesResult> {
+    const existing = this.matchRecords.get(matchId);
+    if (existing === undefined) return { status: 'match_gone' };
     this.matchRecords.set(matchId, { ...existing, identA: identityA, identB: identityB });
+    return { status: 'ok' };
   }
 
   /** Declared profiles, keyed by session, exactly as the real store holds them. */
@@ -232,6 +257,10 @@ export class FakeStore implements LifecycleStore {
     const match = this.matches.get(matchId);
     if (!match) return { status: 'already_ended' };
     this.matches.delete(matchId);
+    // The hash goes with it, as `endMatchInline` does. Leaving it behind is
+    // exactly the state this fake must be able to represent, because a write
+    // arriving after teardown is the race being guarded against.
+    this.matchRecords.delete(matchId);
     for (const sid of [match.a, match.b]) {
       const session = this.sessions.get(sid);
       if (session) {

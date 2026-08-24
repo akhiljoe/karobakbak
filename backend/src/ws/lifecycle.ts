@@ -35,6 +35,7 @@ import type {
   HeartbeatResult,
   JoinQueueResult,
   LeaveQueueResult,
+  SaveIdentitiesResult,
   SessionIdentity,
   TryMatchResult,
 } from '../redis/store';
@@ -69,7 +70,11 @@ export interface LifecycleStore {
     instanceId: string,
   ): Promise<ResumeSessionResult>;
   readMatch(matchId: string): Promise<Record<string, string> | null>;
-  saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void>;
+  saveMatchIdentities(
+    matchId: string,
+    identityA: string,
+    identityB: string,
+  ): Promise<SaveIdentitiesResult>;
   readProfiles(a: string, b: string): Promise<{ a: Profile | null; b: Profile | null }>;
   leaveQueue(sessionId: string, segment: string): Promise<LeaveQueueResult>;
   tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult>;
@@ -614,7 +619,7 @@ export class SessionLifecycle {
     sessionId: string,
     matchId: string,
     partnerSessionId: string,
-  ): Promise<MatchedOutcome> {
+  ): Promise<MatchedOutcome | { kind: 'idle' }> {
     const startedAt = nowIso();
     // Read beside the match rather than out of the caller's hand: this instance
     // won the match, but either side may have joined through a different
@@ -639,11 +644,30 @@ export class SessionLifecycle {
 
     // Stored on the match so a reconnection can restore exactly these names
     // rather than drawing new ones for a conversation already in progress.
-    await this.store.saveMatchIdentities(
+    //
+    // After the retention row, deliberately. The match existed, so a
+    // `conversation_started` for it is accurate — and whoever ended it has
+    // already enqueued a `conversation_ended` carrying the same id, which the
+    // writer would otherwise hold back for ever waiting for a parent that was
+    // never written.
+    const saved = await this.store.saveMatchIdentities(
       matchId,
       JSON.stringify(identities.you),
       JSON.stringify(identities.partner),
     );
+
+    if (saved.status === 'match_gone') {
+      // The conversation ended between being made and being described. Nobody
+      // is told they matched: the partner has already had whatever ending
+      // event the side that left produced, and announcing a match into a
+      // conversation that is over would put a live-looking transcript on a
+      // screen whose very next command comes back NOT_MATCHED.
+      //
+      // Reported as idle rather than retried. There is nothing to retry: the
+      // match is gone, and the searcher's own next action re-enters the queue.
+      this.logger.debug('a match ended before its identities were written', { matchId });
+      return { kind: 'idle' };
+    }
 
     const partnerRoute = await this.notify(partnerSessionId, {
       event: 'matched',

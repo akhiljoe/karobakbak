@@ -27,6 +27,12 @@ describe('script registry', () => {
         'resolvePartner',
         'resolveRoute',
         'resumeSession',
+        // Not a transition, and deliberately in this list anyway. It is a
+        // conditional write on match state, and the reason it is a script at
+        // all is that as a bare HSET it recreated a match that had already
+        // been torn down — a key with no TTL and no membership of the janitor's
+        // set, which nothing could then collect.
+        'saveMatchIdentities',
         'tryMatch',
       ].sort(),
     );

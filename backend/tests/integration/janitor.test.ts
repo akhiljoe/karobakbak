@@ -82,6 +82,66 @@ describe('janitorQueue', () => {
   });
 });
 
+/**
+ * §10.5 — the identity write racing teardown.
+ *
+ * `tryMatch` creates the match; the display identities are generated and
+ * written a moment later. In between, the match can end — a socket drops,
+ * either side skips — and `endMatchInline` deletes the hash and removes the id
+ * from the janitor's discovery set.
+ *
+ * The identity write used to be a bare `HSET`, which does not fail against a
+ * deleted key: it recreates it. What came back was a hash holding nothing but
+ * `identA` and `identB`, with no TTL and no membership of `chat:matches` — so
+ * nothing expired it and no janitor pass could see it, because the janitor
+ * finds matches through that set. It survived until Redis was flushed or
+ * restarted, and a run of fast disconnects accumulates them until a
+ * `noeviction` instance runs out of memory.
+ */
+describe('an identity write that arrives after teardown', () => {
+  it('does not recreate the match it was meant to describe', async () => {
+    const { mid } = await pair();
+    expect(await ctx.store.endMatch(mid)).toMatchObject({ status: 'ended' });
+
+    const saved = await ctx.store.saveMatchIdentities(mid, '{"nickname":"A"}', '{"nickname":"B"}');
+
+    expect(saved).toEqual({ status: 'match_gone' });
+    expect(await ctx.client.exists(ctx.keys.match(mid))).toBe(0);
+    expect(await ctx.client.sismember(ctx.keys.matches(), mid)).toBe(0);
+  });
+
+  it('leaves nothing for the janitor to find, because there is nothing to find', async () => {
+    // The consequence that made it a leak rather than a curiosity: the janitor
+    // discovers matches through the set, so a key recreated after its id was
+    // removed from that set is invisible to every recovery path there is.
+    const { mid } = await pair();
+    await ctx.store.endMatch(mid);
+    await ctx.store.saveMatchIdentities(mid, '{"nickname":"A"}', '{"nickname":"B"}');
+
+    const result = await ctx.store.janitorMatches();
+    expect(result).toMatchObject({ dropped: 0, ended: 0, survivors: [] });
+    expect(await ctx.client.keys(`${ctx.keys.match(mid)}`)).toEqual([]);
+  });
+
+  it('writes onto a live match and leaves its expiry alone', async () => {
+    // The other half: the ordinary path still works, and the script does not
+    // re-apply a TTL — which would be an identity write quietly extending the
+    // life of a conversation.
+    const { mid } = await pair();
+    const ttlBefore = await ctx.client.ttl(ctx.keys.match(mid));
+    expect(ttlBefore).toBeGreaterThan(0);
+
+    const saved = await ctx.store.saveMatchIdentities(mid, '{"nickname":"A"}', '{"nickname":"B"}');
+
+    expect(saved).toEqual({ status: 'ok' });
+    const record = await ctx.store.readMatch(mid);
+    expect(record).toMatchObject({ identA: '{"nickname":"A"}', identB: '{"nickname":"B"}' });
+    const ttlAfter = await ctx.client.ttl(ctx.keys.match(mid));
+    expect(ttlAfter).toBeGreaterThan(0);
+    expect(ttlAfter).toBeLessThanOrEqual(ttlBefore);
+  });
+});
+
 describe('janitorMatches', () => {
   it('drops set membership for a match whose record expired', async () => {
     const { mid } = await pair();

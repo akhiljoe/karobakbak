@@ -987,6 +987,42 @@ return { 'OK' }
 `,
 );
 
+/**
+ * Write both display identities onto a match that is still alive.
+ * KEYS: match. ARGV: prefix, identA, identB.
+ *
+ * A script rather than a bare HSET, and that is the whole point of it. The
+ * identities are generated after `tryMatch` has already created the match, so
+ * there is a window in which the match can end first — a socket drops, either
+ * side skips — and `endMatchInline` deletes the match hash and removes the id
+ * from the janitor's set. An HSET arriving after that does not fail: it
+ * **recreates** the key, holding nothing but `identA` and `identB`, with no
+ * TTL and no membership of `chat:matches`. Nothing expires it and no janitor
+ * pass can find it, because the janitor discovers matches through that set. It
+ * survives until Redis is flushed or restarted, and a run of fast disconnects
+ * accumulates them until a `noeviction` instance runs out of memory — taking
+ * the state service the whole chat path depends on with it.
+ *
+ * `EXISTS` and `HSET` in one script cannot interleave, so the key is only ever
+ * written when it is still there. `HSET` on an existing key leaves its TTL
+ * alone, so the match keeps the expiry `tryMatch` gave it; no expiry is
+ * re-applied here, which would be this script quietly extending a match's life.
+ *
+ * Checking existence is enough on its own — match ids come from
+ * `crypto.randomBytes` and are never reused, so a key under this id is this
+ * match or nothing.
+ */
+const saveMatchIdentities = define(
+  'saveMatchIdentities',
+  1,
+  3,
+  `
+if redis.call('EXISTS', KEYS[1]) == 0 then return { 'GONE' } end
+redis.call('HSET', KEYS[1], 'identA', ARGV[2], 'identB', ARGV[3])
+return { 'OK' }
+`,
+);
+
 export const SCRIPTS = {
   resumeSession,
   createSession,
@@ -996,6 +1032,7 @@ export const SCRIPTS = {
   leaveQueue,
   tryMatch,
   endMatch,
+  saveMatchIdentities,
   resolvePartner,
   resolveRoute,
   rateLimit,

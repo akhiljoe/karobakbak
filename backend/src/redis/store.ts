@@ -55,6 +55,15 @@ export type TryMatchResult =
   | { status: 'waiting'; cleaned: number; blockedSkipped: number; queueDepth: number }
   | { status: 'abort'; reason: TryMatchAbortReason };
 
+/**
+ * Whether the identity write landed.
+ *
+ * `match_gone` is not an error: the conversation ended between being created
+ * and being described, which races do. The caller's job is to stop rather than
+ * to retry — there is nothing to write it to.
+ */
+export type SaveIdentitiesResult = { status: 'ok' } | { status: 'match_gone' };
+
 export type EndMatchResult =
   | { status: 'ended'; a: string; b: string; segment: string }
   | { status: 'already_ended' };
@@ -340,9 +349,24 @@ export class RedisStore {
     };
   }
 
-  /** Store both display identities on the match, so a resume can restore them. */
-  async saveMatchIdentities(matchId: string, identityA: string, identityB: string): Promise<void> {
-    await this.client.hset(this.keys.match(matchId), 'identA', identityA, 'identB', identityB);
+  /**
+   * Store both display identities on the match, so a resume can restore them.
+   *
+   * Reports whether the match was still there. It is written by a script and
+   * not by a bare `HSET` because an `HSET` recreates a deleted key — see the
+   * note on the script for what that leaves behind and why nothing collects it.
+   */
+  async saveMatchIdentities(
+    matchId: string,
+    identityA: string,
+    identityB: string,
+  ): Promise<SaveIdentitiesResult> {
+    const reply = await this.runner.run(
+      'saveMatchIdentities',
+      [this.keys.match(matchId)],
+      [this.keys.prefix, identityA, identityB],
+    );
+    return str(reply, 0) === 'OK' ? { status: 'ok' } : { status: 'match_gone' };
   }
 
   /** Preserves I7: only a live connection refreshes a session's TTLs. */
