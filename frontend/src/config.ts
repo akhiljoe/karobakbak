@@ -38,6 +38,24 @@ export interface ClientConfig {
     readonly enabled: boolean;
     readonly provider: string;
   };
+  /**
+   * Where the published Terms and Privacy Policy live.
+   *
+   * Environment rather than a literal, because they are per deployment: a
+   * review build has nowhere to point, and the real URLs depend on a domain
+   * that is not this repository's business.
+   *
+   * **Empty is a launch blocker, not a default.** The age gate links both and
+   * they must be reachable *without* passing it, so a build that ships with
+   * these unset has a gate that states obligations a user cannot go and read.
+   * `hasLegalLinks` below is what the interface tests, and
+   * `docs/policies/README.md` step 5 is the reason: a policy nobody can find is
+   * not published.
+   */
+  readonly legal: {
+    readonly termsUrl: string;
+    readonly privacyUrl: string;
+  };
   readonly timings: {
     /**
      * How long after the last keystroke the typing indicator is withdrawn.
@@ -79,6 +97,10 @@ export function loadClientConfig(env: Record<string, unknown>): ClientConfig {
       enabled: env.VITE_ADS_ENABLED === 'true',
       provider: readString(env.VITE_ADS_PROVIDER, 'noop'),
     },
+    legal: {
+      termsUrl: readString(env.VITE_TERMS_URL, ''),
+      privacyUrl: readString(env.VITE_PRIVACY_URL, ''),
+    },
     timings: {
       typingIdleMs: 3000,
       reconnectBackoffMs: [500, 1000, 2000, 5000, 10_000],
@@ -90,6 +112,17 @@ export function loadClientConfig(env: Record<string, unknown>): ClientConfig {
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+/**
+ * Whether this build can show a user the documents it refers to.
+ *
+ * Both, not either. Linking one and silently dropping the other would leave the
+ * gate citing a document that cannot be opened, which is worse than a gate that
+ * admits the links are missing.
+ */
+export function hasLegalLinks(config: ClientConfig): boolean {
+  return config.legal.termsUrl !== '' && config.legal.privacyUrl !== '';
 }
 
 /** The configuration this page is running with. */

@@ -17,9 +17,16 @@ COPY public ./public
 ARG VITE_WS_URL=""
 ARG VITE_ADS_ENABLED="false"
 ARG VITE_ADS_PROVIDER="noop"
+# Where the published Terms and Privacy Policy live. Empty is a launch blocker,
+# not a default: the age gate links both, and a build without them shows a
+# notice saying so rather than pretending nothing is missing.
+ARG VITE_TERMS_URL=""
+ARG VITE_PRIVACY_URL=""
 ENV VITE_WS_URL=$VITE_WS_URL
 ENV VITE_ADS_ENABLED=$VITE_ADS_ENABLED
 ENV VITE_ADS_PROVIDER=$VITE_ADS_PROVIDER
+ENV VITE_TERMS_URL=$VITE_TERMS_URL
+ENV VITE_PRIVACY_URL=$VITE_PRIVACY_URL
 
 RUN npm run build
 

@@ -89,6 +89,15 @@ services:
     # terminator was assumed to be on the host rather than beside it.
     ports: !reset []
     logging: *logging
+    build:
+      args:
+        # Required in production, unlike development, because the age gate links
+        # both and they must be reachable *without* passing it. A production
+        # build without them ships a screen stating obligations the user cannot
+        # go and read, which is worse than no screen — see
+        # docs/policies/README.md step 5.
+        VITE_TERMS_URL: "${VITE_TERMS_URL:?the published Terms URL, e.g. https://karobakbak.com/terms}"
+        VITE_PRIVACY_URL: "${VITE_PRIVACY_URL:?the published Privacy Policy URL}"
 
   backend:
     environment:

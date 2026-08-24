@@ -51,6 +51,10 @@ services:
         VITE_WS_URL: ""
         VITE_ADS_ENABLED: "${VITE_ADS_ENABLED:-false}"
         VITE_ADS_PROVIDER: "${VITE_ADS_PROVIDER:-noop}"
+        # Unset here on purpose: there is nowhere to point a development build,
+        # and the age gate says so on screen rather than linking nothing.
+        VITE_TERMS_URL: "${VITE_TERMS_URL:-}"
+        VITE_PRIVACY_URL: "${VITE_PRIVACY_URL:-}"
     ports:
       - "${FRONTEND_PORT:-8081}:80"
     environment:

@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
+import { AgeGate } from './components/AgeGate';
 import { AppHeader } from './components/AppHeader';
 import { useAutoSearch } from './hooks/useAutoSearch';
 import { useBackButton } from './hooks/useBackButton';
@@ -27,6 +28,8 @@ import { ReportDialog } from './components/ReportDialog';
 import { SafetySheet } from './components/SafetySheet';
 import { SettingsSheet } from './components/SettingsSheet';
 import { Toast } from './components/Toast';
+import { acknowledgeAge, hasAcknowledgedAge } from './agegate';
+import { clientConfig } from './config';
 import { ACCOUNTS_ENABLED } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
@@ -43,6 +46,17 @@ export function App(): JSX.Element {
   const [authOpen, setAuthOpen] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
+
+  /*
+    Read once, on the first render, rather than in an effect. An effect would
+    paint the landing screen for a frame before the gate covered it, and the one
+    frame a user sees first is the one this screen exists to put in front of
+    them.
+
+    Storage being unreadable resolves to `false`, which shows the gate. That is
+    the correct direction to fail.
+  */
+  const [ageAcknowledged, setAgeAcknowledged] = useState(hasAcknowledgedAge);
 
   const phase = phaseOf(state);
   const connection = connectionOf(state.screen);
@@ -70,7 +84,12 @@ export function App(): JSX.Element {
    * pressed Escape to back out lost the conversation they were about to
    * report. This is the state the shortcut consults to stand down.
    */
-  const overlayOpen = filtersOpen || settingsOpen || authOpen || safetyOpen || reporting;
+  // The gate counts as an overlay, so the global Enter and Escape shortcuts
+  // below stand down while it is showing. Escape skips a conversation, and a
+  // keypress reaching past this screen would be acting on a product the person
+  // has not yet been allowed into.
+  const overlayOpen =
+    !ageAcknowledged || filtersOpen || settingsOpen || authOpen || safetyOpen || reporting;
 
   // Enter starts a search from the landing screen; Escape skips a conversation.
   // Both are ignored while the user is typing into something, and Escape also
@@ -147,6 +166,21 @@ export function App(): JSX.Element {
     saveProfile(next);
   }, []);
 
+  const acceptAge = useCallback(() => {
+    acknowledgeAge();
+    // Set regardless of whether the write succeeded. A private window cannot
+    // remember the acknowledgement, and refusing to proceed because of that
+    // would punish somebody for their browser settings; they are asked again
+    // next time instead.
+    setAgeAcknowledged(true);
+  }, []);
+
+  const leaveFromGate = useCallback(() => {
+    // `about:blank` rather than `window.close()`, which browsers refuse for a
+    // tab the script did not open. Leaving has to actually leave.
+    window.location.href = 'about:blank';
+  }, []);
+
   const resetProfile = useCallback(() => {
     setProfile(EMPTY_PROFILE);
     clearProfile();
@@ -154,6 +188,22 @@ export function App(): JSX.Element {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {/*
+        Rendered over the shell rather than instead of it, so the socket is
+        already connecting while the gate is up: `age-gate.md` gates *entering
+        the queue*, not opening the connection. Nothing behind this can be
+        reached — every control that starts a conversation is on the landing
+        screen underneath, and `overlayOpen` stands the keyboard shortcuts down.
+      */}
+      {!ageAcknowledged && (
+        <AgeGate
+          termsUrl={clientConfig.legal.termsUrl}
+          privacyUrl={clientConfig.legal.privacyUrl}
+          onAccept={acceptAge}
+          onLeave={leaveFromGate}
+        />
+      )}
+
       <AppHeader
         state={state}
         onHome={chat.leave}
