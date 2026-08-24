@@ -190,6 +190,14 @@ export class Bot {
   readonly corpus: Corpus;
   readonly persona: Persona;
 
+  /**
+   * Come back after a socket this bot did not close.
+   *
+   * Set for chaos runs only. See the close handler for why it is not the
+   * default even though it is what a browser does.
+   */
+  reconnectOnDrop = false;
+
   /** Server-authoritative as far as this bot can observe it. */
   state: SessionState = 'IDLE';
   matchId: string | null = null;
@@ -413,10 +421,37 @@ export class Bot {
         return;
       }
       this.persona.onClosed?.(this, code);
+
       // A persona that did not ask to reconnect is done. A reconnect already
       // scheduled counts: it lives outside `timers` precisely so this handler
       // cannot cancel it, so it must not be read as "nothing is coming" either.
-      if (!this.socket && this.reconnectTimer === null) this.finish();
+      if (this.socket || this.reconnectTimer !== null) return;
+
+      // Unless the socket died on its own, in which case a browser would come
+      // back and so should this.
+      //
+      // Off by default, because for every other scenario here a close is
+      // *scripted* -- the persona asked for it and knows what it wants to
+      // happen next -- and reconnecting behind its back would put bots into
+      // states their oracles do not expect.
+      //
+      // C2 is the case where nothing scripted the close. Killing a backend
+      // drops every socket it held at once, and without this the bots on it
+      // are finished permanently: the first C2 run ended with 282 of 586
+      // connections, which reads exactly like a product that will not let
+      // clients back in. It was the harness all along. The real frontend
+      // reconnects after an unexpected drop -- that is the whole of section 28
+      // -- so a harness that does not cannot measure recovery at all.
+      if (this.reconnectOnDrop && !this.hardStop) {
+        // Spread, so several hundred bots losing a host together return as a
+        // stream rather than as one thundering herd against the survivor. The
+        // resume token is offered: this is a dropped socket, which is precisely
+        // what the grace window exists for.
+        this.reconnect(this.rng.int(500, 6_000), 'hard', { resume: true });
+        return;
+      }
+
+      this.finish();
     });
   }
 

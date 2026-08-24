@@ -297,6 +297,11 @@ async function main(): Promise<void> {
               corpusDir,
               ledgerPath,
               specs,
+              // A chaos run is the only place a socket closes without a persona
+              // having asked for it, and a client that does not come back from
+              // that cannot demonstrate recovery -- which is half of what C2
+              // measures.
+              reconnectOnDrop: options.chaosScenario !== '',
               rampMs: options.rampSeconds * 1_000,
             };
             child.send(command);
@@ -338,6 +343,9 @@ async function main(): Promise<void> {
   const chaosOptions = {
     scenario: options.chaosScenario,
     postgresContainer: options.postgresContainer,
+    // The first backend named to --containers. C2 kills one and measures the
+    // rest, so which one is arbitrary; that there is another is not.
+    backendContainer: options.logContainers[0] ?? '',
     metricsUrls: options.metricsUrls,
     atSeconds: options.chaosAtSeconds,
     forSeconds: options.chaosForSeconds,

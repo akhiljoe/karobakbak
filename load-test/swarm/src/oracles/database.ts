@@ -71,6 +71,23 @@ export interface DatabaseOracleInput {
    */
   readonly chaosRan: boolean;
   /**
+   * Whether a chaos scenario killed a backend process during this run.
+   *
+   * Changes what the numbers *mean*, and nothing else. A process that dies to
+   * SIGKILL takes two things with it: the counters it had accumulated, which
+   * restart at zero and make every `after - before` delta undercount by
+   * whatever that instance had already done; and its in-memory retention queue,
+   * whose records were acknowledged to clients and will now never be written
+   * *or counted as dropped*, because the counter that would have counted them
+   * died in the same instant.
+   *
+   * Neither is a defect -- it is what killing a process costs, and C2 exists to
+   * measure it. But an oracle that does not know it happened reports it as
+   * silent data loss, which is the one thing this directory must never do
+   * wrongly.
+   */
+  readonly killedProcess: boolean;
+  /**
    * When the first socket opened.
    *
    * Every query is scoped to it. The load-test database is not wiped between
@@ -282,7 +299,19 @@ export async function checkDatabaseAgreement(
     `messages: ${stored} stored, ${ledger.accepted} acked, ${ledger.sent} sent, ` +
       `${drain.dropped} dropped`,
   );
-  if (stored < lowerBound) {
+  if (stored < lowerBound && input.killedProcess) {
+    // Quantified rather than waved away. This is the cost of a SIGKILL in the
+    // unit that matters -- acknowledged messages that no longer exist anywhere
+    // and were never counted as lost, because the process holding both the
+    // record and the counter died at the same instant.
+    const lost = lowerBound - stored;
+    const share = ledger.accepted === 0 ? 0 : (lost / ledger.accepted) * 100;
+    details.push(
+      `killed instance took ${lost} acknowledged message(s) with it ` +
+        `(${share.toFixed(2)}% of ${ledger.accepted}) -- in its queue, never flushed, ` +
+        `never counted as dropped`,
+    );
+  } else if (stored < lowerBound) {
     problems.push(
       `stored ${stored} messages but ${ledger.accepted} were acknowledged and only ` +
         `${drain.dropped} counted as dropped. Every acknowledged message must be a row ` +

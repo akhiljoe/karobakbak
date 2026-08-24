@@ -69,6 +69,7 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
   const matchedFrames = stats.matchLatency.length;
 
   const metrics = await checkMetrics({
+    countersReset: killedProcess(input),
     urls: input.metricsUrls,
     stats,
     matchedFrames,
@@ -117,6 +118,7 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     drainTimeoutSeconds: input.drainTimeoutSeconds,
     runStartMs: input.runWindow.from,
     chaosRan: input.chaos.scenario !== '' && input.chaos.skipped === null,
+    killedProcess: killedProcess(input),
   });
 
 
@@ -126,4 +128,15 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
     oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, database, checkChaos(input.chaos)],
   };
+}
+
+/**
+ * Whether a backend process was killed during this run.
+ *
+ * C2 is the only scenario that does it. Two oracles need to know, and they need
+ * to agree, so the condition lives in one place rather than being spelled out
+ * twice with a chance of drifting.
+ */
+function killedProcess(input: OracleInput): boolean {
+  return input.chaos.scenario === 'c2' && input.chaos.skipped === null;
 }

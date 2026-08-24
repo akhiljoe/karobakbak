@@ -78,6 +78,23 @@ export interface MetricsInput {
    * Empty means no baseline was taken and counters cannot be compared.
    */
   readonly baseline: readonly Sample[];
+  /**
+   * Whether a chaos scenario killed a backend process during this run.
+   *
+   * Changes what the numbers *mean*, and nothing else. A process that dies to
+   * SIGKILL takes two things with it: the counters it had accumulated, which
+   * restart at zero and make every `after - before` delta undercount by
+   * whatever that instance had already done; and its in-memory retention queue,
+   * whose records were acknowledged to clients and will now never be written
+   * *or counted as dropped*, because the counter that would have counted them
+   * died in the same instant.
+   *
+   * Neither is a defect -- it is what killing a process costs, and C2 exists to
+   * measure it. But an oracle that does not know it happened reports it as
+   * silent data loss, which is the one thing this directory must never do
+   * wrongly.
+   */
+  readonly countersReset: boolean;
 }
 
 /** One sample: a metric name, its labels as written, and its value. */
@@ -85,10 +102,22 @@ export interface Sample {
   name: string;
   labels: string;
   value: number;
+  /**
+   * Which endpoint this reading came from.
+   *
+   * Everything else here sums across instances and never needs to know. C2 does:
+   * it kills a backend, so that instance's counters simply stop appearing, and a
+   * sum across "whatever answered" falls when an endpoint disappears. Read as a
+   * rate that is indistinguishable from delivery collapsing -- the precise
+   * conclusion C2 exists to test for, arrived at backwards. Comparing like with
+   * like means comparing the instances that were alive in every phase, and that
+   * needs attribution.
+   */
+  target: string;
 }
 
 /** Minimal Prometheus text-format parser: enough for counters and gauges. */
-export function parsePrometheus(text: string): Sample[] {
+export function parsePrometheus(text: string, target = ''): Sample[] {
   const samples: Sample[] = [];
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim();
@@ -99,13 +128,14 @@ export function parsePrometheus(text: string): Sample[] {
     const value = Number(line.slice(space + 1));
     if (!Number.isFinite(value)) continue;
     if (brace === -1 || brace > space) {
-      samples.push({ name: line.slice(0, space), labels: '', value });
+      samples.push({ name: line.slice(0, space), labels: '', value, target });
     } else {
       const close = line.lastIndexOf('}', space);
       samples.push({
         name: line.slice(0, brace),
         labels: line.slice(brace + 1, close),
         value,
+        target,
       });
     }
   }
@@ -153,7 +183,7 @@ export async function scrapeAll(targets: readonly string[]): Promise<Sample[]> {
       const text = target.startsWith('http')
         ? await scrapeHttp(target)
         : await scrapeContainer(target);
-      samples.push(...parsePrometheus(text));
+      samples.push(...parsePrometheus(text, target));
     } catch {
       // A baseline that could not be read is reported by its absence: the
       // oracle says so rather than silently treating zero as the start value.
@@ -207,7 +237,7 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
       const text = target.startsWith('http')
         ? await scrapeHttp(target)
         : await scrapeContainer(target);
-      samples.push(...parsePrometheus(text));
+      samples.push(...parsePrometheus(text, target));
       details.push(`scraped ${target}`);
     } catch (error) {
       unreachable += 1;
@@ -244,7 +274,8 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
   details.push(
     `matches created ${matchesCreated}, ledger matched frames ${input.matchedFrames} (expected ~${expectedFrames})`,
   );
-  if (input.baseline.length > 0 && frameGap > frameTolerance) {
+  const conservable = input.baseline.length > 0 && !input.countersReset;
+  if (conservable && frameGap > frameTolerance) {
     failures.push(
       `matched frames differ from matches created by ${frameGap}, beyond a tolerance of ${frameTolerance}`,
     );
@@ -270,6 +301,16 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
   // `block`, `report` and `join_queue`, and those have nothing to do with the
   // message counter. Reading the server's own rejection counter avoids having
   // to classify a client-side error code by which command provoked it.
+  if (input.countersReset) {
+    warnings.push(
+      'A backend was killed during this run, so its counters restarted at zero ' +
+        'and every delta below undercounts by whatever that instance had already ' +
+        'done. The conservation identities are not checked -- not relaxed, not ' +
+        'checked, because the arithmetic they rest on is unavailable. The numbers ' +
+        'are still printed, and reading them as a shortfall would be wrong.',
+    );
+  }
+
   const received = delta(samples, input.baseline, 'chat_messages_received_total');
   const rejected = delta(samples, input.baseline, 'chat_messages_rejected_total');
   const expectedAcks = received - rejected;
@@ -281,10 +322,10 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
   // A message accepted in the last instant of the run can have its ack still in
   // flight when the socket closes, so a small shortfall is ordinary. An excess
   // is not: the ledger cannot hold acks the server never sent.
-  if (input.baseline.length > 0 && ackGap < 0) {
+  if (conservable && ackGap < 0) {
     failures.push(`ledger holds ${-ackGap} more acks than the server accepted messages`);
   }
-  if (input.baseline.length > 0 && ackGap > Math.max(10, Math.round(received * 0.01))) {
+  if (conservable && ackGap > Math.max(10, Math.round(received * 0.01))) {
     warnings.push(
       `${ackGap} accepted messages have no ack in the ledger — expected only for sockets that closed mid-flight`,
     );

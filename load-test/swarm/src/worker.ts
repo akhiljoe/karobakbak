@@ -35,6 +35,13 @@ export interface WorkerStart {
   readonly specs: readonly BotSpec[];
   /** Milliseconds over which this worker's bots connect, spreading the herd. */
   readonly rampMs: number;
+  /**
+   * Come back after a socket the bot did not close, the way a browser does.
+   *
+   * Set for chaos runs, where the close is nobody's decision. See the close
+   * handler in `bot.ts` for why it is not the default.
+   */
+  readonly reconnectOnDrop: boolean;
 }
 
 export interface WorkerStop {
@@ -100,6 +107,7 @@ async function start(command: WorkerStart): Promise<void> {
         finished += 1;
       },
     });
+    bot.reconnectOnDrop = command.reconnectOnDrop;
     bots.push(bot);
   }
 
