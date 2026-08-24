@@ -139,6 +139,21 @@ function poolConfig(config: Config): PoolConfig {
   };
 }
 
+/**
+ * Whether PostgreSQL answered at all.
+ *
+ * Every error the server itself produces carries a five-character SQLSTATE --
+ * including `57014`, its own statement_timeout, which arrives on a connection
+ * that is alive and listening. An error without one was manufactured by the
+ * client: a query_timeout that gave up waiting, an ECONNRESET, a pool connect
+ * timeout. The distinction is the difference between a statement that was
+ * refused and a statement whose fate is unknown, and only the second makes the
+ * connection unusable.
+ */
+function serverAnswered(err: unknown): boolean {
+  return sqlState(err) !== null;
+}
+
 export function createDatabase(config: Config, logger: Logger): Database {
   const pool = new Pool(poolConfig(config));
 
@@ -161,21 +176,47 @@ export function createDatabase(config: Config, logger: Logger): Database {
 
     async transaction(work) {
       const client = await pool.connect();
+      // Whether this connection is safe to hand to the next caller. Set on
+      // every path that leaves its server-side state unknown.
+      let poisoned = false;
       try {
         await client.query('BEGIN');
         const result = await work(client);
         await client.query('COMMIT');
         return result;
       } catch (err) {
-        try {
-          await client.query('ROLLBACK');
-        } catch {
-          // The connection is already unusable; releasing it with an error
-          // below is what removes it from the pool.
+        // A failure carrying no SQLSTATE means the server never answered: a
+        // client-side query_timeout, a reset connection, a paused host. Rolling
+        // back down a socket nobody is listening on cannot succeed, and it is
+        // not free -- the ROLLBACK waits out query_timeout in its own turn, so
+        // one failed write costs two timeouts instead of one.
+        //
+        // That doubling is not cosmetic. The circuit breaker opens on
+        // BREAKER_FAILURE_THRESHOLD consecutive failures, so the outage a
+        // breaker needs before it can open is threshold x cost. At the
+        // defaults that was 5 x 20s = 100 seconds, and chaos scenario C1
+        // watched a 60-second database hang end with the breaker still CLOSED,
+        // the retention queue grown from 30 to 3320, and the outage spool --
+        // the thing that exists to absorb exactly this -- never reached.
+        poisoned = !serverAnswered(err);
+        if (!poisoned) {
+          try {
+            await client.query('ROLLBACK');
+          } catch {
+            // The server adjudicated the statement but not the rollback.
+            // Whatever state the transaction is in now, it is not one to lend
+            // to somebody else.
+            poisoned = true;
+          }
         }
         throw err;
       } finally {
-        client.release();
+        // Releasing with a truthy argument *destroys* the client; releasing
+        // bare returns it to the pool. The old code released bare while its
+        // comment claimed the opposite, so a connection that timed out
+        // mid-transaction went back into rotation with a transaction still
+        // open on the server, for the next borrower to inherit.
+        client.release(poisoned);
       }
     },
 
