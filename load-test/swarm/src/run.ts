@@ -50,6 +50,12 @@ interface Options {
   /** Must match REDIS_KEY_PREFIX and the matchmaking segment on the target. */
   keyPrefix: string;
   segment: string;
+  /** Container running PostgreSQL. Empty disables the database oracle. */
+  postgresContainer: string;
+  postgresUser: string;
+  postgresDatabase: string;
+  /** How long to let the write-behind queue finish before comparing. */
+  drainTimeoutSeconds: number;
   /**
    * A person took part in this run, at the same stack, through a browser.
    *
@@ -115,6 +121,12 @@ function parseArgs(argv: readonly string[]): Options {
     metricsUrls: list('metrics', ''),
     logContainers: list('containers', ''),
     redisContainer: flags.get('redis') ?? '',
+    postgresContainer: flags.get('postgres') ?? '',
+    postgresUser: flags.get('postgres-user') ?? 'karobakbak',
+    postgresDatabase: flags.get('postgres-db') ?? 'karobakbak',
+    // Generous, because the comparison is worthless while records are still in
+    // flight — the whole trap this oracle had to be built around.
+    drainTimeoutSeconds: Math.max(5, Math.floor(num('drain-timeout', 60))),
     keyPrefix: flags.get('key-prefix') ?? 'chat',
     segment: flags.get('segment') ?? 'default',
     human: flags.get('human') === 'true',
@@ -352,6 +364,10 @@ async function main(): Promise<void> {
     bannedBots: bannedSpecs.map((spec) => spec.id),
     bansApplied: bans.applied,
     bansSkipped: bans.skipped,
+    postgresContainer: options.postgresContainer,
+    postgresUser: options.postgresUser,
+    postgresDatabase: options.postgresDatabase,
+    drainTimeoutSeconds: options.drainTimeoutSeconds,
   });
 
   // Cleared whatever the verdict. A ban key outliving its run would refuse

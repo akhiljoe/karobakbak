@@ -13,6 +13,7 @@ import type { BotSpec } from '../bot';
 import { analyseLedger, type LedgerStats } from './ledger';
 import { checkLogsForLeaks } from './logs';
 import { runEnforcementOracle } from './enforcement';
+import { checkDatabaseAgreement } from './database';
 import { checkMetrics, type Sample } from './metrics';
 import { checkRedisResidue } from './redis';
 import { checkSpamDetection, type SpamSummary } from './spam';
@@ -43,6 +44,12 @@ export interface OracleInput {
   readonly bansApplied: number;
   /** Why bans were not applied, when they were not. */
   readonly bansSkipped: string | null;
+  /** Container running PostgreSQL, for the database oracle. Empty disables it. */
+  readonly postgresContainer: string;
+  readonly postgresUser: string;
+  readonly postgresDatabase: string;
+  /** How long to wait for the write-behind queue to finish draining. */
+  readonly drainTimeoutSeconds: number;
 }
 
 export interface OracleRunResult {
@@ -96,24 +103,22 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     skipped: input.bansSkipped,
   });
 
-  const notImplemented: OracleResult[] = [
-    {
-      name: 'database agreement',
-      status: 'skipped',
-      summary: 'not implemented in stage one',
-      details: [
-        'checks stored rows equal accepted messages minus counted retention drops,',
-        'that every conversation has ended_at, and that retention deadlines were',
-        'stamped at insert time (D17)',
-        'needs a PostgreSQL client in this package',
-      ],
-    },
-  ];
+  const database = await checkDatabaseAgreement({
+    container: input.postgresContainer,
+    user: input.postgresUser,
+    database: input.postgresDatabase,
+    ledgerPaths: input.ledgerPaths,
+    baseline: input.metricsBaseline,
+    metricsUrls: input.metricsUrls,
+    drainTimeoutSeconds: input.drainTimeoutSeconds,
+    runStartMs: input.runWindow.from,
+  });
+
 
   return {
     stats,
     matchedFrames,
     spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
-    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, ...notImplemented],
+    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, database],
   };
 }
