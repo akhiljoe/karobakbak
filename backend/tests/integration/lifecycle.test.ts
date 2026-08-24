@@ -410,7 +410,25 @@ describe('disconnect across two instances (§13)', () => {
     expect(await one.ctx.store.queueDepth(one.ctx.segment)).toBe(0);
   });
 
-  it('lets a disconnect and a match race without stranding either side', async () => {
+  /**
+   * This test used to fail roughly one run in five on a busy machine and never
+   * on a quiet one, which read as flakiness and was not.
+   *
+   * It was written under D7, where closing a session ended its match. §28
+   * reversed that: a close now **holds the seat** for the grace window and
+   * leaves the conversation intact, because most dropped sockets come back. The
+   * old assertion — that neither side still points at a match — is therefore
+   * only true for a deliberate teardown, and the test passed only because the
+   * interleaving it asserted against was the rare one. Contention made the rare
+   * interleaving common, so the machine's load decided the verdict.
+   *
+   * Split into the two things it was conflating, both now deterministic.
+   */
+  it('lets a teardown and a match race without stranding either side', async () => {
+    // `holdSeat: false` is a drain: the server is going away, so holding seats
+    // would leave partners waiting out a window for somebody who is not coming
+    // back. Whoever won the race, neither side is left pointing at a partner
+    // that is gone — the original property, and still worth having.
     for (let round = 0; round < 8; round += 1) {
       const a = await connect(one);
       const b = await connect(two);
@@ -418,17 +436,40 @@ describe('disconnect across two instances (§13)', () => {
 
       const [matched] = await Promise.all([
         one.lifecycle.joinQueue(a.sessionId),
-        two.lifecycle.close(b.sessionId, b.ipHash, b.socket),
+        two.lifecycle.close(b.sessionId, b.ipHash, b.socket, { holdSeat: false }),
       ]);
 
-      // Whichever won, nobody is left pointing at a partner that is gone.
       if (matched.kind === 'matched') {
-        await one.lifecycle.close(a.sessionId, a.ipHash, a.socket);
+        await one.lifecycle.close(a.sessionId, a.ipHash, a.socket, { holdSeat: false });
       }
       expect(await one.ctx.store.currentMatchId(a.sessionId)).toBeNull();
       expect(await two.ctx.store.currentMatchId(b.sessionId)).toBeNull();
       await one.ctx.flush();
     }
+  });
+
+  it('keeps the conversation when a matched partner drops, rather than ending it', async () => {
+    // The §28 half, and the one nothing asserted before. Deliberately not a
+    // race: the match is made first so the interesting interleaving is the one
+    // under test rather than the one that happened to win.
+    const a = await connect(one);
+    const b = await connect(two);
+    await two.lifecycle.joinQueue(b.sessionId);
+    const matched = await one.lifecycle.joinQueue(a.sessionId);
+    expect(matched.kind).toBe('matched');
+
+    // A network blip, which is what the default models.
+    const closed = await two.lifecycle.close(b.sessionId, b.ipHash, b.socket);
+
+    // Nothing ended. The seat is held, and the caller is told so rather than
+    // being handed a match id to tear down.
+    expect(closed.endedMatchId).toBeNull();
+    const stillMatched = await one.ctx.store.currentMatchId(a.sessionId);
+    expect(stillMatched).not.toBeNull();
+
+    // And the survivor is still in it — told "reconnecting", not "they left".
+    expect(await two.ctx.store.currentMatchId(b.sessionId)).toBe(stillMatched);
+    await one.ctx.flush();
   });
 });
 
