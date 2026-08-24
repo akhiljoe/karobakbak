@@ -22,6 +22,32 @@
  * exists to prevent.
  *
  * ---------------------------------------------------------------------------
+ * AND SO DOES THE OTHER DIRECTION
+ * ---------------------------------------------------------------------------
+ * The guard above was written for children protecting a parent, and the
+ * reverse was missing: a hold on a *conversation* set one boolean, on one row,
+ * and every child query filtered on its own `legal_hold` alone. So a
+ * conversation could sit held while its transcript, the reports filed against
+ * it and the moderation events that flagged it expired underneath it — leaving
+ * the row the hold names and none of the evidence it was placed to preserve.
+ * An empty shell with a timestamp is not a suspended conversation.
+ *
+ * Containment is expressed here rather than by cascading the flag onto
+ * children, and that is deliberate. `holds.ts` is explicit that the boolean is
+ * *not* the hold: the hold is a row naming an owner, a case and a reason, and
+ * the flag is derived from whether such a row is still open. A flag written
+ * onto a message because its parent was held would be a flag with no hold row
+ * naming it — and on release nothing could tell it apart from a hold placed on
+ * that message directly, so releasing the parent would either strand the child
+ * held for ever or silently clear a hold somebody else had placed. Reading the
+ * parent at deletion time keeps one hold, one row, one meaning.
+ *
+ * `enforcement` is deliberately not part of this. It is keyed on an identity
+ * hash and has no conversation, so there is no containment relationship to
+ * express; a sanction that must outlive its retention needs a hold subject of
+ * its own, which is a change to `holds.ts` and not to a query here.
+ *
+ * ---------------------------------------------------------------------------
  * ONE INSTANCE AT A TIME
  * ---------------------------------------------------------------------------
  * Leader-locked through Redis, like the janitor. Several instances deleting the
@@ -180,11 +206,16 @@ export class DeletionWorker {
     const batch = this.config.deletion.batch;
 
     // Messages first, so a message whose own deadline passed is removed even
-    // while its conversation is still within retention.
+    // while its conversation is still within retention — unless that
+    // conversation is held, which is the containment rule described at the top
+    // of this file.
     const messages = await this.deleteBatch(
       `delete from messages where message_id in (
-         select message_id from messages
-          where retention_expires_at < now() and legal_hold = false
+         select m.message_id from messages m
+          where m.retention_expires_at < now() and m.legal_hold = false
+            and not exists (
+              select 1 from conversations c
+               where c.conversation_id = m.conversation_id and c.legal_hold = true)
           limit $1)`,
       batch,
     );
@@ -206,18 +237,35 @@ export class DeletionWorker {
       batch,
     );
 
+    // A report is usually the reason a conversation is held in the first place.
     const reports = await this.deleteBatch(
       `delete from reports where report_id in (
-         select report_id from reports
-          where retention_expires_at < now() and legal_hold = false
+         select r.report_id from reports r
+          where r.retention_expires_at < now() and r.legal_hold = false
+            and not exists (
+              select 1 from conversations c
+               where c.conversation_id = r.conversation_id and c.legal_hold = true)
           limit $1)`,
       batch,
     );
 
+    // A moderation event has no `legal_hold` of its own and needs none: it is
+    // never a hold subject, and it is the explanation of *why* a message was
+    // flagged, so it is held by whatever holds the thing it describes. Both
+    // parents count — the conversation and the message — and either being held
+    // keeps it. `conversation_id` and `message_id` are both nullable, and an
+    // event with neither is protected by nothing, which is correct: there is
+    // nothing for a hold to reach it through.
     const moderationEvents = await this.deleteBatch(
       `delete from moderation_events where event_id in (
-         select event_id from moderation_events
-          where retention_expires_at < now()
+         select e.event_id from moderation_events e
+          where e.retention_expires_at < now()
+            and not exists (
+              select 1 from conversations c
+               where c.conversation_id = e.conversation_id and c.legal_hold = true)
+            and not exists (
+              select 1 from messages m
+               where m.message_id = e.message_id and m.legal_hold = true)
           limit $1)`,
       batch,
     );

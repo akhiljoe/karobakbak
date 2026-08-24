@@ -305,8 +305,26 @@ describe('expiry is enforced (I10)', () => {
 });
 
 describe('legal holds protect data (§15)', () => {
-  it('suspends deletion of a held conversation', async () => {
-    const { conversationId } = await seed({ expired: true, messages: 2 });
+  it('suspends deletion of a held conversation, and of everything in it', async () => {
+    // This test used to assert one thing — that the conversation row survived —
+    // and passed on runs where the entire transcript had been deleted. The
+    // child queries filtered on their own `legal_hold` alone and never read
+    // the parent's, so a hold placed on a conversation preserved the row it
+    // names and none of the evidence it was placed for.
+    const { conversationId, messageIds } = await seed({ expired: true, messages: 2 });
+    await ctx.db.query(
+      `insert into reports (report_id, conversation_id, reporter_session_id, reported_session_id,
+                            category, created_at, retention_expires_at)
+       values ($1, $2, 's_a', 's_b', 'harassment', now(), now() - interval '1 day')`,
+      [newMessageId(), conversationId],
+    );
+    await ctx.db.query(
+      `insert into moderation_events (event_id, conversation_id, message_id, rule, action,
+                                      severity, created_at, retention_expires_at)
+       values ($1, $2, $3, 'url', 'flag', 'medium', now(), now() - interval '1 day')`,
+      [newMessageId(), conversationId, messageIds[0]!],
+    );
+
     const placed = await holds.place({
       subjectType: 'conversation',
       subjectId: conversationId,
@@ -317,7 +335,80 @@ describe('legal holds protect data (§15)', () => {
     expect(placed.applied).toBe(true);
 
     await worker(new FakeLock()).runUntilDrained();
+
     expect(await ctx.count('conversations')).toBe(1);
+    // The point of the hold.
+    expect(await ctx.count('messages')).toBe(2);
+    expect(await ctx.count('reports')).toBe(1);
+    expect(await ctx.count('moderation_events')).toBe(1);
+  });
+
+  it('protects a held message moderation events, which have no hold of their own', async () => {
+    // A moderation event is never a hold subject and has no `legal_hold`
+    // column. It is the explanation of why a message was flagged, so it is
+    // held by whatever holds the thing it describes.
+    const { messageIds } = await seed({ expired: false, messages: 2, messageExpired: true });
+    await ctx.db.query(
+      `insert into moderation_events (event_id, conversation_id, message_id, rule, action,
+                                      severity, created_at, retention_expires_at)
+       values ($1, null, $2, 'email', 'flag', 'high', now(), now() - interval '1 day')`,
+      [newMessageId(), messageIds[0]!],
+    );
+    await holds.place({
+      subjectType: 'message',
+      subjectId: messageIds[0]!,
+      caseId: 'CASE-3',
+      owner: 'trust-and-safety',
+      justification: 'evidence',
+    });
+
+    await worker(new FakeLock()).runUntilDrained();
+
+    expect(await ctx.count('messages')).toBe(1);
+    expect(await ctx.count('moderation_events')).toBe(1);
+  });
+
+  it('collects a moderation event whose parents are not held', async () => {
+    // Containment must not become "never delete a moderation event". An event
+    // with no held parent, and one with no parent at all, both expire normally.
+    const { conversationId, messageIds } = await seed({ expired: true, messages: 1 });
+    await ctx.db.query(
+      `insert into moderation_events (event_id, conversation_id, message_id, rule, action,
+                                      severity, created_at, retention_expires_at)
+       values ($1, $2, $3, 'url', 'flag', 'low', now(), now() - interval '1 day')`,
+      [newMessageId(), conversationId, messageIds[0]!],
+    );
+    await ctx.db.query(
+      `insert into moderation_events (event_id, conversation_id, message_id, rule, action,
+                                      severity, created_at, retention_expires_at)
+       values ($1, null, null, 'crypto_address', 'block', 'high', now(), now() - interval '1 day')`,
+      [newMessageId()],
+    );
+
+    await worker(new FakeLock()).runUntilDrained();
+    expect(await ctx.count('moderation_events')).toBe(0);
+  });
+
+  it('lets everything expire again once the conversation hold is released', async () => {
+    const { conversationId } = await seed({ expired: true, messages: 2 });
+    const placed = await holds.place({
+      subjectType: 'conversation',
+      subjectId: conversationId,
+      caseId: 'CASE-4',
+      owner: 'trust-and-safety',
+      justification: 'ongoing investigation',
+    });
+    await worker(new FakeLock()).runUntilDrained();
+    expect(await ctx.count('messages')).toBe(2);
+
+    // One flag on one row, so release needs no bookkeeping about which
+    // children were held on the parent's behalf — the reason containment is
+    // read at deletion time rather than cascaded onto children.
+    await holds.release(placed.holdId, 'trust-and-safety', 'case closed');
+    await worker(new FakeLock()).runUntilDrained();
+
+    expect(await ctx.count('conversations')).toBe(0);
+    expect(await ctx.count('messages')).toBe(0);
   });
 
   it('protects a held message from its parent expiring underneath it', async () => {
