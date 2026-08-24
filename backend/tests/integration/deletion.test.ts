@@ -41,8 +41,14 @@ function worker(lock: DeletionLock, overrides: Record<string, string> = {}): Del
   return new DeletionWorker(config, createNullLogger(), ctx.db, lock);
 }
 
-function toDeletion(overrides: Record<string, string>): { batch?: number } {
-  return overrides.batch === undefined ? {} : { batch: Number(overrides.batch) };
+function toDeletion(overrides: Record<string, string>): {
+  batch?: number;
+  intervalMs?: number;
+} {
+  const result: { batch?: number; intervalMs?: number } = {};
+  if (overrides.batch !== undefined) result.batch = Number(overrides.batch);
+  if (overrides.intervalMs !== undefined) result.intervalMs = Number(overrides.intervalMs);
+  return result;
 }
 
 /** Insert a conversation with an explicit expiry, plus messages sharing it. */
@@ -192,6 +198,90 @@ describe('expiry is enforced (I10)', () => {
     // Several instances deleting the same batches would be harmless but would
     // multiply load on a database doing deliberately unhurried work.
     expect(await ctx.count('conversations')).toBe(1);
+  });
+
+  /**
+   * The scheduled path drains; it does not nibble.
+   *
+   * `start()` used to schedule a single `runPass()` per interval and throw away
+   * the `more` flag that pass computed. One pass deletes at most
+   * `DELETION_BATCH` rows *per table*, so with the shipped defaults — 500 rows,
+   * one pass an hour — this worker could never remove more than 500 rows per
+   * table per hour however much had expired. Any real volume outruns that and
+   * the backlog grows for ever, while every signal stays green: the pass
+   * succeeded, so `chat_deletion_failures_total` never moves and
+   * `chat_retention_deleted_total` climbs steadily.
+   */
+  it('drains a backlog larger than one batch in a single run', async () => {
+    for (let i = 0; i < 7; i += 1) await seed({ expired: true, messages: 2 });
+    const batched = worker(new FakeLock(), { batch: '2' });
+
+    await batched.runUntilDrained();
+
+    // Nothing expired is left, from a single run at a batch size that could
+    // only take two conversations per pass. This is the property under test.
+    expect(await ctx.count('conversations')).toBe(0);
+    expect(await ctx.count('messages')).toBe(0);
+    expect(batched.totals.conversations).toBe(7);
+
+    // `totals.messages` is a floor, not a census, and deliberately asserted as
+    // one. `messages.conversation_id` is `on delete cascade`, so once a
+    // conversation goes its remaining messages go with it — removed by
+    // PostgreSQL, counted against the *conversation* statement, and invisible
+    // to `rowCount` on the message statement. Here that is 8 counted of 14
+    // actually deleted. The same undercount reaches
+    // `chat_retention_deleted_total{table="messages"}` on the dashboard.
+    expect(batched.totals.messages).toBeGreaterThanOrEqual(2);
+    expect(batched.totals.messages).toBeLessThanOrEqual(14);
+  });
+
+  it('drains on its own schedule, rather than one batch per interval', async () => {
+    // The test above calls `runUntilDrained` directly, which the suite already
+    // did before this fix existed — so on its own it proves nothing about the
+    // defect. The defect was in `start()`: it scheduled a single `runPass()`
+    // per interval and discarded the `more` flag that pass computed, capping
+    // this worker at one batch per table per interval however much had
+    // expired. This is the test that goes through the scheduler.
+    for (let i = 0; i < 7; i += 1) await seed({ expired: true, messages: 2 });
+    const scheduled = worker(new FakeLock(), { batch: '2', intervalMs: '1000' });
+
+    try {
+      scheduled.start();
+      // One tick, plus room for the drain. Under the old scheduling exactly two
+      // conversations would be gone by now and five would remain.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    } finally {
+      scheduled.stop();
+    }
+
+    expect(await ctx.count('conversations')).toBe(0);
+    expect(await ctx.count('messages')).toBe(0);
+  }, 10_000);
+
+  it('stops draining on a failed pass instead of retrying into a broken database', async () => {
+    // `more` and a failure mean opposite things to a draining caller. The
+    // error path used to report `more: true`, which would have retried a
+    // database that is refusing every statement up to `maxPasses` times per
+    // run — adding load to the thing that is already unwell.
+    let calls = 0;
+    const failing = new DeletionWorker(
+      ctx.config,
+      createNullLogger(),
+      {
+        ...ctx.db,
+        query: async () => {
+          calls += 1;
+          throw new Error('connection terminated');
+        },
+      },
+      new FakeLock(),
+    );
+
+    await failing.runUntilDrained();
+
+    expect(failing.failures).toBe(1);
+    // One pass attempted, not a hundred.
+    expect(calls).toBe(1);
   });
 
   it('records a failure and alerts rather than throwing', async () => {

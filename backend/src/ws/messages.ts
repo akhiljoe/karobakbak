@@ -144,6 +144,15 @@ export class MessagePipeline {
         moderationFlags: verdict.flags,
         moderationSeverity: verdict.severity,
       });
+      // Retained *before* returning, and this is the branch where it matters
+      // most. A hard block is the highest-confidence, highest-severity match
+      // the policy engine makes — precisely the evidence a moderator needs and
+      // the record that says why the message never arrived. Returning above the
+      // `persist()` below meant the most serious abuse in the system was the
+      // only kind that left nothing behind: no `messages` row, no
+      // `moderation_event`, nothing to attach to a report or an enforcement
+      // decision. Delivery is still refused; only the record changes.
+      this.persist(sessionId, resolved.matchId, messageId, sentAt, contentType, text, verdict);
       return { kind: 'withheld', matchId: resolved.matchId, flags: verdict.flags };
     }
 

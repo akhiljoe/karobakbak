@@ -6,7 +6,10 @@ import { FakeConnection, FakePublisher, silentLogger } from '../helpers/fakes';
 import { loadConfig, type Config, type Env, type RateLimitedCommand } from '../../src/config';
 import { EventDispatcher } from '../../src/ws/dispatch';
 import { MessagePipeline, type MessageStore } from '../../src/ws/messages';
-import { NullRetentionSink } from '../../src/storage/sink';
+import type { RetentionSink } from '../../src/storage/sink';
+import type { MessagePriorityContext, RetentionRecord } from '../../src/storage/records';
+import { priorityFor } from '../../src/storage/records';
+import type { EnqueueResult } from '../../src/storage/retention';
 import { ConnectionRegistry } from '../../src/ws/registry';
 import type {
   RateLimitResult,
@@ -49,6 +52,45 @@ class ScriptedStore implements MessageStore {
   }
 }
 
+/**
+ * A sink that keeps what it was given.
+ *
+ * This suite used `NullRetentionSink` throughout, which made the whole
+ * retention half of `send()` invisible to it — and `send()` has two jobs, not
+ * one: route the message, and hand it plus its moderation signals to
+ * retention. Only the first was ever asserted, which is how a hard-blocked
+ * message came to be the one kind of message that left no evidence at all: the
+ * early return sat above the only `persist()` call, and nothing here could see
+ * the difference.
+ */
+class RecordingSink implements RetentionSink {
+  readonly records: Array<{ record: RetentionRecord; context?: MessagePriorityContext }> = [];
+  reported = false;
+
+  enqueue(record: RetentionRecord, context?: MessagePriorityContext): EnqueueResult {
+    this.records.push(context === undefined ? { record } : { record, context });
+    return { accepted: true };
+  }
+
+  isConversationReported(): boolean {
+    return this.reported;
+  }
+
+  /** Every record of one kind, in the order the pipeline produced them. */
+  ofKind<K extends RetentionRecord['kind']>(
+    kind: K,
+  ): Array<Extract<RetentionRecord, { kind: K }>> {
+    return this.records
+      .map((entry) => entry.record)
+      .filter((record): record is Extract<RetentionRecord, { kind: K }> => record.kind === kind);
+  }
+
+  /** The priority the queue would assign, computed the way the queue does. */
+  priorities(): string[] {
+    return this.records.map((entry) => priorityFor(entry.record, entry.context));
+  }
+}
+
 function build(env: Env = {}) {
   const logger = silentLogger();
   const config: Config = loadConfig({
@@ -62,13 +104,15 @@ function build(env: Env = {}) {
   const publisher = new FakePublisher();
   const dispatcher = new EventDispatcher(registry, publisher, logger);
   const store = new ScriptedStore();
+  const sink = new RecordingSink();
   return {
     logger,
     config,
     registry,
     publisher,
     store,
-    pipeline: new MessagePipeline(store, dispatcher, config, logger, new NullRetentionSink()),
+    sink,
+    pipeline: new MessagePipeline(store, dispatcher, config, logger, sink),
   };
 }
 
@@ -241,6 +285,100 @@ describe('moderation in the pipeline (§14.2)', () => {
     const ctx = build();
     const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'how is your day going');
     expect(outcome).toMatchObject({ kind: 'accepted', delivered: true, flags: [] });
+  });
+
+  /* --- what reaches retention, on every branch ----------------------------- */
+
+  it('retains a hard-blocked message and its moderation events (I10)', async () => {
+    // The regression this suite could not previously see. `send()` returned at
+    // the hard-block branch, above the only call that hands anything to
+    // retention — so the highest-severity policy matches in the system were
+    // the only ones that left no `messages` row and no `moderation_event`.
+    // A moderator investigating the most serious abuse had nothing to read,
+    // and nothing to attach to a report or an enforcement decision.
+    const ctx = build({ MODERATION_HARD_BLOCK_RULES: 'crypto_address' });
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    const outcome = await ctx.pipeline.send(
+      's_me',
+      'c_1',
+      'text',
+      'send to bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+    );
+
+    expect(outcome).toMatchObject({ kind: 'withheld', flags: ['crypto_address'] });
+    // Still not delivered. The record is the only thing that changed.
+    expect(partner.frames).toEqual([]);
+
+    const messages = ctx.sink.ofKind('message');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      body: 'send to bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq',
+      senderSessionId: 's_me',
+      conversationId: 'm_1',
+      moderationAction: 'block',
+      moderationFlags: ['crypto_address'],
+    });
+
+    const events = ctx.sink.ofKind('moderation_event');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      rule: 'crypto_address',
+      action: 'block',
+      messageId: messages[0]!.messageId,
+    });
+
+    // The evidence lands in the safety classes, not in ordinary chat: the
+    // moderation event is P0, and a moderated message is P1 (D27).
+    expect(ctx.sink.priorities()).toEqual(['p1', 'p0']);
+  });
+
+  it('retains a flagged-but-delivered message with one event per rule', async () => {
+    const ctx = build({ MODERATION_FLAG_RULES: 'email' });
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    await ctx.pipeline.send('s_me', 'c_1', 'text', 'reach me at someone@example.com');
+
+    expect(partner.parsed()).toHaveLength(1);
+    const stored = ctx.sink.ofKind('message');
+    expect(stored[0]).toMatchObject({ moderationAction: 'flag' });
+
+    // One row per rule that fired, not one per message — an address contains a
+    // host, so this text trips `url` as well, and triage has to be able to ask
+    // which rule without reading any body.
+    const rules = ctx.sink.ofKind('moderation_event').map((event) => event.rule);
+    expect(rules).toEqual(stored[0]!.moderationFlags);
+    expect(rules).toContain('email');
+    expect(new Set(rules).size).toBe(rules.length);
+  });
+
+  it('retains an ordinary message with no events, in the lowest class', async () => {
+    const ctx = build();
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    await ctx.pipeline.send('s_me', 'c_1', 'text', 'how is your day going');
+
+    expect(ctx.sink.ofKind('message')).toHaveLength(1);
+    expect(ctx.sink.ofKind('moderation_event')).toEqual([]);
+    expect(ctx.sink.priorities()).toEqual(['p3']);
+  });
+
+  it('retains nothing for a message that was never accepted', async () => {
+    // A refusal is not an utterance. Storing the body of a message the system
+    // declined to carry would retain content on a path the sender was told
+    // failed.
+    const ctx = build();
+    ctx.store.rateLimitResult = { allowed: false, retryAfterMs: 500, tokens: 0 };
+    await ctx.pipeline.send('s_me', 'c_1', 'text', 'hello');
+
+    ctx.store.rateLimitResult = { allowed: true, retryAfterMs: 0, tokens: 4 };
+    ctx.store.resolveResult = { status: 'not_matched' };
+    await ctx.pipeline.send('s_me', 'c_2', 'text', 'hello again');
+
+    expect(ctx.sink.records).toEqual([]);
   });
 
   it('never writes the message or the matched fragment into a log line (I8)', async () => {

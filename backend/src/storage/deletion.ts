@@ -48,6 +48,16 @@ export interface DeletionPassResult {
   deleted: DeletionCounts;
   /** True when a batch was full, so more remains for the next pass. */
   more: boolean;
+  /**
+   * True when the pass threw.
+   *
+   * Separate from `more` because the two mean opposite things to a caller that
+   * is draining: `more` says "go again", and a failure says "stop, and let the
+   * next scheduled run retry". Without the distinction a database that is
+   * refusing every statement would be retried in a tight loop for as long as
+   * the drain allowed, which turns one outage into two.
+   */
+  failed: boolean;
 }
 
 /** Takes the distributed lock, so only one instance deletes at a time. */
@@ -83,7 +93,14 @@ export class DeletionWorker {
   start(): void {
     if (!this.config.deletion.enabled || this.timer) return;
     this.timer = setInterval(() => {
-      void this.runPass();
+      // Drain, not one batch. A single pass deletes at most `DELETION_BATCH`
+      // rows *per table*, so scheduling one pass an hour capped this worker at
+      // 500 rows per table per hour however much had expired. Any real volume
+      // outruns that, and the backlog then grows for ever while every signal
+      // stays green: the pass succeeded, `chat_retention_deleted_total` rises
+      // steadily, and `chat_deletion_failures_total` never moves. The batch
+      // size was never the problem — the scheduling was.
+      void this.runUntilDrained();
     }, this.config.deletion.intervalMs);
     this.timer.unref();
   }
@@ -98,11 +115,11 @@ export class DeletionWorker {
    * reason to take down a process that is otherwise serving chat.
    */
   async runPass(): Promise<DeletionPassResult> {
-    if (this.running) return { ran: false, deleted: { ...EMPTY }, more: false };
+    if (this.running) return { ran: false, deleted: { ...EMPTY }, more: false, failed: false };
     this.running = true;
     try {
       const holdsLock = await this.lock.acquireDeletionLock(this.config.instanceId);
-      if (!holdsLock) return { ran: false, deleted: { ...EMPTY }, more: false };
+      if (!holdsLock) return { ran: false, deleted: { ...EMPTY }, more: false, failed: false };
 
       const deleted = await this.deleteExpired();
       this.lastSuccessMs = Date.now();
@@ -117,7 +134,7 @@ export class DeletionWorker {
 
       const batch = this.config.deletion.batch;
       const more = Object.values(deleted).some((count) => count >= batch);
-      return { ran: true, deleted, more };
+      return { ran: true, deleted, more, failed: false };
     } catch (err) {
       this.failures += 1;
       // I10: a deletion failure never fails silently. This is the line that
@@ -127,13 +144,24 @@ export class DeletionWorker {
         failures: this.failures,
         ...dbErrorFields(err),
       });
-      return { ran: true, deleted: { ...EMPTY }, more: true };
+      return { ran: true, deleted: { ...EMPTY }, more: false, failed: true };
     } finally {
       this.running = false;
     }
   }
 
-  /** Run passes until nothing is left, for tests and for an explicit sweep. */
+  /**
+   * Run passes until nothing is left. The scheduled path, and an explicit sweep.
+   *
+   * `maxPasses` bounds one run so a large backlog cannot hold the connection
+   * pool for the whole interval — whatever is left is picked up by the next
+   * run rather than by this one. It is a fairness bound, not a correctness one.
+   *
+   * Stops on the first failed pass. Retrying a database that is refusing every
+   * statement, up to `maxPasses` times, would add load to the thing that is
+   * already unwell; the next scheduled run is soon enough, and the failure has
+   * already been logged and counted for the alert (I10).
+   */
   async runUntilDrained(maxPasses = 100): Promise<DeletionCounts> {
     const total: DeletionCounts = { ...EMPTY };
     for (let pass = 0; pass < maxPasses; pass += 1) {
@@ -141,7 +169,7 @@ export class DeletionWorker {
       for (const key of Object.keys(result.deleted) as Array<keyof DeletionCounts>) {
         total[key] += result.deleted[key];
       }
-      if (!result.more) break;
+      if (result.failed || !result.more) break;
     }
     return total;
   }
