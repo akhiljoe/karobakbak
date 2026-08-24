@@ -20,6 +20,30 @@
  * in the class. Either way something is dropped, counted, and never silently
  * forgotten — the caller is told which, because P0 has to fail the client
  * operation that produced it (§14.3).
+ *
+ * ---------------------------------------------------------------------------
+ * P0 IS NEVER TAKEN FROM SOMEBODY ELSE
+ * ---------------------------------------------------------------------------
+ * The second half of that rule — "otherwise the oldest entry in the class" —
+ * is right for chat and wrong for safety evidence, because P0 is the one class
+ * whose records have already been *acknowledged to a user*. A report is
+ * answered with `report_ack` the moment its record is accepted here, so
+ * displacing an older P0 turns a visible refusal for the newest report into a
+ * silent loss of somebody else's, after they were told it was filed.
+ *
+ * So a P0 record from a session that is *within* its quota does not evict; it
+ * is refused, and the caller fails the client operation honestly. The
+ * per-session branch above it stays exactly as it was: a session over its
+ * share still displaces its own oldest record, which is the whole point of the
+ * sub-quota (D26) and is what stops one flooder from making the class refuse
+ * everybody. Contained to the flooder, never charged to a bystander.
+ *
+ * Anonymous users can open fresh sessions freely, so the sub-quota is not a
+ * defence against a distributed report flood — which is exactly the case that
+ * used to reach the cross-session eviction. Under pressure P0 now fills and
+ * refuses, `chat_retention_dropped_total{class="p0"}` moves, and
+ * `SafetyRecordsDropped` pages. That is the correct outcome: the operator
+ * learns, and no evidence anybody was promised is quietly gone.
  */
 import type { Config, RetentionPriority } from '../config';
 import { priorityFor, quotaSessionFor, type MessagePriorityContext, type QueuedRecord, type RetentionRecord } from './records';
@@ -35,8 +59,28 @@ export type EnqueueOutcome =
    * the class's oldest entry went instead.
    */
   | { accepted: true; evicted: QueuedRecord; reason: 'quota' | 'class_full' }
-  /** Refused: the class was full and this record was the one to drop. */
+  /**
+   * Refused: the class was full and this record was the one to drop.
+   *
+   * For P0 this is the ordinary outcome of a full class rather than an
+   * exceptional one — see the note above on why safety evidence is never taken
+   * from another session. The caller **must** fail the client operation that
+   * produced the record (§14.3).
+   */
   | { accepted: false; evicted: null; reason: 'class_full' };
+
+/**
+ * Classes whose records may not be displaced to make room for another
+ * session's record.
+ *
+ * P0 alone. It is the class whose acceptance has already been reported to a
+ * user, so an eviction there is a broken promise rather than shed load. P1
+ * also carries evidence and is deliberately *not* here: nothing acknowledges a
+ * P1 record to anyone, so shedding its oldest under pressure is honest
+ * load-shedding, and the per-session sub-quota is the control that keeps one
+ * session from aiming it at other people (D26).
+ */
+const NEVER_EVICTED_FOR_ANOTHER_SESSION: ReadonlySet<RetentionPriority> = new Set(['p0']);
 
 export interface QueueStats {
   readonly depth: Readonly<Record<RetentionPriority, number>>;
@@ -90,6 +134,12 @@ export class RetentionQueue {
       }
       // Unreachable while `mine > 0`, and if it ever is reachable the safe
       // answer is to refuse rather than to grow past the cap.
+      return { accepted: false, evicted: null, reason: 'class_full' };
+    }
+
+    // Within quota, and the class is full — so every entry in it belongs to
+    // somebody else. For safety evidence that is where eviction stops.
+    if (NEVER_EVICTED_FOR_ANOTHER_SESSION.has(priority)) {
       return { accepted: false, evicted: null, reason: 'class_full' };
     }
 

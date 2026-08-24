@@ -128,6 +128,88 @@ describe('per-class capacity', () => {
   });
 });
 
+describe('P0 is never taken from another session', () => {
+  // The class-full eviction above was only ever exercised on P3, so the rule
+  // it encodes was applied to safety evidence without anyone testing what that
+  // meant. What it meant: a report from a session within its quota displaced
+  // an *older* report belonging to somebody else, and `enqueue` returned
+  // accepted — so the report handler sent `report_ack` for the new one while
+  // the earlier reporter, already acknowledged, silently lost their evidence.
+
+  it('refuses a new report rather than displacing another session report', () => {
+    const queue = new RetentionQueue(config({ RETENTION_QUEUE_MAX_P0: '2' }));
+    const first = report('s_alice');
+    queue.enqueue(first);
+    queue.enqueue(report('s_bob'));
+
+    // Carol is within her quota and the class is full, so the only room is
+    // somebody else's.
+    const outcome = queue.enqueue(report('s_carol'));
+
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.evicted).toBeNull();
+    expect(outcome.reason).toBe('class_full');
+    // Alice's report is still there, and still first out.
+    expect(queue.stats().depth.p0).toBe(2);
+    expect(queue.take(1)[0]?.record).toBe(first);
+  });
+
+  it('still makes a flooding session displace its own records first (D26)', () => {
+    // The per-session branch is unchanged, and has to be: without it one
+    // flooder fills P0 and every honest report is refused from then on.
+    const queue = new RetentionQueue(
+      config({ RETENTION_QUEUE_MAX_P0: '4', RETENTION_QUEUE_SESSION_QUOTA_PCT: '50' }),
+    );
+    expect(queue.quotaFor('p0')).toBe(2);
+
+    const honest = report('s_honest');
+    queue.enqueue(honest);
+    const flooderFirst = report('s_flood');
+    queue.enqueue(flooderFirst);
+    queue.enqueue(report('s_flood'));
+    queue.enqueue(report('s_other'));
+
+    // At capacity, and the flooder is at its share. It pays for itself.
+    const outcome = queue.enqueue(report('s_flood'));
+    expect(outcome.accepted).toBe(true);
+    expect(outcome.reason).toBe('quota');
+    expect(outcome.evicted?.record).toBe(flooderFirst);
+
+    // Nobody else lost anything.
+    const remaining = queue.drainAll().map((entry) => entry.record);
+    expect(remaining).toContain(honest);
+  });
+
+  it('refuses every later report once the class is full of other sessions', () => {
+    // Anonymous users open fresh sessions freely, so a distributed flood never
+    // trips the sub-quota. The class fills and refuses, which pages through
+    // `SafetyRecordsDropped` — the operator learns, and no acknowledged
+    // evidence disappears.
+    const queue = new RetentionQueue(config({ RETENTION_QUEUE_MAX_P0: '3' }));
+    for (let i = 0; i < 3; i += 1) queue.enqueue(report(`s_filler_${i}`));
+
+    for (let i = 0; i < 5; i += 1) {
+      expect(queue.enqueue(report(`s_fresh_${i}`)).accepted).toBe(false);
+    }
+    expect(queue.stats().depth.p0).toBe(3);
+  });
+
+  it('sheds the oldest across sessions in the lower classes, as before', () => {
+    // P1 carries evidence too, and deliberately still sheds: nothing
+    // acknowledges a P1 record to anybody, so this is honest load-shedding
+    // rather than a broken promise, and the sub-quota is what aims it fairly.
+    const queue = new RetentionQueue(config({ RETENTION_QUEUE_MAX_P1: '2' }));
+    const first = message('s_a', 'flag');
+    queue.enqueue(first);
+    queue.enqueue(message('s_b', 'flag'));
+
+    const outcome = queue.enqueue(message('s_c', 'flag'));
+    expect(outcome.accepted).toBe(true);
+    expect(outcome.reason).toBe('class_full');
+    expect(outcome.evicted?.record).toBe(first);
+  });
+});
+
 describe('per-session quota inside a class', () => {
   it('makes a flooding session displace its own records first', () => {
     // 10 slots, 20% quota = 2 per session.

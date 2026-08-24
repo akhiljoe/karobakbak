@@ -398,27 +398,83 @@ describe('a parent row another instance has not written yet', () => {
 });
 
 describe('capacity exhaustion', () => {
-  it('refuses a P0 record when its class is full, so the caller can fail the client', async () => {
+  /**
+   * This test used to claim a refusal the code never performed.
+   *
+   * It filed four reports from one session, so it only ever reached the
+   * per-session branch — which accepts, after displacing that session's own
+   * oldest record. Its assertion was a disjunction,
+   * `some(r => !r.accepted || quotaEvictions > 0)`, and the second half carried
+   * it: nothing was ever refused, and nothing checked that anything was. The
+   * cross-session path the title describes went untested at this layer and at
+   * the unit layer, where the equivalent test is parametrised on P3.
+   *
+   * Split in two, one branch each, with the assertions the titles imply.
+   */
+  it('refuses a P0 record from a new session rather than taking an older one', async () => {
     const writer = ctx.writer({ RETENTION_QUEUE_MAX_P0: '2', RETENTION_ENABLED: 'true' });
     const id = conversationId();
-    const report = (): RetentionRecord => ({
+    const report = (reporter: string): RetentionRecord => ({
       kind: 'report',
       reportId: newMessageId(),
       conversationId: id,
-      reporterSessionId: 's_flood',
+      reporterSessionId: reporter,
       reportedSessionId: 's_b',
       category: 'spam',
       note: null,
       createdAt: new Date().toISOString(),
     });
 
-    writer.enqueue(report());
-    writer.enqueue(report());
-    // At capacity with the same session over quota, the newest is evicted and
-    // the caller is told — a report that could not be recorded must not be
-    // acknowledged (§14.3).
-    const results = [writer.enqueue(report()), writer.enqueue(report())];
-    expect(results.some((result) => !result.accepted || writer.counters.quotaEvictions > 0)).toBe(true);
+    expect(writer.enqueue(report('s_alice')).accepted).toBe(true);
+    expect(writer.enqueue(report('s_bob')).accepted).toBe(true);
+
+    // Carol is within her quota, so the only room left is Alice's or Bob's.
+    // Both have already been answered with `report_ack`, so taking one would
+    // turn a visible refusal for Carol into a silent loss for somebody who was
+    // told their report was filed. Carol is refused instead, and the report
+    // handler fails her request honestly (§14.3).
+    const refused = writer.enqueue(report('s_carol'));
+    expect(refused.accepted).toBe(false);
+    if (refused.accepted) throw new Error('expected a refusal');
+    expect(refused.priority).toBe('p0');
+
+    // Nothing was displaced, and the refusal is counted where the
+    // `SafetyRecordsDropped` alert reads it.
+    expect(writer.counters.quotaEvictions).toBe(0);
+    expect(writer.snapshot().queue.depth.p0).toBe(2);
+    expect(writer.snapshot().counters.dropped['p0:queue_full']).toBe(1);
+  });
+
+  it('makes a flooding session displace its own reports, not other people', async () => {
+    const writer = ctx.writer({
+      RETENTION_QUEUE_MAX_P0: '4',
+      RETENTION_QUEUE_SESSION_QUOTA_PCT: '50',
+      RETENTION_ENABLED: 'true',
+    });
+    const id = conversationId();
+    const report = (reporter: string): RetentionRecord => ({
+      kind: 'report',
+      reportId: newMessageId(),
+      conversationId: id,
+      reporterSessionId: reporter,
+      reportedSessionId: 's_b',
+      category: 'spam',
+      note: null,
+      createdAt: new Date().toISOString(),
+    });
+
+    writer.enqueue(report('s_honest'));
+    writer.enqueue(report('s_flood'));
+    writer.enqueue(report('s_flood'));
+    writer.enqueue(report('s_other'));
+
+    // At capacity and at its share: the flood pays for itself. Without this
+    // branch one flooder would fill P0 and every honest report after it would
+    // be refused, which is a worse failure than the one being fixed (D26).
+    const result = writer.enqueue(report('s_flood'));
+    expect(result.accepted).toBe(true);
+    expect(writer.counters.quotaEvictions).toBe(1);
+    expect(writer.snapshot().queue.depth.p0).toBe(4);
   });
 
   it('sheds ordinary chat without touching the safety classes', async () => {
