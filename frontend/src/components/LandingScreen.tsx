@@ -9,6 +9,7 @@
  */
 import { Lock, MessageCircle, Shield, Sparkles, Users } from 'lucide-react';
 
+import { clientConfig, hasLegalLinks } from '../config';
 import type { ChatState } from '../state/machine';
 import type { Profile } from '../protocol/types';
 import { isEmptyProfile } from '../profile';
@@ -27,6 +28,8 @@ interface LandingScreenProps {
   onProfileChange(profile: Profile): void;
   onProfileClear(): void;
 }
+
+const legalLinks = hasLegalLinks(clientConfig);
 
 export function LandingScreen({
   state,
@@ -152,6 +155,37 @@ export function LandingScreen({
             a limited period so abuse can be investigated, then deleted automatically.
           </span>
         </div>
+
+        {/*
+          The age gate links these too, but it is shown once per browser. Without
+          a second route, everybody who has already acknowledged it could never
+          reach the documents again — and a policy nobody can find is not
+          published (docs/policies/README.md step 5).
+
+          Here rather than in settings because this is the screen somebody sits
+          on before starting a conversation, which is when the question of what
+          is kept actually occurs to them.
+        */}
+        {legalLinks && (
+          <div className="mx-auto mt-3 flex max-w-md items-center justify-center gap-4 text-xs text-ink-600">
+            <a
+              href={clientConfig.legal.termsUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="underline underline-offset-2 transition-colors hover:text-ink-300"
+            >
+              Terms
+            </a>
+            <a
+              href={clientConfig.legal.privacyUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="underline underline-offset-2 transition-colors hover:text-ink-300"
+            >
+              Privacy
+            </a>
+          </div>
+        )}
       </footer>
     </div>
   );
