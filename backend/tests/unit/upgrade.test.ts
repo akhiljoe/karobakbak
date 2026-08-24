@@ -47,6 +47,26 @@ describe('clientAddress', () => {
     expect(clientAddress(req, 3)).toBe('client');
   });
 
+  it('reads the real client through the deployed Caddy and nginx chain', () => {
+    // The production topology, and the setting most likely to be wrong in it.
+    // Measured by running the real chain and reading the header at the far end:
+    // Caddy *discards* whatever the client sent and writes the address it saw,
+    // then nginx appends Caddy's address. Two entries, never three — the
+    // forged value does not survive to be counted.
+    const asDeployed = request({ 'x-forwarded-for': '198.51.100.7, 172.20.0.4' });
+
+    expect(clientAddress(asDeployed, 2)).toBe('198.51.100.7');
+
+    // One hop is the mistake this guards: every user resolves to nginx's own
+    // address, so the whole service shares one rate-limit bucket and one block
+    // identity — a ban on anyone becomes a ban on everyone.
+    expect(clientAddress(asDeployed, 1)).toBe('172.20.0.4');
+
+    // Three is the CDN topology. Against a two-entry chain it is too short to
+    // trust, so the peer address is used rather than a guess.
+    expect(clientAddress(asDeployed, 3)).toBe('10.0.0.9');
+  });
+
   it('falls back to the peer when the chain is shorter than the hop count', () => {
     // A header too short to contain what our own proxies should have written
     // is not partially trustworthy — it is absent.

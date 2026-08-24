@@ -21,18 +21,9 @@
 # ---------------------------------------------------------------------------
 # WHAT THIS FILE DOES NOT DO
 # ---------------------------------------------------------------------------
-# * **No TLS.** Something must terminate HTTPS in front of `frontend`, which
-#   publishes only to loopback here. On a single host that is Caddy, nginx or
-#   Traefik on the host with a Let's Encrypt certificate, proxying to
-#   127.0.0.1:8080. On a managed platform it is the platform's load balancer.
-#   Choosing it is the deployment decision this file deliberately leaves open.
-#   Whatever does it, `TRUST_PROXY_HOPS` must equal the number of proxies in
-#   front, or clients can forge their own address (§6.5).
-# * **No backups.** `BackupMonitor` reports staleness and the `BackupsStale`
-#   alert fires, but nothing here *takes* a backup. Something must, and it must
-#   report success to the application, or the alert is permanently red.
 # * **No secret manager.** Variables are read from the environment; where they
-#   come from is the platform's business.
+#   come from is the platform's business. (Repeated below; this list used to
+#   also carry TLS and backups, both of which now exist.)
 #
 # ---------------------------------------------------------------------------
 # ONE BACKEND
@@ -46,16 +37,47 @@
 # rather than a hand-written target list.
 
 services:
-  frontend:
-    # Loopback only. The TLS terminator in front is the only thing that should
-    # be able to reach this, and it lives on the same host.
-    ports: !override
-      - "127.0.0.1:${FRONTEND_BIND_PORT:-8080}:80"
+  # ---------------------------------------------------------------------------
+  # TLS
+  # ---------------------------------------------------------------------------
+  # The only service that publishes to the world. Certificates are obtained and
+  # renewed from Let's Encrypt without a cron entry or a renewal hook, which is
+  # the whole reason it is Caddy — on a single host, certificate lifecycle is
+  # the entire job.
+  #
+  # Port 80 is published as well as 443, and both are needed: the ACME HTTP
+  # challenge arrives on 80, and Caddy redirects everything else from it.
+  caddy:
+    image: caddy:2.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      KAROBAKBAK_DOMAIN: "${KAROBAKBAK_DOMAIN:?the public hostname, e.g. karobakbak.com}"
+      ACME_EMAIL: "${ACME_EMAIL:?where Let's Encrypt sends renewal warnings}"
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Losing this volume means
+      # re-issuing, which Let's Encrypt rate limits — it is not a cache.
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - frontend
+    # The anchor lives on the first service that uses it; every other service
+    # below references it.
     logging: &logging
       driver: json-file
       options:
         max-size: "10m"
         max-file: "5"
+    restart: unless-stopped
+
+  frontend:
+    # No published port at all. Caddy reaches it over the compose network, and
+    # nothing else should reach it — this used to bind loopback because the TLS
+    # terminator was assumed to be on the host rather than beside it.
+    ports: !reset []
+    logging: *logging
 
   backend:
     environment:
@@ -66,7 +88,11 @@ services:
       # However many proxies actually sit in front. Too high and a client can
       # forge its own address in X-Forwarded-For, which defeats rate limiting
       # and blocks at once.
-      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:?how many proxies sit in front of this}"
+      # Caddy -> nginx -> here is **two**. A CDN in front makes it three.
+      # Too low and every user shares one apparent address, collapsing rate
+      # limits and blocks onto each other; too high and a client picks its own
+      # address with a header and sheds its bans (§6.5).
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:?how many proxies sit in front of this — Caddy plus nginx is 2}"
       # The public origin, exactly: scheme, host and port. An empty allowlist
       # is a startup failure in production (R9).
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin, e.g. https://karobakbak.com}"
@@ -141,3 +167,9 @@ services:
     ports: !override
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     logging: *logging
+
+# Caddy's certificate store. Declared here rather than in the base file because
+# nothing outside production terminates TLS.
+volumes:
+  caddydata:
+  caddyconfig:

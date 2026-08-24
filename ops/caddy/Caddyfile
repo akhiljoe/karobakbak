@@ -1,0 +1,95 @@
+# The TLS terminator.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS AT ALL
+# ---------------------------------------------------------------------------
+# Production publishes the edge to loopback and deliberately left HTTPS as a
+# deployment decision. Until something terminated it, secure WebSockets did not
+# work, the block-token cookie could not be `Secure`, and every message crossed
+# the network in clear text.
+#
+# Caddy, because certificates are the whole job and it does them without a
+# second moving part: it obtains and renews from Let's Encrypt on its own, with
+# no cron entry, no renewal hook and no certificate path to get wrong. On a
+# single host that is the entire argument.
+#
+# ---------------------------------------------------------------------------
+# TWO PROXIES NOW SIT IN FRONT OF THE BACKEND
+# ---------------------------------------------------------------------------
+# This is the setting that breaks everything quietly if it is wrong.
+#
+# The chain is client -> Caddy -> nginx -> backend, and the backend counts
+# `X-Forwarded-For` entries from the right: the rightmost N were written by our
+# own infrastructure and anything left of them is whatever the client sent.
+#
+# What the backend actually receives, confirmed by running this chain and
+# reading the header at the far end rather than by reasoning about it:
+#
+#   real client        added by nginx
+#   198.51.100.7   ,   172.20.0.4
+#   ^ TRUST_PROXY_HOPS=2 lands here
+#
+# Two entries, not three, and this is the part worth knowing: **Caddy discards
+# a client-supplied `X-Forwarded-For` rather than appending to it.** Requests
+# arriving with `X-Forwarded-For: 1.2.3.4` reach the backend with that value
+# gone entirely. Caddy only preserves an inbound chain when the peer is listed
+# in `trusted_proxies`, and nothing is. That is a stricter default than nginx's
+# `$proxy_add_x_forwarded_for`, and it means address forgery is not possible
+# here at any hop count.
+#
+# The hop count still has to be right, because it decides which entry is read.
+# Set it to 1 and the backend reads nginx's own address for every user, so the
+# entire service shares one rate-limit bucket and one block identity — every
+# ban applies to everybody, and every stranger looks like the same person.
+# `docker-compose.prod.yml` therefore requires the value explicitly rather than
+# defaulting it.
+#
+# Putting a CDN in front — Cloudflare, most likely — adds a hop and makes it 3,
+# and Cloudflare must then be in `trusted_proxies` here for the real client
+# address to survive at all. That is the change to make, and forgetting it is
+# the trap.
+#
+# ---------------------------------------------------------------------------
+# NO COMPRESSION
+# ---------------------------------------------------------------------------
+# Deliberately absent. Security §17 says not to enable compression for a small
+# text-only service without testing that shows a benefit, and while that section
+# is about the WebSocket rather than static assets, the principle it states —
+# do not enable it simply because it is available — is the one being followed.
+# The bundle is small and cached hard by the layer behind this.
+
+{
+	# Where Let's Encrypt sends expiry warnings if renewal ever stops working.
+	email {$ACME_EMAIL}
+}
+
+{$KAROBAKBAK_DOMAIN} {
+	# HSTS is set here because this is the only layer that knows the request
+	# arrived over TLS. Two years, subdomains included, and deliberately **no**
+	# `preload`: preloading is a one-way door enforced by browsers for months
+	# regardless of what this file later says, and it should be a considered
+	# decision rather than a default picked up from an example config.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		# Caddy announces itself otherwise. Nothing needs to know.
+		-Server
+	}
+
+	# Everything, including the WebSocket upgrade. Caddy proxies `Upgrade`
+	# without configuration, and appends the client address to
+	# `X-Forwarded-For` rather than replacing it — which is what makes the hop
+	# counting above work.
+	#
+	# nginx behind this keeps serving the bundle and setting the Content
+	# Security Policy; this layer adds TLS and nothing else, so there is one
+	# place security headers are decided rather than two that can disagree.
+	reverse_proxy frontend:80
+
+	log {
+		output stdout
+		format console
+		# Access logs carry client addresses, which are personal data here and
+		# are salted-hashed everywhere else in this system. Errors only.
+		level ERROR
+	}
+}
