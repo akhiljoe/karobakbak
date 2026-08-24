@@ -175,12 +175,21 @@ export interface JanitorMatchesResult {
   dropped: number;
   ended: number;
   survivors: Survivor[];
+  /**
+   * The matches this pass ended.
+   *
+   * Not just how many: the caller writes a `conversation_ended` retention row
+   * for each, and a count cannot say which conversation to write it against.
+   */
+  endedMatchIds: string[];
 }
 
 export interface JanitorSessionsResult {
   reaped: number;
   ended: number;
   survivors: Survivor[];
+  /** The matches this pass ended. See `JanitorMatchesResult`. */
+  endedMatchIds: string[];
 }
 
 export interface PresenceCounts {
@@ -215,14 +224,34 @@ function orNull(value: string): string | null {
 }
 
 /** Read the trailing `sid, mid, sid, mid, ...` tail the janitor scripts return. */
-function survivorsFrom(reply: ScriptReply, offset: number): Survivor[] {
+/**
+ * Survivors from a nested list of flat `(sessionId, matchId)` pairs.
+ *
+ * The janitor replies used to run survivors to the end of the reply, which
+ * meant nothing else could ever be appended — the parser had no way to know
+ * where one list stopped. They are nested now, so the ended match ids sit
+ * beside them without either having to be counted.
+ */
+function survivorsFromList(value: ScriptReply[number] | undefined): Survivor[] {
   const survivors: Survivor[] = [];
-  for (let i = offset; i + 1 < reply.length; i += 2) {
-    const sessionId = str(reply, i);
-    const matchId = str(reply, i + 1);
+  if (!Array.isArray(value)) return survivors;
+  for (let i = 0; i + 1 < value.length; i += 2) {
+    const sessionId = str(value, i);
+    const matchId = str(value, i + 1);
     if (sessionId !== '' && matchId !== '') survivors.push({ sessionId, matchId });
   }
   return survivors;
+}
+
+/** A nested list of plain strings, ignoring anything that is not one. */
+function stringsFrom(value: ScriptReply[number] | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const item = str(value, i);
+    if (item !== '') out.push(item);
+  }
+  return out;
 }
 
 class UnexpectedScriptReplyError extends Error {
@@ -838,7 +867,8 @@ export class RedisStore {
     return {
       dropped: num(reply, 0),
       ended: num(reply, 1),
-      survivors: survivorsFrom(reply, 2),
+      survivors: survivorsFromList(reply[2]),
+      endedMatchIds: stringsFrom(reply[3]),
     };
   }
 
@@ -851,7 +881,8 @@ export class RedisStore {
     return {
       reaped: num(reply, 0),
       ended: num(reply, 1),
-      survivors: survivorsFrom(reply, 2),
+      survivors: survivorsFromList(reply[2]),
+      endedMatchIds: stringsFrom(reply[3]),
     };
   }
 

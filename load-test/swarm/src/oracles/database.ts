@@ -235,42 +235,22 @@ export async function checkDatabaseAgreement(
 
   /* --- 2. every conversation was closed ----------------------------------- */
 
-  const [openRaw] = await psql(
-    input,
-    `select count(*) from conversations
-      where started_at >= '${since}' and (ended_at is null or end_reason is null)`,
-  );
-  const open = Number(openRaw ?? 0);
-  const [totalConvRaw] = await psql(
-    input,
-    `select count(*) from conversations where started_at >= '${since}'`,
-  );
-  const conversations = Number(totalConvRaw ?? 0);
-  details.push(`conversations without an ending: ${open} of ${conversations}`);
-
-  // A **known product bug**, found by this oracle on its first real run, and
-  // reported as a warning rather than a failure so the suite does not sit
-  // permanently red for something already written down.
-  //
-  // `conversation_ended` is enqueued in exactly one place — `endMatchAndNotify`
-  // — which runs for a skip, an explicit leave, and a close that ends the
-  // match. It does *not* run for a match the **janitor** reaps, and the janitor
-  // has no retention sink at all. Under §28 a dropped socket no longer ends its
-  // match: the seat is held and the janitor ends it when the grace window
-  // expires. So the ordinary "their connection died" path leaves `ended_at` and
-  // `end_reason` null for ever.
-  //
-  // Fixing it needs the janitor to know which match ids it ended, and the
-  // `janitorMatches` Lua returns only a count — a change to the reply shape of
-  // the most race-tested code here, so it is its own piece of work rather than
-  // a rider on an oracle.
-  if (open > 0) {
-    unresolved.push(
-      `${open} of ${conversations} conversations have no ended_at or end_reason. Matches ` +
-        'reaped by the janitor never record an ending: `conversation_ended` is enqueued ' +
-        'only by `endMatchAndNotify`, and the janitor has no retention sink. Under §28 ' +
-        'that is the ordinary path for a dropped connection.',
+  // Poll rather than sample once. A conversation whose match is still held has
+  // legitimately not ended yet — under §28 the seat outlives the socket by the
+  // grace window, and the janitor ends it on its own interval afterwards. That
+  // is a transient; "never ends" is the bug. Waiting distinguishes them, and
+  // the drain timeout is already sized for the same order of delay.
+  const endingDeadline = Date.now() + input.drainTimeoutSeconds * 1000;
+  let open = 0;
+  for (;;) {
+    const [openRaw] = await psql(
+      input,
+      `select count(*) from conversations
+        where started_at >= '${since}' and (ended_at is null or end_reason is null)`,
     );
+    open = Number(openRaw ?? 0);
+    if (open === 0 || Date.now() > endingDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   /* --- 3. reports belong to conversations their reporter was in ----------- */

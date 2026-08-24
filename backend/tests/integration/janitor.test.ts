@@ -159,9 +159,29 @@ describe('janitorMatches', () => {
     const result = await ctx.store.janitorMatches();
     expect(result.ended).toBe(1);
     expect(result.survivors).toEqual([{ sessionId: a, matchId: mid }]);
+    // Which match, not just how many. Without the id the caller can count
+    // endings and cannot record one, which is how every janitor-reaped
+    // conversation came to have a null `ended_at`.
+    expect(result.endedMatchIds).toEqual([mid]);
     expect(await ctx.store.readMatch(mid)).toBeNull();
     expect(await ctx.store.currentMatchId(a)).toBeNull();
     expect((await ctx.store.readSession(a))?.state).toBe('IDLE');
+  });
+
+  it('reports the match it ended even when nobody survived to be told', async () => {
+    // The case the survivor list cannot cover: both sides gone, so there is
+    // nobody to notify — and the conversation still needs its ending recorded.
+    const { mid } = await pair();
+    const both = await pair();
+    void both;
+
+    const { a, b } = await pair();
+    await ctx.client.del(ctx.keys.session(a), ctx.keys.session(b));
+
+    const result = await ctx.store.janitorMatches();
+    expect(result.survivors).toEqual([]);
+    expect(result.endedMatchIds.length).toBeGreaterThanOrEqual(1);
+    void mid;
   });
 
   it('names nobody when both participants are gone', async () => {

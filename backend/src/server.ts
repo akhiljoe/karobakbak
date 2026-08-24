@@ -182,7 +182,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
     metrics.activeMatches.set(counts.conversations);
     metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(counts.queueDepth);
-  });
+  }, retention);
 
   const limits: ServerLimits = {
     maxMessageLength: config.limits.maxMessageLength,

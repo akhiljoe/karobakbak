@@ -9,7 +9,9 @@ import { ConnectionRegistry } from '../../src/ws/registry';
 import { FakeConnection } from '../helpers/fakes';
 import { createTestContext, enqueue, type TestContext } from '../helpers/redis';
 import { startTestServer, TestClient, payloadOf, type TestServer } from '../helpers/socket';
-import { newMatchId } from '../../src/util/ids';
+import { newMatchId, newSessionId } from '../../src/util/ids';
+import type { RetentionSink } from '../../src/storage/sink';
+import type { RetentionRecord } from '../../src/storage/records';
 import type { ConnectedPayload } from '../../src/protocol/types';
 
 describe('the /metrics endpoint', () => {
@@ -96,21 +98,73 @@ describe('the janitor', () => {
   let ctx: TestContext;
   let registry: ConnectionRegistry;
   let janitor: Janitor;
+  /** Everything the janitor handed to retention, in order. */
+  let recorded: RetentionRecord[];
 
   beforeAll(async () => {
     ctx = await createTestContext();
     const logger = createNullLogger();
     registry = new ConnectionRegistry(logger);
-    janitor = new Janitor(ctx.config, logger, ctx.store, new EventDispatcher(registry, ctx.store, logger));
+    recorded = [];
+    const sink: RetentionSink = {
+      enqueue: (record) => {
+        recorded.push(record);
+        return { accepted: true };
+      },
+      isConversationReported: () => false,
+    };
+    janitor = new Janitor(
+      ctx.config,
+      logger,
+      ctx.store,
+      new EventDispatcher(registry, ctx.store, logger),
+      undefined,
+      sink,
+    );
   });
 
   afterEach(async () => {
     registry.clear();
+    recorded.length = 0;
     await ctx.flush();
   });
 
   afterAll(async () => {
     await ctx.close();
+  });
+
+  it('records how a reaped conversation ended', async () => {
+    // The bug the database-agreement oracle found. `conversation_ended` was
+    // enqueued only by `endMatchAndNotify` — a skip, an explicit leave, or a
+    // close that ends the match — and the janitor had no retention sink at all.
+    //
+    // Under §28 a dropped socket no longer ends its match: the seat is held and
+    // the janitor ends it when the grace window expires. So "their connection
+    // died" became the ordinary path into a conversation whose `ended_at` and
+    // `end_reason` stayed null for ever, and a moderator reading the transcript
+    // back could not tell it apart from one somebody walked out of.
+    const a = newSessionId();
+    const b = newSessionId();
+    await ctx.store.createSession({ sessionId: a, instanceId: 'i_one', ipHash: 'ip-a', clientHash: 'cl-a' }, ctx.segment);
+    await ctx.store.createSession({ sessionId: b, instanceId: 'i_one', ipHash: 'ip-b', clientHash: 'cl-b' }, ctx.segment);
+    await ctx.store.joinQueue(a, ctx.segment);
+    await ctx.store.joinQueue(b, ctx.segment);
+    const matched = await ctx.store.tryMatch(a, ctx.segment, newMatchId());
+    if (matched.status !== 'matched') throw new Error('expected a match');
+
+    // One side vanishes without a clean teardown, which is what a dead process
+    // or an expired held seat looks like.
+    await ctx.client.del(ctx.keys.session(b));
+    await janitor.runPass();
+
+    const endings = recorded.filter((record) => record.kind === 'conversation_ended');
+    expect(endings).toHaveLength(1);
+    expect(endings[0]).toMatchObject({
+      conversationId: matched.matchId,
+      // Its own reason, and the point of having one: `reap` says the other side
+      // vanished, where `skip` and `disconnect` say somebody chose to leave.
+      endReason: 'reap',
+    });
   });
 
   it('refreshes this instance beacon whether or not it wins the lock', async () => {
@@ -198,8 +252,8 @@ describe('the janitor', () => {
         },
         refreshInstanceBeacon: async () => undefined,
         janitorQueue: async () => ({ removed: 0, remaining: 0 }),
-        janitorMatches: async () => ({ dropped: 0, ended: 0, survivors: [] }),
-        janitorSessions: async () => ({ reaped: 0, ended: 0, survivors: [] }),
+        janitorMatches: async () => ({ dropped: 0, ended: 0, survivors: [], endedMatchIds: [] }),
+        janitorSessions: async () => ({ reaped: 0, ended: 0, survivors: [], endedMatchIds: [] }),
         janitorInstances: async () => ({ removed: 0, remaining: 0 }),
         queueDepth: async () => 0,
         presenceCounts: async () => ({ online: 0, conversations: 0 }),

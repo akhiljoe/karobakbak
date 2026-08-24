@@ -36,6 +36,7 @@ import type {
 } from '../redis/store';
 import { nowIso } from '../util/time';
 import type { EventDispatcher } from './dispatch';
+import type { RetentionSink } from '../storage/sink';
 
 /** The part of the store the janitor uses. */
 export interface JanitorStore {
@@ -94,6 +95,21 @@ export class Janitor {
     private readonly onCounts?: (
       counts: { online: number; conversations: number; queueDepth: number } | null,
     ) => void,
+    /**
+     * Where a reaped conversation's ending is recorded.
+     *
+     * The janitor had no retention sink at all, and `conversation_ended` was
+     * enqueued only by `endMatchAndNotify` — a skip, an explicit leave, or a
+     * close that ends the match. Under §28 a dropped socket no longer ends its
+     * match: the seat is held and *this* ends it when the grace window expires.
+     * So "their connection died" became the ordinary path into a conversation
+     * whose `ended_at` and `end_reason` stayed null for ever, and a moderator
+     * reading it back could not tell how it finished.
+     *
+     * Optional, and last, so the janitor still runs without one — the
+     * integration tests construct it that way.
+     */
+    private readonly retention?: RetentionSink,
   ) {}
 
   start(): void {
@@ -138,6 +154,25 @@ export class Janitor {
       // side; from this user's point of view the stranger simply left.
       const survivors = [...matches.survivors, ...sessions.survivors];
       const notified = await this.notify(survivors);
+
+      // Record how these conversations finished, before anything else can
+      // forget. `reap` is its own end reason precisely so a moderator reading a
+      // transcript months later can tell a conversation somebody walked out of
+      // from one whose other side simply vanished — the two look identical in
+      // the transcript and mean different things about the person.
+      //
+      // Enqueued rather than awaited: retention is write-behind and a janitor
+      // pass must never wait on PostgreSQL (D16). A full queue drops the record,
+      // counts it and alerts, exactly as it does everywhere else.
+      const endedAt = nowIso();
+      for (const matchId of [...matches.endedMatchIds, ...sessions.endedMatchIds]) {
+        this.retention?.enqueue({
+          kind: 'conversation_ended',
+          conversationId: matchId,
+          endedAt,
+          endReason: 'reap',
+        });
+      }
 
       if (this.onCounts) {
         const counts = await this.store.presenceCounts();

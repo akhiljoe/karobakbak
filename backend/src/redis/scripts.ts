@@ -858,6 +858,11 @@ local lateTtl = tonumber(ARGV[4]) or 0
 local dropped = 0
 local ended = 0
 local survivors = {}
+-- Which matches this pass ended, not merely how many. The caller writes a
+-- conversation_ended retention row for each: before this, a match reaped here
+-- left ended_at and end_reason null for ever, and under section 28 the janitor
+-- is the ordinary path for a dropped connection.
+local endedIds = {}
 for i = 1, #mids do
   local mid = mids[i]
   local m = redis.call('HMGET', kMatch(mid), 'a', 'b')
@@ -871,6 +876,7 @@ for i = 1, #mids do
     if not (aAlive and bAlive) then
       if endMatchInline(mid, sessionTtl, lateTtl) then
         ended = ended + 1
+        endedIds[#endedIds + 1] = mid
         if aAlive then
           survivors[#survivors + 1] = m[1]
           survivors[#survivors + 1] = mid
@@ -883,9 +889,10 @@ for i = 1, #mids do
     end
   end
 end
-local out = { dropped, ended }
-for i = 1, #survivors do out[#out + 1] = survivors[i] end
-return out
+-- Nested rather than flat. The survivors used to run to the end of the reply,
+-- so nothing else could be appended without the parser having to guess where
+-- one list stopped.
+return { dropped, ended, survivors, endedIds }
 `,
 );
 
@@ -907,6 +914,10 @@ local lateTtl = tonumber(ARGV[4]) or 0
 local reaped = 0
 local ended = 0
 local survivors = {}
+-- Which matches this pass ended. Same reasoning as janitorMatches: the caller
+-- writes a conversation_ended row for each, and without the ids it could only
+-- know how many.
+local endedIds = {}
 for i = 1, #sids do
   local sid = sids[i]
   local iid = redis.call('HGET', kSession(sid), 'instanceId')
@@ -933,6 +944,7 @@ for i = 1, #sids do
       end
       if endMatchInline(mid, sessionTtl, lateTtl) then
         ended = ended + 1
+        endedIds[#endedIds + 1] = mid
         if survivor ~= '' and redis.call('EXISTS', kSession(survivor)) == 1 then
           survivors[#survivors + 1] = survivor
           survivors[#survivors + 1] = mid
@@ -946,14 +958,14 @@ end
 -- sweep — two sessions of one crashed instance are exactly that case. Filter
 -- once at the end so the caller is never told to notify a session this pass
 -- has already deleted.
-local out = { reaped, ended }
+local live = {}
 for i = 1, #survivors, 2 do
   if redis.call('EXISTS', kSession(survivors[i])) == 1 then
-    out[#out + 1] = survivors[i]
-    out[#out + 1] = survivors[i + 1]
+    live[#live + 1] = survivors[i]
+    live[#live + 1] = survivors[i + 1]
   end
 end
-return out
+return { reaped, ended, live, endedIds }
 `,
 );
 
