@@ -116,6 +116,7 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     metricsUrls: input.metricsUrls,
     drainTimeoutSeconds: input.drainTimeoutSeconds,
     runStartMs: input.runWindow.from,
+    chaosRan: input.chaos.scenario !== '' && input.chaos.skipped === null,
   });
 
 

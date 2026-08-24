@@ -167,8 +167,7 @@ export class RetentionWriter implements RetentionSink {
     const outcome = this.queue.enqueue(record, context);
 
     if (!outcome.accepted) {
-      this.countDrop(priority, 'queue_full');
-      this.reportDrop(priority, record);
+      this.dropRecord(priority, 'queue_full', record);
       return { accepted: false, priority };
     }
 
@@ -180,9 +179,12 @@ export class RetentionWriter implements RetentionSink {
       // record rather than someone else's — which is the whole reason the
       // sub-quota exists (D26).
       const evicted = outcome.evicted;
-      this.countDrop(evicted.priority, outcome.reason === 'quota' ? 'session_quota' : 'evicted');
       if (outcome.reason === 'quota') this.counters.quotaEvictions += 1;
-      this.reportDrop(evicted.priority, evicted.record);
+      this.dropRecord(
+        evicted.priority,
+        outcome.reason === 'quota' ? 'session_quota' : 'evicted',
+        evicted.record,
+      );
     }
 
     return { accepted: true };
@@ -371,17 +373,23 @@ export class RetentionWriter implements RetentionSink {
         return;
       }
 
-      if (isMissingParentError(err)) {
-        this.deferForParent(group, err);
-        return;
-      }
-
       if (group.length === 1) {
-        this.discard(group, err);
+        if (isMissingParentError(err)) this.deferForParent(group, err);
+        else this.discard(group, err);
         return;
       }
 
-      // A genuinely bad row somewhere in here. Isolate it so the rest survive.
+      // A bad row somewhere in here, and the batch is one transaction, so it
+      // has already rolled back every innocent row beside it. Isolate it so the
+      // rest survive.
+      //
+      // A missing parent needs this as much as a malformed row does, and used
+      // not to get it: the whole group was deferred together, retried together
+      // and -- when the one orphan's parent never turned up -- discarded
+      // together. Ninety-nine messages whose conversations existed all along
+      // were dropped because they shared a batch with one whose did not, which
+      // is the failure this narrowing exists to prevent, arriving through the
+      // one door left open to it.
       for (const entry of group) await this.writeGroup([entry], nowMs);
     }
   }
@@ -412,8 +420,7 @@ export class RetentionWriter implements RetentionSink {
         ...dbErrorFields(err),
       });
       for (const entry of exhausted) {
-        this.countDrop(entry.priority, 'rejected');
-        this.reportDrop(entry.priority, entry.record);
+        this.dropRecord(entry.priority, 'no_parent', entry.record);
       }
     }
   }
@@ -425,8 +432,7 @@ export class RetentionWriter implements RetentionSink {
       ...dbErrorFields(err),
     });
     for (const entry of group) {
-      this.countDrop(entry.priority, 'rejected');
-      this.reportDrop(entry.priority, entry.record);
+      this.dropRecord(entry.priority, 'rejected', entry.record);
     }
   }
 
@@ -462,19 +468,24 @@ export class RetentionWriter implements RetentionSink {
       if (remaining.length > 0) this.spool.write(remaining);
     } catch (err) {
       if (isPermanentWriteError(err)) {
-        // Same reasoning, and it matters more here: a spooled record the
-        // database will always refuse would otherwise block the drain of every
-        // record written after it, forever, while the breaker reported an
-        // outage that was not happening.
-        this.logger.error('discarding spooled records the database rejected', {
-          batchSize: batch.length,
-          ...dbErrorFields(err),
-        });
+        // The database answered and refused the batch, so this is not a breaker
+        // event -- and a spooled record it will always refuse must not be left
+        // to block the drain of every record behind it.
+        //
+        // But refusing the batch is not refusing every record in it. This used
+        // to discard all hundred, which is the exact failure `writeBatch`
+        // already learnt not to commit: one message whose conversation row had
+        // not landed yet would take the conversation rows, the moderation
+        // events and the reports sharing its batch down with it. A chaos run
+        // made it visible the moment the spool became reachable -- twelve
+        // rejected batches, every one of them a single 23503 on
+        // messages_conversation_id_fkey, and 345 P0 records destroyed by it.
+        //
+        // So salvage on the same terms as the live path: per kind, in
+        // dependency order, each in its own transaction, with a missing parent
+        // waited on rather than discarded.
         this.breaker.recordSuccess();
-        for (const entry of batch) {
-          this.countDrop(entry.priority, 'rejected');
-          this.reportDrop(entry.priority, entry.record);
-        }
+        await this.salvage(batch, nowMs, err);
         const remaining = spooled.slice(batch.length);
         this.spool.clear();
         if (remaining.length > 0) this.spool.write(remaining);
@@ -491,28 +502,36 @@ export class RetentionWriter implements RetentionSink {
     this.counters.spooled += written;
     if (written < entries.length) {
       for (const entry of entries.slice(written)) {
-        this.countDrop(entry.priority, 'spool_full');
-        this.reportDrop(entry.priority, entry.record);
+        this.dropRecord(entry.priority, 'spool_full', entry.record);
       }
     }
-  }
-
-  private countDrop(priority: RetentionPriority, reason: string): void {
-    const key = `${priority}:${reason}`;
-    this.counters.dropped[key] = (this.counters.dropped[key] ?? 0) + 1;
   }
 
   /**
    * A dropped record is always counted and, for P0, always logged at error.
    *
-   * P0 being full requires a sustained database outage *and* a report flood
-   * beyond the per-session report limit. That is page-worthy: the system is
-   * losing safety evidence, and nothing else in the process will notice.
+   * P0 being dropped is page-worthy however it happened: the system is losing
+   * safety evidence and nothing else in the process will notice. But *how* it
+   * happened decides what the operator does next, and the two causes need
+   * opposite responses -- `queue_full` means the writer cannot keep up and the
+   * limits or the database need attention, while `rejected` means the database
+   * answered and refused the row, which is a schema or data problem no amount
+   * of capacity will fix. The reason is on the counter, so it belongs on the
+   * line that wakes somebody up too: this used to say "retention capacity
+   * exhausted" for every drop, and a chaos run produced 357 of those for
+   * records the database had rejected outright.
    */
-  private reportDrop(priority: RetentionPriority, record: RetentionRecord): void {
-    const fields = { priority, recordKind: record.kind };
+  private dropRecord(
+    priority: RetentionPriority,
+    reason: string,
+    record: RetentionRecord,
+  ): void {
+    const key = `${priority}:${reason}`;
+    this.counters.dropped[key] = (this.counters.dropped[key] ?? 0) + 1;
+
+    const fields = { priority, reason, recordKind: record.kind };
     if (priority === 'p0') {
-      this.logger.error('dropped a safety record: retention capacity exhausted', fields);
+      this.logger.error('dropped a safety record', fields);
     } else if (!this.stopped) {
       this.logger.warn('dropped a retention record', fields);
     }

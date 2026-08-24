@@ -62,6 +62,15 @@ export interface DatabaseOracleInput {
   /** How long to wait for the write-behind queue to finish draining. */
   readonly drainTimeoutSeconds: number;
   /**
+   * Whether a chaos scenario made the database unreachable during this run.
+   *
+   * Changes what an undrained queue *means*, and nothing else. A backlog at
+   * settle normally says the writer could not keep up; after an induced outage
+   * it says the paced drain has not finished replaying a spool the run created
+   * on purpose, which is the recovery working rather than failing.
+   */
+  readonly chaosRan: boolean;
+  /**
    * When the first socket opened.
    *
    * Every query is scoped to it. The load-test database is not wiped between
@@ -207,12 +216,33 @@ export async function checkDatabaseAgreement(
   const details: string[] = [];
 
   if (!drain.drained) {
+    // Either way the comparison is off: a shortfall measured now is records in
+    // flight, not records lost. What differs is whether that is a finding.
+    const counts = `queued ${drain.queued}, flushed ${drain.flushed}, dropped ${drain.dropped}`;
+
+    if (input.chaosRan) {
+      return {
+        name,
+        status: 'skipped',
+        summary: `queue still draining after an induced outage (${counts})`,
+        details: [
+          'This run took the database away on purpose, so a backlog at settle is',
+          'the expected shape of recovery rather than a symptom. The drain out of',
+          'the spool is deliberately paced -- replaying it at full speed would',
+          'hammer a database that has only just come back -- so a long outage',
+          'leaves work outstanding for a while by design.',
+          'The chaos oracle judges that recovery. This one has nothing to say',
+          'about a run whose shortfall it cannot separate from the pacer.',
+        ],
+      };
+    }
+
     return {
       name,
       status: 'fail',
       summary: `queue still draining after ${input.drainTimeoutSeconds}s`,
       details: [
-        `queued ${drain.queued}, flushed ${drain.flushed}, dropped ${drain.dropped}`,
+        counts,
         'Comparing now would report a shortfall that is simply in flight, so the',
         'comparison is not attempted. A drain this slow is itself the finding:',
         'either the database is struggling or the breaker is open.',

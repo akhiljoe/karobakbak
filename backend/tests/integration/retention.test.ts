@@ -351,8 +351,10 @@ describe('a record the database will never accept', () => {
     // database as down and stall everything behind it.
     expect(writer.snapshot().breaker).toBe('CLOSED');
     // Bounded: once the parent has demonstrably never arrived, it is dropped
-    // and counted rather than circulating for good.
-    expect(Object.keys(writer.counters.dropped).some((key) => key.endsWith(':rejected'))).toBe(true);
+    // and counted rather than circulating for good -- under `no_parent` rather
+    // than the generic `rejected`, because the two want opposite responses from
+    // whoever reads the counter.
+    expect(Object.keys(writer.counters.dropped)).toEqual(['p3:no_parent']);
     expect(writer.snapshot().queue.total).toBe(0);
   });
 
@@ -391,6 +393,68 @@ describe('a record the database will never accept', () => {
 
     expect(recovered.snapshot().spool.records).toBe(0);
     expect(recovered.snapshot().breaker).toBe('CLOSED');
+  });
+
+  /**
+   * The failure `writeBatch` already learnt not to commit, on the path that had
+   * not learnt it yet.
+   *
+   * A spool batch is mixed -- it is whatever was outstanding when the database
+   * went away, in arrival order, not grouped by kind. The drain used to react
+   * to a permanent error by discarding all hundred records in it, so one
+   * message whose conversation row had not landed yet took the conversation
+   * rows, the moderation events and the reports sharing its batch down too.
+   *
+   * It stayed invisible because nothing reached it. The breaker could not open
+   * inside a realistic outage (F-031), so the spool was never drained under a
+   * rejection in anger. The first chaos run after that fix produced twelve
+   * rejected batches -- every one a single 23503 on
+   * messages_conversation_id_fkey -- and 345 destroyed P0 records.
+   */
+  it('rescues the rest of a spool batch one bad record poisoned', async () => {
+    const orphan = conversationId();
+    const real = conversationId();
+
+    const broken = brokenWriterFor(ctx);
+    // Ordered so the unwritable record comes first: the batch is one
+    // transaction either way, but this is the arrangement where "give up on the
+    // batch" and "give up on the record" differ most visibly.
+    broken.writer.enqueue(message(orphan));
+    broken.writer.enqueue(conversation(real));
+    broken.writer.enqueue(message(real));
+    await broken.writer.flush();
+    await broken.writer.flush();
+    expect(broken.spool.stats().records).toBe(3);
+
+    // The database is back and will take everything except the orphan, whose
+    // parent conversation genuinely does not exist.
+    // One wait rather than the default five: this is about what salvage rescues,
+    // not about how long a parent is given to turn up, which is tested below.
+    const recovered = ctx.writer({
+      BREAKER_DRAIN_BATCHES_PER_SEC: '1000',
+      RETENTION_MISSING_PARENT_RETRIES: '1',
+    });
+    for (let i = 0; i < 8; i += 1) await recovered.flush();
+
+    const conversations = await ctx.rows<{ id: string }>(
+      'select conversation_id as id from conversations where conversation_id = $1',
+      [real],
+    );
+    expect(conversations).toHaveLength(1);
+
+    const kept = await ctx.rows<{ n: string }>(
+      'select count(*)::text as n from messages where conversation_id = $1',
+      [real],
+    );
+    expect(Number(kept[0]?.n)).toBe(1);
+
+    // And the orphan is accounted for rather than silently gone: dropped under
+    // the reason that says what actually happened to it, not under whichever
+    // reason the code reached for first.
+    const dropped = recovered.snapshot().counters.dropped;
+    const total = Object.values(dropped).reduce((sum, n) => sum + n, 0);
+    expect(total).toBe(1);
+    expect(Object.keys(dropped)).toEqual(['p3:no_parent']);
   });
 });
 
@@ -472,11 +536,11 @@ describe('a parent row another instance has not written yet', () => {
     for (let attempt = 0; attempt < retries; attempt += 1) {
       await writer.flush();
       // Still waiting, still not counted as lost.
-      expect(Object.keys(writer.counters.dropped).some((k) => k.endsWith(':rejected'))).toBe(false);
+      expect(Object.keys(writer.counters.dropped)).toEqual([]);
     }
 
     await writer.flush();
-    expect(Object.keys(writer.counters.dropped).some((k) => k.endsWith(':rejected'))).toBe(true);
+    expect(Object.keys(writer.counters.dropped)).toEqual(['p3:no_parent']);
   });
 });
 
