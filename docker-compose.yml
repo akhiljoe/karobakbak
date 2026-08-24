@@ -278,6 +278,19 @@ services:
   # and because the passphrase must outlive this host — copy it into a password
   # manager the day you set it.
   backup:
+    # ---------------------------------------------------------------------
+    # NOT STARTED BY A BARE `docker compose up`
+    # ---------------------------------------------------------------------
+    # This service needs two operator-provided files, and Docker's answer to a
+    # bind mount whose host path does not exist is to **create a directory
+    # there**. So without this profile, `docker compose up` on a fresh clone
+    # produced a restarting container and two stray directories inside the
+    # repository — on a laptop and in the load-test stack, neither of which
+    # wants backups at all.
+    #
+    # `docker compose --profile ops up -d` runs it. Production enables it by
+    # resetting this list, so a real deployment gets it without remembering.
+    profiles: ["ops"]
     build:
       context: ./ops/backup
     environment:
@@ -311,6 +324,10 @@ services:
   # a credential. Copy `webhook-url.example` to `webhook-url` and put yours in
   # it; the real file is gitignored.
   alertmanager:
+    # Same reasoning as `backup`: it needs a webhook URL that only an operator
+    # can supply, and a missing one would be silently created as a directory.
+    # Nothing on a laptop wants to be paged.
+    profiles: ["ops"]
     image: prom/alertmanager:v0.28.0
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"

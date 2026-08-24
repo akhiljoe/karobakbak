@@ -20,6 +20,7 @@
  * written, and it is the one that would have failed.
  */
 import { readFileSync, readdirSync } from 'node:fs';
+import { REJECT_REASONS } from '../../src/metrics/registry';
 import { join } from 'node:path';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -41,6 +42,42 @@ function declaredMetrics(): string[] {
   const pattern = /^\s+readonly (\w+):\s*(?:Counter|Gauge|Histogram)</gm;
   return [...source.matchAll(pattern)].map((match) => match[1] as string);
 }
+
+/**
+ * Every label value the code writes is one the registry declares.
+ *
+ * The fixed sets in `registry.ts` say "anything not listed here is a bug, not a
+ * new value", and they are what the zero-initialisation loop reads — so a
+ * reason that is written but not declared never appears in a scrape until the
+ * first time it fires, and a dashboard cannot tell "this has not happened" from
+ * "this series does not exist".
+ *
+ * `'banned'` was exactly that: used by the upgrade path, absent from
+ * `REJECT_REASONS`, and therefore the one refusal reason invisible at zero
+ * while every capacity-related reason was visible. That is part of why
+ * `PHASES.md` expected a misfiring ban to read as a capacity problem.
+ */
+describe('reject reasons', () => {
+  it('declares every reason the code actually writes', () => {
+    const used = new Set<string>();
+    for (const file of sourceFiles(SRC)) {
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/connectionsRejected\.labels\('([a-z_]+)'\)/g)) {
+        used.add(match[1] as string);
+      }
+    }
+
+    // A guard on the guard: if the pattern ever stops matching, the assertion
+    // below would pass against an empty set.
+    expect(used.size).toBeGreaterThan(3);
+    expect(used).toContain('banned');
+
+    const undeclared = [...used].filter(
+      (reason) => !(REJECT_REASONS as readonly string[]).includes(reason),
+    );
+    expect(undeclared).toEqual([]);
+  });
+});
 
 describe('the metrics registry', () => {
   it('declares the metrics this build actually has', () => {

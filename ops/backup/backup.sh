@@ -72,10 +72,15 @@ report() {
 }
 
 run_once() {
-  [ -r "$BACKUP_PASSPHRASE_FILE" ] || {
-    log "FATAL: no passphrase at ${BACKUP_PASSPHRASE_FILE}"
+  # `-f -s`, not `-r`. Docker creates a *directory* for a bind mount whose host
+  # path is missing, and a directory is readable — so `-r` passed, `cat` failed
+  # with "Is a directory", and gpg reported an invalid passphrase three layers
+  # from the actual cause.
+  if [ ! -f "$BACKUP_PASSPHRASE_FILE" ] || [ ! -s "$BACKUP_PASSPHRASE_FILE" ]; then
+    log "FATAL: ${BACKUP_PASSPHRASE_FILE} is missing, empty, or not a file"
+    log "       copy ops/backup/passphrase.example and put a real passphrase in it"
     return 1
-  }
+  fi
 
   mkdir -p "$BACKUP_DIR"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)

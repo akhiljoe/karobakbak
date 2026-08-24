@@ -26,6 +26,7 @@ import { expandMix, isProfileName, personaFor, PROFILES, type ProfileName } from
 import { botRng, createRng } from './rng';
 import type { WorkerCommand, WorkerMessage } from './worker';
 import { runOracles, scrapeAll } from './oracles';
+import { applyBans, clearBans, readSalt } from './enforce';
 import { printReport } from './report';
 
 interface Options {
@@ -218,6 +219,27 @@ async function main(): Promise<void> {
   }
   console.log(`swarm: run directory ${runDir}`);
 
+  // Enforcement is applied *before* any socket opens, so nothing has to
+  // coordinate a moderator action with a bot's schedule — and so an A14 bot's
+  // very first upgrade is the one that gets refused. See `enforce.ts` for why
+  // the harness issues the ban itself rather than driving the console.
+  const bannedSpecs = roster.filter((spec) => spec.scenario === 'A14');
+  const banRequest = {
+    container: options.redisContainer,
+    keyPrefix: options.keyPrefix,
+    salt: await readSalt(options.logContainers[0] ?? ''),
+    addresses: bannedSpecs.map((spec) => spec.address),
+    ttlSeconds: Math.max(600, options.durationSeconds + options.settleSeconds + 600),
+  };
+  const bans = await applyBans(banRequest);
+  if (bannedSpecs.length > 0) {
+    console.log(
+      bans.skipped === null
+        ? `swarm: banned ${bans.applied} identities before the run (A14)`
+        : `swarm: A14 present but no ban applied — ${bans.skipped}`,
+    );
+  }
+
   const workerPath = join(__dirname, 'worker.ts');
   const children: ChildProcess[] = [];
   const ledgerPaths: string[] = [];
@@ -327,7 +349,15 @@ async function main(): Promise<void> {
     redisContainer: options.redisContainer,
     keyPrefix: options.keyPrefix,
     segment: options.segment,
+    bannedBots: bannedSpecs.map((spec) => spec.id),
+    bansApplied: bans.applied,
+    bansSkipped: bans.skipped,
   });
+
+  // Cleared whatever the verdict. A ban key outliving its run would refuse
+  // those addresses in the *next* one, which reads as an unexplained shrinking
+  // population — the same confusion this scenario exists to rule out.
+  await clearBans(banRequest);
 
   printReport({
     runId,

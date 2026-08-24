@@ -33,6 +33,20 @@ export const REJECT_REASONS = [
   'bad_path',
   'draining',
   'error',
+  /**
+   * An enforcement decision refusing a connection before a session exists.
+   *
+   * Was used by `server.ts` and missing from this list, which is the one place
+   * it mattered. Every reason here is zero-initialised below so a dashboard
+   * shows `0` rather than "no data" — and this was the reason that never
+   * appeared until the first ban fired, so an operator could not tell "nobody
+   * is banned" from "that series does not exist".
+   *
+   * `PHASES.md` worried that a ban misfiring at the edge would read as a
+   * capacity problem rather than a safety bug. This is part of why: the
+   * capacity reasons were visible at zero and the safety one was not.
+   */
+  'banned',
 ] as const;
 export const MODERATION_ACTIONS = ['allow', 'flag', 'withhold', 'block'] as const;
 /** Why a match attempt gave up. Every value the matchmaker can report. */

@@ -58,9 +58,11 @@ import {
   reporterReconnect,
 } from './moderators';
 import { gapTalker, lateReturner, refresher, tokenReplayer } from './resume';
+import { bannedReturner } from './enforcement';
 import { anonymous, nameAdvertiser, profileChurner, underageDeclarer } from './declaring';
 
 export const PERSONAS: readonly Persona[] = [
+  bannedReturner,
   talker,
   longHauler,
   lurker,
@@ -212,6 +214,18 @@ const ADVERSARIAL: readonly MixEntry[] = [
   { scenario: 'A3', weight: 4 },
   { scenario: 'A4', weight: 3 },
   { scenario: 'A5', weight: 2 },
+
+  // Enforcement at the door. Weighted so a modest run still contains one:
+  // `expandMix` floors each share, so weight 2 against this mix's total of ~112
+  // produced *zero* A14 bots at 40 bots, and the scenario silently did not run.
+  // The oracle reports that as SKIP rather than PASS, which is what caught it —
+  // but a safety scenario that vanishes from small runs is the same trap as a
+  // persona group that stops producing events.
+  //
+  // Still small relative to the population: enough banned identities for the
+  // refusal to be unambiguous, few enough that a ban leaking onto everybody
+  // else reads as a difference rather than as the whole run.
+  { scenario: 'A14', weight: 5 },
 
   // Limit and teardown abuse.
   { scenario: 'A6', weight: 2 },

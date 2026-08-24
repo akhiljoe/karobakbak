@@ -12,6 +12,7 @@
 import type { BotSpec } from '../bot';
 import { analyseLedger, type LedgerStats } from './ledger';
 import { checkLogsForLeaks } from './logs';
+import { runEnforcementOracle } from './enforcement';
 import { checkMetrics, type Sample } from './metrics';
 import { checkRedisResidue } from './redis';
 import { checkSpamDetection, type SpamSummary } from './spam';
@@ -37,6 +38,11 @@ export interface OracleInput {
   readonly redisContainer: string;
   readonly keyPrefix: string;
   readonly segment: string;
+  /** Bots the orchestrator banned before the run, by ledger id. */
+  readonly bannedBots: readonly string[];
+  readonly bansApplied: number;
+  /** Why bans were not applied, when they were not. */
+  readonly bansSkipped: string | null;
 }
 
 export interface OracleRunResult {
@@ -83,6 +89,13 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     segment: input.segment,
   });
 
+  const enforcement = await runEnforcementOracle({
+    ledgerPaths: input.ledgerPaths,
+    bannedBots: input.bannedBots,
+    bansApplied: input.bansApplied,
+    skipped: input.bansSkipped,
+  });
+
   const notImplemented: OracleResult[] = [
     {
       name: 'database agreement',
@@ -101,6 +114,6 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     stats,
     matchedFrames,
     spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
-    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, ...notImplemented],
+    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, ...notImplemented],
   };
 }

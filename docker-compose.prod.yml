@@ -72,6 +72,17 @@ services:
         max-file: "5"
     restart: unless-stopped
 
+  # Both carry `profiles: ["ops"]` in the base file so a bare `docker compose
+  # up` on a laptop does not demand operator secrets. Production always wants
+  # them, so the profile is cleared here rather than relying on somebody
+  # remembering `--profile ops` on the one stack where forgetting it means no
+  # backups and no pages.
+  backup:
+    profiles: !reset []
+
+  alertmanager:
+    profiles: !reset []
+
   frontend:
     # No published port at all. Caddy reaches it over the compose network, and
     # nothing else should reach it — this used to bind loopback because the TLS
