@@ -338,9 +338,20 @@ export function reduce(state: ChatState, action: Action): ChatState {
       return { ...state, partnerAway: null };
 
     case 'partner_left':
-      // They are gone for good, not away: nothing to reclaim.
-      clearResumeToken();
-
+      // The token is **not** cleared here, and that is the whole point.
+      //
+      // It is a *session* credential, not a conversation one: the session
+      // survives a stranger leaving, goes back to the queue, and matches
+      // somebody else. Clearing it here meant that after the first partner left
+      // — the ordinary way a conversation ends here — the tab held nothing, so
+      // the next dropped socket could not resume and destroyed a live
+      // conversation the server was still holding a seat for. The stranger on
+      // the other side then waited out the entire grace window for somebody who
+      // could never come back.
+      //
+      // The clear also used to run above this guard, so a late frame for an
+      // already-finished match discarded the token for the conversation the
+      // user was in *now*.
       if (state.matchId !== null && action.matchId !== state.matchId) return state;
       return {
         ...clearedConversation(state),
@@ -439,6 +450,12 @@ function applyError(state: ChatState, error: ErrorPayload): ChatState {
         notice: 'That conversation has ended.',
       };
     case 'SESSION_GONE':
+      // Here, and only here, the token is genuinely spent: the server has said
+      // the session it belongs to no longer exists, so offering it on the next
+      // connection would be presenting a credential for something that is gone.
+      // Every other ending — a partner leaving, a skip, a block — ends a
+      // *conversation* and leaves the session alive and resumable.
+      clearResumeToken();
       return {
         ...clearedConversation(state),
         screen: 'disconnected',

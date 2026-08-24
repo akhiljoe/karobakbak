@@ -25,7 +25,7 @@ import {
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
-import { loadResumeToken, saveResumeToken } from '../resume';
+import { loadResumeToken } from '../resume';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
 function socketUrl(): string {
@@ -36,6 +36,24 @@ function socketUrl(): string {
   // same-site.
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws`;
+}
+
+/**
+ * Spread a reconnect over its backoff window instead of firing on the tick.
+ *
+ * The events that drop a socket here are not per-user — a deploy, a restart, a
+ * load-balancer change — so without this every client dropped by one of them
+ * retries in lockstep, at the same offsets, for ever, since the last entry in
+ * the table repeats. A server that is still coming up would get the entire
+ * population at once, fail, and get it again ten seconds later. Per-IP limits
+ * are no defence, because the herd is spread across every IP there is.
+ *
+ * Half the delay is fixed and half is random, so a client still backs off
+ * monotonically — full jitter can pick a shorter wait on a later attempt, which
+ * reads as a client that never settles.
+ */
+function withJitter(baseMs: number): number {
+  return baseMs / 2 + Math.random() * (baseMs / 2);
 }
 
 /** Client correlation token, and the server's per-match dedupe key (D24). */
@@ -124,9 +142,9 @@ export function useChat(): ChatApi {
         dispatch({ type: 'socket_closed', code: event.code });
 
         const backoff = clientConfig.timings.reconnectBackoffMs;
-        const delay = backoff[Math.min(attemptRef.current, backoff.length - 1)] ?? 10_000;
+        const base = backoff[Math.min(attemptRef.current, backoff.length - 1)] ?? 10_000;
         attemptRef.current += 1;
-        reconnectRef.current = window.setTimeout(connect, delay);
+        reconnectRef.current = window.setTimeout(connect, withJitter(base));
       });
 
       // 'error' is always followed by 'close', which is where reconnection

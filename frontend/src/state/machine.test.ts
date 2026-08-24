@@ -2,9 +2,10 @@
  * The UI state machine. Pure, so every interesting decision this client makes
  * is testable without a browser, a socket or a render.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { canSend, initialState, reduce, type ChatState } from './machine';
+import { loadResumeToken } from '../resume';
 import { messageKindFor } from '../components/MessageList';
 import { toAction } from '../hooks/useChat';
 import type { AnyServerEnvelope, ServerFeatures } from '../protocol/types';
@@ -452,5 +453,106 @@ describe('frames this client does not know', () => {
     for (const frame of frames) expect(toAction(frame)).not.toBeNull();
     // A pong needs no UI change at all.
     expect(toAction({ type: 'pong', version: 1, payload: { serverTime: 'x' } })).toBeNull();
+  });
+});
+
+/**
+ * The resume token's lifetime.
+ *
+ * It belongs to the *session*, not to a conversation. `partner_left` used to
+ * clear it, which meant that after the first stranger walked away — the
+ * ordinary way a conversation ends here — the tab held nothing, and the next
+ * dropped socket opened a brand new session instead of reclaiming the one the
+ * server was still holding a seat for. The conversation on screen was
+ * destroyed by the client while the server was waiting for it to come back.
+ *
+ * These tests run against a real `sessionStorage` shape because `resume.ts`
+ * swallows every storage error by design — in a bare Node environment with no
+ * `window`, every read returns null and every assertion below would pass
+ * without exercising anything.
+ */
+describe('the resume token', () => {
+  beforeEach(() => {
+    const entries = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => void entries.set(key, value),
+      removeItem: (key: string) => void entries.delete(key),
+      clear: () => entries.clear(),
+      key: (index: number) => [...entries.keys()][index] ?? null,
+      get length() {
+        return entries.size;
+      },
+    } satisfies Storage;
+    (globalThis as { window?: unknown }).window = { sessionStorage: storage };
+  });
+
+  it('is stored from the connected frame', () => {
+    connected();
+    expect(loadResumeToken()).toBe('t_test');
+  });
+
+  it('survives a partner leaving, because the session does', () => {
+    const state = matched();
+    expect(loadResumeToken()).toBe('t_test');
+
+    const ended = reduce(state, { type: 'partner_left', matchId: 'm_1' });
+
+    expect(ended.screen).toBe('ended');
+    // The conversation ended; the session did not.
+    expect(loadResumeToken()).toBe('t_test');
+  });
+
+  it('survives a skip and a block for the same reason', () => {
+    const state = matched();
+    reduce(state, { type: 'user_skipped' });
+    expect(loadResumeToken()).toBe('t_test');
+    reduce(state, { type: 'user_blocked' });
+    expect(loadResumeToken()).toBe('t_test');
+  });
+
+  it('is untouched by a stale frame for a conversation that already ended', () => {
+    // The clear used to run *above* the guard below, so a late
+    // `partner_skipped` for a finished match discarded the token belonging to
+    // the conversation the user was in now.
+    const state = matched();
+    const after = reduce(state, { type: 'partner_left', matchId: 'm_previous' });
+
+    expect(after).toBe(state);
+    expect(loadResumeToken()).toBe('t_test');
+  });
+
+  it('is dropped when the server says the session itself is gone', () => {
+    const state = matched();
+    expect(loadResumeToken()).toBe('t_test');
+
+    const gone = reduce(state, {
+      type: 'server_error',
+      payload: { code: 'SESSION_GONE', message: 'no such session', retryable: false },
+    });
+
+    expect(gone.screen).toBe('disconnected');
+    // Nothing left to reclaim: offering this on the next connection would
+    // present a credential for a session that no longer exists.
+    expect(loadResumeToken()).toBeNull();
+  });
+
+  it('is replaced, not appended to, on every connection', () => {
+    connected();
+    reduce(initialState, {
+      type: 'connected',
+      payload: {
+        sessionId: 's_next',
+        protocolVersion: 1,
+        serverTime: '2026-08-19T10:00:30.000Z',
+        limits: LIMITS,
+        features: FEATURES,
+        resumeToken: 't_rotated_once',
+        resumeGraceSeconds: 20,
+      },
+    });
+    // The server rotates on redemption; keeping the old one would offer a
+    // spent credential and lose a conversation that could have resumed.
+    expect(loadResumeToken()).toBe('t_rotated_once');
   });
 });

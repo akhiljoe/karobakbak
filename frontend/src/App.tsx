@@ -55,21 +55,36 @@ export function App(): JSX.Element {
     }
   }, [state.screen]);
 
+  /**
+   * Whether anything is layered over the conversation.
+   *
+   * Every one of these dialogs closes itself on Escape, with its own
+   * `window` keydown listener. So does the shortcut below — and two
+   * bubble-phase listeners on the same target both run, so Escape used to
+   * close the sheet *and* skip the stranger. Skipping is irreversible: the
+   * match is torn down server-side and that person cannot be reached again, so
+   * somebody who opened the safety sheet because they were uncomfortable and
+   * pressed Escape to back out lost the conversation they were about to
+   * report. This is the state the shortcut consults to stand down.
+   */
+  const overlayOpen = filtersOpen || settingsOpen || authOpen || safetyOpen || reporting;
+
   // Enter starts a search from the landing screen; Escape skips a conversation.
-  // Both are ignored while the user is typing into something.
+  // Both are ignored while the user is typing into something, and Escape also
+  // stands down whenever a dialog is open — there it means "close this".
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-      if (phase === 'idle' && state.screen === 'idle' && event.key === 'Enter') {
+      if (phase === 'idle' && state.screen === 'idle' && event.key === 'Enter' && !overlayOpen) {
         event.preventDefault();
         chat.start();
       }
-      if (phase === 'chatting' && event.key === 'Escape') chat.skip();
+      if (phase === 'chatting' && event.key === 'Escape' && !overlayOpen) chat.skip();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [chat, phase, state.screen]);
+  }, [chat, overlayOpen, phase, state.screen]);
 
   const submitReport = useCallback(
     (category: ReportCategory, note: string) => {
