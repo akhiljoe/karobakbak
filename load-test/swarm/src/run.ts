@@ -27,6 +27,8 @@ import { botRng, createRng } from './rng';
 import type { WorkerCommand, WorkerMessage } from './worker';
 import { runOracles, scrapeAll } from './oracles';
 import { applyBans, clearBans, readSalt } from './enforce';
+import { runChaos, undoChaos } from './chaos';
+import { firstLine } from './oracles/firstline';
 import { printReport } from './report';
 
 interface Options {
@@ -56,6 +58,10 @@ interface Options {
   postgresDatabase: string;
   /** How long to let the write-behind queue finish before comparing. */
   drainTimeoutSeconds: number;
+  /** Chaos scenario id, e.g. `c1`. Empty means none. */
+  chaosScenario: string;
+  chaosAtSeconds: number;
+  chaosForSeconds: number;
   /**
    * A person took part in this run, at the same stack, through a browser.
    *
@@ -131,6 +137,9 @@ function parseArgs(argv: readonly string[]): Options {
     //
     // The comparison is worthless while records are in flight, so the oracle
     // refusing to make it was correct; the default was what was wrong.
+    chaosScenario: (flags.get('chaos') ?? '').toLowerCase(),
+    chaosAtSeconds: Math.max(1, Math.floor(num('chaos-at', 60))),
+    chaosForSeconds: Math.max(5, Math.floor(num('chaos-for', 60))),
     drainTimeoutSeconds: Math.max(
       30,
       Math.floor(num('drain-timeout', Math.min(600, 30 + bots / 20))),
@@ -323,6 +332,24 @@ async function main(): Promise<void> {
       }),
   );
 
+  // Runs alongside the population rather than blocking it: the whole point is
+  // that the environment fails while the bots carry on knowing nothing about
+  // it. Its samples are awaited before the oracles run.
+  const chaosOptions = {
+    scenario: options.chaosScenario,
+    postgresContainer: options.postgresContainer,
+    metricsUrls: options.metricsUrls,
+    atSeconds: options.chaosAtSeconds,
+    forSeconds: options.chaosForSeconds,
+  };
+  const chaosRunning = runChaos(chaosOptions).catch((error: unknown) => {
+    // A chaos scenario that throws must not take the run with it — the
+    // population is still producing a valid ledger, and the oracle reports the
+    // gap rather than the process dying inside a detached promise.
+    console.error(`swarm: chaos failed: ${firstLine(error)}`);
+    return { scenario: options.chaosScenario, phases: [], skipped: 'the chaos schedule threw' };
+  });
+
   const stopAfter = (options.rampSeconds + options.durationSeconds) * 1_000;
   setTimeout(() => {
     console.log('swarm: draining');
@@ -357,6 +384,13 @@ async function main(): Promise<void> {
   const worstLagP99 = lag.reduce((worst, entry) => Math.max(worst, entry.p99), 0);
   const worstLagMax = lag.reduce((worst, entry) => Math.max(worst, entry.max), 0);
 
+  const chaos = await chaosRunning;
+  // Belt and braces: `runChaos` already unpauses from a `finally`, and a
+  // container left paused by a crash would wedge the whole stack for the next
+  // run — the same class of trap as a killed orchestrator leaving its worker
+  // holding sockets.
+  await undoChaos(chaosOptions);
+
   const result = await runOracles({
     ledgerPaths,
     roster,
@@ -376,6 +410,7 @@ async function main(): Promise<void> {
     postgresUser: options.postgresUser,
     postgresDatabase: options.postgresDatabase,
     drainTimeoutSeconds: options.drainTimeoutSeconds,
+    chaos,
   });
 
   // Cleared whatever the verdict. A ban key outliving its run would refuse

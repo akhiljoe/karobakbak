@@ -14,6 +14,8 @@ import { analyseLedger, type LedgerStats } from './ledger';
 import { checkLogsForLeaks } from './logs';
 import { runEnforcementOracle } from './enforcement';
 import { checkDatabaseAgreement } from './database';
+import { checkChaos } from './chaos';
+import type { ChaosResult } from '../chaos';
 import { checkMetrics, type Sample } from './metrics';
 import { checkRedisResidue } from './redis';
 import { checkSpamDetection, type SpamSummary } from './spam';
@@ -50,6 +52,8 @@ export interface OracleInput {
   readonly postgresDatabase: string;
   /** How long to wait for the write-behind queue to finish draining. */
   readonly drainTimeoutSeconds: number;
+  /** What the chaos schedule observed, if one ran. */
+  readonly chaos: ChaosResult;
 }
 
 export interface OracleRunResult {
@@ -119,6 +123,6 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     stats,
     matchedFrames,
     spam: spam.summary.labelledSpammers > 0 ? spam.summary : null,
-    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, database],
+    oracles: [pairing, profiles, metrics, redis, spam.oracle, logs, enforcement, database, checkChaos(input.chaos)],
   };
 }
