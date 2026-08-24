@@ -305,10 +305,22 @@ services:
       BACKUP_INTERVAL_SECONDS: "${BACKUP_INTERVAL_SECONDS:-86400}"
       BACKUP_KEEP: "${BACKUP_KEEP:-7}"
       BACKUP_PASSPHRASE_FILE: /run/secrets/backup-passphrase
+      # Where the dump goes *after* it is written, as an rclone remote. Unset
+      # here because a laptop has nowhere to send one; every run then logs that
+      # the backup exists only on this host, which is the honest state.
+      #
+      # Required in production, where a backup living on the machine it protects
+      # is not a backup at all.
+      BACKUP_REMOTE: "${BACKUP_REMOTE:-}"
       BACKUP_REPORT_URL: "http://backend:8080/internal/backup-observed"
       BACKUP_REPORT_TOKEN_FILE: /run/secrets/backup-report-token
     volumes:
       - backups:/backups
+      # rclone's own configuration — credentials for whatever BACKUP_REMOTE
+      # names. Same treatment as the passphrase: a file the operator provides,
+      # never an environment variable, because it holds keys to the store
+      # containing every retained conversation.
+      - ./ops/backup/rclone.conf:/var/lib/backup/rclone/rclone.conf:ro
       - ./ops/backup/passphrase:/run/secrets/backup-passphrase:ro
       - ./ops/backup/report-token:/run/secrets/backup-report-token:ro
     depends_on:

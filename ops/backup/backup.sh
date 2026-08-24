@@ -25,6 +25,26 @@
 # argument, because arguments are visible in `ps`.
 #
 # ---------------------------------------------------------------------------
+# OFF THE HOST, OR IT IS NOT A BACKUP
+# ---------------------------------------------------------------------------
+# A dump sitting on a volume attached to the machine running the database
+# protects against exactly one thing: somebody deleting rows. It protects
+# against nothing that takes the host with it, which is most of what actually
+# happens.
+#
+# So when `BACKUP_REMOTE` is set, each dump is copied there after it is written,
+# and a copy that fails makes the whole run a failure -- the alert has to fire,
+# because a local-only backup is the state this exists to leave behind.
+#
+# The remote is deliberately not a provider. Configure rclone once, name the
+# remote here, and the destination stays a hosting decision rather than
+# something baked into an image.
+#
+# When it is *unset*, every run says so. That is not noise: it is a launch
+# blocker sitting in the log where somebody will read it, and it is quieter than
+# discovering it during a restore.
+
+# ---------------------------------------------------------------------------
 # THE THING THAT WILL BITE YOU
 # ---------------------------------------------------------------------------
 # An encrypted backup you cannot decrypt is not a backup. Store the passphrase
@@ -43,6 +63,11 @@ BACKUP_DIR="${BACKUP_DIR:-/backups}"
 BACKUP_INTERVAL_SECONDS="${BACKUP_INTERVAL_SECONDS:-86400}"
 BACKUP_KEEP="${BACKUP_KEEP:-7}"
 BACKUP_PASSPHRASE_FILE="${BACKUP_PASSPHRASE_FILE:-/run/secrets/backup-passphrase}"
+BACKUP_REMOTE="${BACKUP_REMOTE:-}"
+# Set by the image, defaulted here so the script is still runnable outside it —
+# `set -u` would otherwise make an unset value a crash rather than a fallback.
+RCLONE_CONFIG="${RCLONE_CONFIG:-/var/lib/backup/rclone/rclone.conf}"
+export RCLONE_CONFIG
 BACKUP_REPORT_URL="${BACKUP_REPORT_URL:-}"
 BACKUP_REPORT_TOKEN_FILE="${BACKUP_REPORT_TOKEN_FILE:-}"
 
@@ -82,6 +107,16 @@ run_once() {
     return 1
   fi
 
+  # Same trap as the passphrase, and worth checking before spending a minute on
+  # a dump: Docker creates a *directory* for a bind mount whose host path is
+  # missing, and rclone fails on a directory with an error that reads like a
+  # credential problem rather than a missing file.
+  if [ -n "$BACKUP_REMOTE" ] && [ -e "$RCLONE_CONFIG" ] && [ ! -f "$RCLONE_CONFIG" ]; then
+    log "FATAL: ${RCLONE_CONFIG} exists but is not a file"
+    log "       copy ops/backup/rclone.conf.example to ops/backup/rclone.conf"
+    return 1
+  fi
+
   mkdir -p "$BACKUP_DIR"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   target="${BACKUP_DIR}/karobakbak-${stamp}.dump.gpg"
@@ -114,6 +149,23 @@ run_once() {
   mv "$partial" "$target"
   log "wrote ${target} (${size} bytes)"
 
+  # Off the host. Fatal when it fails, unlike the inward report: a dump that was
+  # taken and not announced is still a dump, but a dump that never left this
+  # machine has not achieved what a backup is for.
+  if [ -n "$BACKUP_REMOTE" ]; then
+    log "copying to ${BACKUP_REMOTE}"
+    if rclone copy --no-traverse "$target" "$BACKUP_REMOTE"; then
+      log "copied $(basename "$target") to ${BACKUP_REMOTE}"
+    else
+      log "FAILED to copy $(basename "$target") to ${BACKUP_REMOTE}"
+      log "       the local copy is kept; this run counts as a failure"
+      return 1
+    fi
+  else
+    log "WARNING: BACKUP_REMOTE is unset, so this backup exists only on this host"
+    log "         a host failure loses the database and its backups together"
+  fi
+
   # Retention. Newest kept, oldest removed, and only ever files this script
   # produced — the glob is deliberately specific so nothing else in a shared
   # volume is ever a candidate for deletion.
@@ -130,7 +182,12 @@ run_once() {
   return 0
 }
 
-log "backup loop starting: every ${BACKUP_INTERVAL_SECONDS}s, keeping ${BACKUP_KEEP}"
+if [ -n "$BACKUP_REMOTE" ]; then
+  destination="$BACKUP_REMOTE"
+else
+  destination="LOCAL ONLY (BACKUP_REMOTE unset)"
+fi
+log "backup loop starting: every ${BACKUP_INTERVAL_SECONDS}s, keeping ${BACKUP_KEEP}, to ${destination}"
 
 while :; do
   if run_once; then

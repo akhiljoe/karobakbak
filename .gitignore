@@ -51,6 +51,9 @@ monitoring/alertmanager/webhook-url
 # it belongs in a password manager as well as here — and never in git.
 ops/backup/passphrase
 ops/backup/report-token
+# rclone's remotes, which hold credentials for the store every encrypted dump
+# is copied to. Same reasoning as the passphrase above.
+ops/backup/rclone.conf
 
 monitoring/grafana/data/
 monitoring/prometheus/data/
