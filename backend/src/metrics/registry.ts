@@ -148,6 +148,32 @@ export interface Metrics {
   readonly retentionDeleted: Counter<'table'>;
   readonly deletionFailures: Counter<string>;
 
+  /**
+   * Limits the application is running with, exported so an alert compares
+   * against them instead of repeating them.
+   *
+   * A threshold copied into a rule file drifts the moment somebody tunes one
+   * and not the other — `SpoolNearCapacity` fired at a hardcoded 40000, which
+   * is 80% of the *default* spool size and unreachable on a deployment that
+   * lowered it. The rule then watches a ceiling nothing can reach while the
+   * spool fills and drops records silently.
+   */
+  readonly spoolMaxRecords: Gauge<string>;
+  readonly spoolMaxBytes: Gauge<string>;
+  readonly backupMaxAge: Gauge<string>;
+
+  /**
+   * Rows past their retention deadline that still exist.
+   *
+   * The number that proves the deletion promise is being kept, and the reason
+   * `chat_retention_deleted_total` is the wrong instrument for it: a worker
+   * falling behind still deletes steadily, so throughput looks healthy while
+   * the backlog grows. A worker that is keeping up has a backlog of
+   * approximately zero, which is true independently of volume, batch size and
+   * interval.
+   */
+  readonly retentionBacklog: Gauge<'table'>;
+
   /* spool and breaker */
   readonly spoolRecords: Gauge<string>;
   readonly spoolBytes: Gauge<string>;
@@ -178,7 +204,17 @@ export interface MetricsOptions {
 
 export function createMetrics(config: Config, options: MetricsOptions = {}): Metrics {
   const registry = new Registry();
-  registry.setDefaultLabels({ instance: config.instanceId });
+  // `instance_id`, not `instance`. Prometheus attaches its own `instance`
+  // label — the discovered target's address — and with `honor_labels` unset it
+  // renames a colliding one from the exposition to `exported_instance`. So the
+  // application's stable id was present under a name nothing expected, while
+  // `instance` was a container address that changes on every restart.
+  //
+  // Nothing broke, because every dashboard query aggregates. It would break the
+  // first time somebody debugged a single replica during an incident: `by
+  // (instance)` groups by an address that is not stable across a deploy, so one
+  // process appears as two unrelated series.
+  registry.setDefaultLabels({ instance_id: config.instanceId });
 
   // Event-loop lag, process memory, GC and handle counts. The event-loop lag is
   // the one that matters here: it is the first thing to move when a socket
@@ -265,6 +301,14 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     retentionDeleted: counter('chat_retention_deleted_total', 'Rows deleted by the retention worker', ['table']),
     deletionFailures: counter('chat_deletion_failures_total', 'Deletion passes that failed'),
 
+    spoolMaxRecords: gauge('chat_spool_max_records', 'Configured spool record ceiling'),
+    spoolMaxBytes: gauge('chat_spool_max_bytes', 'Configured spool byte ceiling'),
+    backupMaxAge: gauge('chat_backup_max_age_seconds', 'Configured backup staleness window'),
+    retentionBacklog: gauge(
+      'chat_retention_backlog',
+      'Rows past their retention deadline that still exist',
+      ['table'],
+    ),
     spoolRecords: gauge('chat_spool_records', 'Records currently in the outage spool'),
     spoolBytes: gauge('chat_spool_bytes', 'Bytes currently in the outage spool'),
     spoolWrites: counter('chat_spool_writes_total', 'Records written to the outage spool'),
@@ -296,6 +340,12 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const route of DELIVERY_ROUTES) metrics.messagesDelivered.labels(route).inc(0);
   for (const action of MODERATION_ACTIONS) metrics.moderationFlags.labels(action).inc(0);
   for (const priority of PRIORITY_CLASSES) metrics.retentionQueueDepth.labels(priority).set(0);
+
+  // The configured limits are published by the bootstrap, not here — see
+  // `publishLimits`. Setting them in this file would put their only write site
+  // inside the module that declares them, and `metrics-wiring.test.ts` reads
+  // "declared and written only where it is declared" as dead, which is the
+  // check that found ten genuinely dead metrics.
   for (const reason of MATCHMAKING_FAILURES) metrics.matchmakingFailures.labels(reason).inc(0);
   for (const reason of FRAME_REJECTIONS) metrics.invalidFrames.labels(reason).inc(0);
   for (const state of BREAKER_STATES) metrics.breakerTransitions.labels(state).inc(0);

@@ -80,10 +80,15 @@ describe('the registry', () => {
     }
   });
 
-  it('labels every series with the instance and nothing else identifying', async () => {
+  it('labels every series with the instance id and nothing else identifying', async () => {
     const metrics = createMetrics(config({ INSTANCE_ID: 'i_one' }));
     const scrape = await metrics.scrape();
-    expect(scrape).toContain('instance="i_one"');
+    // `instance_id`, not `instance`: Prometheus attaches its own `instance`
+    // label from the discovered target, and a colliding one from the exposition
+    // is renamed to `exported_instance` — so the stable id would have been
+    // present under a name nothing queried, while `instance` held a container
+    // address that changes on every restart.
+    expect(scrape).toContain('instance_id="i_one"');
   });
 });
 

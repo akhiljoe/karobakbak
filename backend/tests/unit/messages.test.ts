@@ -127,7 +127,7 @@ describe('sending a message', () => {
     // The limit is checked before the work, because a limit applied after the
     // work has been done is not a limit.
     expect(ctx.store.calls).toEqual(['rateLimit:message', 'resolvePartner']);
-    expect(outcome).toMatchObject({ kind: 'accepted', matchId: 'm_1', delivered: true });
+    expect(outcome).toMatchObject({ kind: 'accepted', matchId: 'm_1', status: 'routed' });
     expect(partner.parsed()[0]).toMatchObject({
       type: 'message',
       payload: { matchId: 'm_1', text: 'hello', type: 'text', from: 'partner' },
@@ -250,7 +250,7 @@ describe('moderation in the pipeline (§14.2)', () => {
     const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'visit example.com');
     // Flag-and-deliver is the default (D20): a false positive here would be a
     // person told they cannot say something they are allowed to say.
-    expect(outcome).toMatchObject({ kind: 'accepted', delivered: true, flags: ['url'] });
+    expect(outcome).toMatchObject({ kind: 'accepted', status: 'routed', flags: ['url'] });
     expect(partner.frames).toHaveLength(1);
   });
 
@@ -262,7 +262,7 @@ describe('moderation in the pipeline (§14.2)', () => {
     const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'visit example.com');
     // Accepted and recorded, not handed on. Reported through the ack rather
     // than an error, because the frame was valid and there is nothing to retry.
-    expect(outcome).toMatchObject({ kind: 'accepted', delivered: false });
+    expect(outcome).toMatchObject({ kind: 'accepted', status: 'withheld' });
     expect(partner.frames).toEqual([]);
   });
 
@@ -284,7 +284,29 @@ describe('moderation in the pipeline (§14.2)', () => {
   it('leaves a clean message unflagged', async () => {
     const ctx = build();
     const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'how is your day going');
-    expect(outcome).toMatchObject({ kind: 'accepted', delivered: true, flags: [] });
+    expect(outcome).toMatchObject({ kind: 'accepted', flags: [] });
+  });
+
+  it('says so when nobody was there to receive it', async () => {
+    // No partner connection is registered here, so the dispatcher genuinely
+    // drops the frame — and this used to be acked as delivered, because the
+    // field reported the moderation verdict rather than what happened. Under
+    // §28 that state is ordinary and lasts tens of seconds, so the sender was
+    // shown a "sent" tick for a message that reached nobody.
+    const ctx = build();
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'anyone there');
+    expect(outcome).toMatchObject({ kind: 'accepted', status: 'undelivered', flags: [] });
+  });
+
+  it('says routed when the partner was actually there', async () => {
+    const ctx = build();
+    const partner = new FakeConnection('s_partner');
+    ctx.registry.add(partner);
+
+    const outcome = await ctx.pipeline.send('s_me', 'c_1', 'text', 'how is your day going');
+
+    expect(outcome).toMatchObject({ kind: 'accepted', status: 'routed', flags: [] });
+    expect(partner.parsed()).toHaveLength(1);
   });
 
   /* --- what reaches retention, on every branch ----------------------------- */

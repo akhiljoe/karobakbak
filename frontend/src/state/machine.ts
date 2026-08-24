@@ -28,6 +28,7 @@ import type {
   IncomingMessagePayload,
   MatchedPayload,
   MessageAckPayload,
+  MessageAckStatus,
   MessageContentType,
   PartnerTypingPayload,
   PresencePayload,
@@ -35,13 +36,12 @@ import type {
   ServerFeatures,
   ServerLimits,
 } from '../protocol/types';
-import { clearResumeToken, saveResumeToken } from '../resume';
 
 /** What the screen is showing. Mirrors the server's session state (§5). */
 export type Screen = 'connecting' | 'idle' | 'searching' | 'chatting' | 'ended' | 'disconnected';
 
 /** How far a message this user sent has got. Never "read" (D14). */
-export type OutgoingStatus = 'sending' | 'sent' | 'withheld' | 'failed';
+export type OutgoingStatus = 'sending' | 'sent' | 'withheld' | 'undelivered' | 'failed';
 
 export interface ChatMessage {
   /** Local key. For our own messages this is the envelope id we generated. */
@@ -125,6 +125,22 @@ export interface ChatState {
    * confirmed before anything can undo it.
    */
   readonly searchPending: boolean;
+  /**
+   * The resume token this session should present next time, or null.
+   *
+   * Held in state rather than written to `sessionStorage` from inside the
+   * reducer. `reduce` is documented as pure and React may invoke it more than
+   * once for the same action — StrictMode in development, and re-basing queued
+   * actions during concurrent rendering — so a storage write here is a side
+   * effect on a function whose contract does not allow one.
+   *
+   * That was not theoretical. The clear used to run *above* the stale-frame
+   * guard in `partner_left`, so a late frame for a finished match discarded the
+   * token belonging to the conversation the user was in now. Returning the
+   * value instead puts the write after the reducer has decided whether the
+   * action applies at all, which is the ordering that bug needed.
+   */
+  readonly resumeToken: string | null;
 }
 
 /**
@@ -160,6 +176,7 @@ export const initialState: ChatState = {
   reportSent: false,
   leaving: false,
   searchPending: false,
+  resumeToken: null,
 };
 
 export type Action =
@@ -186,6 +203,19 @@ export type Action =
   | { type: 'user_blocked' }
   | { type: 'dismiss_notice' };
 
+/**
+ * How the wire's answer reads on screen.
+ *
+ * `routed` becomes "sent" and not "delivered", because the protocol refuses to
+ * promise delivery and a client that rendered one would be inventing a
+ * guarantee (D14).
+ */
+const ACK_STATUS: Record<MessageAckStatus, OutgoingStatus> = {
+  routed: 'sent',
+  withheld: 'withheld',
+  undelivered: 'undelivered',
+};
+
 /** A conversation's worth of state, cleared whenever one ends. */
 function clearedConversation(state: ChatState): ChatState {
   return {
@@ -206,13 +236,12 @@ export function reduce(state: ChatState, action: Action): ChatState {
       return { ...state, screen: 'connecting', notice: null };
 
     case 'connected': {
-      // Store the replacement immediately. The server rotates on every
-      // redemption, so keeping the old one would offer a spent credential on
-      // the next reconnection and lose a conversation that could have resumed.
-      saveResumeToken(action.payload.resumeToken ?? '');
-
       const base = {
         ...state,
+        // The server rotates on every redemption, so the replacement is carried
+        // out to the hook and written there. Keeping the old one would offer a
+        // spent credential on the next reconnection.
+        resumeToken: action.payload.resumeToken ?? null,
         sessionId: action.payload.sessionId,
         limits: action.payload.limits,
         // Whatever the server says it can do — not what this build assumes.
@@ -347,10 +376,12 @@ export function reduce(state: ChatState, action: Action): ChatState {
           message.id === id
             ? {
                 ...message,
-                // "sent", never "read": the ack means accepted and routed (D14).
-                // `delivered: false` means policy withheld it, and the sender is
-                // told plainly rather than left believing it arrived.
-                status: action.payload.delivered ? 'sent' : 'withheld',
+                // "sent", never "read": the ack means accepted and routed
+                // towards the partner (D14), which is all the protocol
+                // promises. `withheld` means policy stopped it and `undelivered`
+                // means nobody was there — the sender is told plainly rather
+                // than left believing either one arrived.
+                status: ACK_STATUS[action.payload.status] ?? 'sent',
               }
             : message,
         ),
@@ -514,11 +545,13 @@ function applyError(state: ChatState, error: ErrorPayload): ChatState {
       // connection would be presenting a credential for something that is gone.
       // Every other ending — a partner leaving, a skip, a block — ends a
       // *conversation* and leaves the session alive and resumable.
-      clearResumeToken();
       return {
         ...clearedConversation(state),
         screen: 'disconnected',
         sessionId: null,
+        // Genuinely spent: the server has said the session it belongs to is
+        // gone, so presenting it again would offer a credential for nothing.
+        resumeToken: null,
         notice: 'Your session expired. Reconnecting…',
       };
     case 'ALREADY_MATCHED':

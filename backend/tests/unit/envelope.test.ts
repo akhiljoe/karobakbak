@@ -65,12 +65,12 @@ describe('revision-2 server frames', () => {
         matchId: 'match_1',
         acceptedAt: '2026-01-01T00:00:00.000Z',
         route: 'local',
-        delivered: false,
+        status: 'withheld',
       }),
     ).payload;
     // Accepted and recorded, but not delivered (D20). The sender is told,
     // because an ack indistinguishable from delivery makes "sent" meaningless.
-    expect(payload.delivered).toBe(false);
+    expect(payload.status).toBe('withheld');
     expect(payload.route).toBe('local');
   });
 

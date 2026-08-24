@@ -42,7 +42,7 @@ import { moderate } from '../moderation';
 import { newMessageId as newRecordId } from '../util/ids';
 import type { RetentionSink } from '../storage/sink';
 import type { EventDispatcher } from './dispatch';
-import type { MessageContentType } from '../protocol/types';
+import type { MessageAckStatus, MessageContentType } from '../protocol/types';
 
 /** The part of the store this pipeline needs. */
 export interface MessageStore {
@@ -58,8 +58,8 @@ export type MessageOutcome =
       matchId: string;
       acceptedAt: string;
       route: 'local' | 'remote';
-      /** False when policy withheld it: accepted and recorded, not handed on (D20). */
-      delivered: boolean;
+      /** What became of it. See `MessageAckStatus`. */
+      status: MessageAckStatus;
       /** Rule ids that fired. Never carries user text. */
       flags: readonly string[];
     }
@@ -156,16 +156,25 @@ export class MessagePipeline {
       return { kind: 'withheld', matchId: resolved.matchId, flags: verdict.flags };
     }
 
+    let status: MessageAckStatus = verdict.deliverable ? 'routed' : 'withheld';
+
     if (verdict.deliverable) {
       // Delivery cannot fail the send: the dedupe entry is already written, so
       // unwinding here would leave an id burnt for a message nobody has. A
       // dropped frame costs the partner one message they can no longer be
       // shown — exactly what `message_ack` refuses to promise (D14).
-      await this.dispatcher.toSession(
+      //
+      // The dispatcher has always reported whether anybody was there; the ack
+      // simply threw the answer away and reported the moderation verdict
+      // instead. Under §28 a partner with no socket is an ordinary state
+      // lasting tens of seconds, so that answer is the difference between a
+      // "sent" tick and the truth.
+      const delivery = await this.dispatcher.toSession(
         resolved.partnerSessionId,
         { event: 'message', matchId: resolved.matchId, messageId, contentType, text, sentAt },
         sentAt,
       );
+      if (delivery === 'dropped') status = 'undelivered';
     }
 
     if (verdict.flags.length > 0) {
@@ -193,10 +202,7 @@ export class MessagePipeline {
       matchId: resolved.matchId,
       acceptedAt: sentAt,
       route,
-      // A withheld message was accepted and recorded but not handed on. The
-      // sender is told through the ack rather than through an error, because
-      // the frame was valid and there is nothing to retry (D20).
-      delivered: verdict.deliverable,
+      status,
       flags: verdict.flags,
     };
   }

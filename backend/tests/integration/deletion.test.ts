@@ -284,6 +284,69 @@ describe('expiry is enforced (I10)', () => {
     expect(calls).toBe(1);
   });
 
+  /**
+   * The number that proves expiry is enforced rather than attempted.
+   *
+   * `chat_retention_deleted_total` cannot answer it: a worker falling behind
+   * still deletes steadily, so throughput looks identical whether the backlog
+   * is empty or growing without bound. This is zero when the worker is keeping
+   * up, whatever the volume, batch size or interval — which is why the alert
+   * watches it and not the counter.
+   */
+  describe('the retention backlog', () => {
+    it('counts what is past its deadline and still stored', async () => {
+      for (let i = 0; i < 3; i += 1) await seed({ expired: true, messages: 2 });
+      const worker_ = worker(new FakeLock());
+
+      await worker_.sampleBacklog();
+
+      expect(worker_.lastBacklog).toMatchObject({ conversations: 3, messages: 6 });
+    });
+
+    it('is zero once the worker has caught up', async () => {
+      await seed({ expired: true, messages: 2 });
+      const worker_ = worker(new FakeLock());
+      await worker_.runUntilDrained();
+
+      expect(worker_.lastBacklog).toMatchObject({ conversations: 0, messages: 0 });
+    });
+
+    it('does not count rows a hold is deliberately keeping', async () => {
+      // A hold suspends deletion on purpose. Counting held rows as a backlog
+      // would alert on the system working exactly as designed, which is how an
+      // operator learns to ignore the alert that matters.
+      const { conversationId } = await seed({ expired: true, messages: 2 });
+      await holds.place({
+        subjectType: 'conversation',
+        subjectId: conversationId,
+        caseId: 'CASE-BACKLOG',
+        owner: 'trust-and-safety',
+        justification: 'ongoing investigation',
+      });
+
+      const worker_ = worker(new FakeLock());
+      await worker_.runUntilDrained();
+
+      expect(await ctx.count('messages')).toBe(2);
+      expect(worker_.lastBacklog).toMatchObject({ conversations: 0, messages: 0 });
+    });
+
+    it('keeps its last good answer when the database is unavailable', async () => {
+      const broken = new DeletionWorker(
+        ctx.config,
+        createNullLogger(),
+        { ...ctx.db, query: async () => { throw new Error('connection terminated'); } },
+        new FakeLock(),
+      );
+
+      await broken.sampleBacklog();
+
+      // Never read anything, so it publishes nothing. A zero from a failed read
+      // is the most reassuring thing this process could wrongly claim.
+      expect(broken.lastBacklog).toBeNull();
+    });
+  });
+
   it('records a failure and alerts rather than throwing', async () => {
     const failing = new DeletionWorker(
       ctx.config,

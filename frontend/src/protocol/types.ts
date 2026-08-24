@@ -664,25 +664,50 @@ export interface IncomingMessagePayload {
 }
 
 /**
- * The server accepted a message and routed it to the partner's socket owner.
+ * What became of a message the server accepted.
  *
- * This is NOT an end-to-end delivery receipt: `route: "remote"` means the
- * message was handed to Redis Pub/Sub for the instance owning the partner's
- * socket. Clients must show "sent", never "read".
+ * This replaced a boolean named `delivered`, which reported the *moderation
+ * verdict* and nothing else — it was true whenever policy allowed the message
+ * on, regardless of whether anybody received it. That was defensible under D7,
+ * where a partner without a socket meant the conversation had ended and the
+ * sender was told so. Under §28 the seat is held for a grace window, so
+ * "matched, partner has no socket" is a normal state lasting tens of seconds,
+ * and every message sent into it was acked `delivered: true` and reached
+ * nobody. A field called `delivered` saying so is the protocol misleading the
+ * client, and the client rendered it as "sent".
  *
- * `delivered: false` means the message was accepted and recorded but withheld
- * from the partner by moderation policy (D20). The sender is told, because an
- * ack indistinguishable from delivery teaches users that "sent" means nothing.
- * It is reported here rather than as an error because the frame was valid and
- * there is nothing to retry.
+ * None of these is a read receipt, and `routed` is deliberately not called
+ * `delivered`: it means the message was handed to whatever owns the partner's
+ * socket, which for `route: "remote"` is Redis Pub/Sub.
  */
+export type MessageAckStatus =
+  /** Handed on towards the partner. The best this protocol promises (D14). */
+  | 'routed'
+  /**
+   * Accepted and recorded, and withheld from the partner by policy (D20).
+   *
+   * Reported here rather than as an error because the frame was valid and
+   * there is nothing to retry. The sender is told, because an ack
+   * indistinguishable from delivery teaches users that "sent" means nothing.
+   */
+  | 'withheld'
+  /**
+   * Accepted and recorded, and nobody was there to receive it.
+   *
+   * The partner's socket was gone at the moment it was routed. Nothing is
+   * buffered (D43), so this message will not arrive later — saying so is the
+   * whole point, because the alternative is a "sent" tick for a message that
+   * went nowhere.
+   */
+  | 'undelivered';
+
 export interface MessageAckPayload {
   clientMsgId: string | null;
   messageId: string;
   matchId: string;
   acceptedAt: string;
   route: 'local' | 'remote';
-  delivered: boolean;
+  status: MessageAckStatus;
 }
 
 /** The partner started or stopped typing. Advisory only. */

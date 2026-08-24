@@ -126,7 +126,17 @@ export function LandingScreen({
 
         <div className="mt-6 flex items-center justify-center gap-2 text-xs text-ink-500">
           <Lock className="h-3 w-3" />
-          {declaredAnything ? 'No signup · No account · Nothing kept after you leave' : 'No signup · No profile · Anonymous'}
+          {/*
+            "Nothing kept after you leave" used to sit here, directly above a
+            footer correctly saying conversations are kept for a limited period.
+            The intended meaning was that the *declaration* is not kept
+            server-side, which is true and is a real design achievement (D34) —
+            but as written it was an unqualified retention claim, and it is the
+            line a user reads as the privacy promise.
+          */}
+          {declaredAnything
+            ? 'No signup · No account · Your profile stays on this device'
+            : 'No signup · No profile · Anonymous'}
         </div>
 
         <div className="mt-8 w-full max-w-xs">

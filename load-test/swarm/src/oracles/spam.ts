@@ -243,9 +243,12 @@ export async function checkSpamDetection(input: SpamOracleInput): Promise<SpamOr
         }
 
         case 'ack':
-          // `delivered: false` is moderation withholding the message (D20) —
-          // the one live control that can act on content today.
-          if (event.delivered === false) bot.liveActions += 1;
+          // `withheld` is moderation stopping the message (D20) — the one
+          // live control that can act on content today. Deliberately not
+          // `undelivered`, which means the message was allowed and the partner
+          // was not there: counting that as a detection would credit the spam
+          // controls for a dropped socket.
+          if (event.ackStatus === 'withheld') bot.liveActions += 1;
           break;
 
         case 'closed':

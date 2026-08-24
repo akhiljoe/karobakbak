@@ -13,6 +13,7 @@ import { createKeys } from './redis/keys';
 import { ScriptRunner } from './redis/scripts';
 import { RedisStore } from './redis/store';
 import { createMetrics } from './metrics/registry';
+import { publishLimits } from './metrics/limits';
 import { RetentionMetricsPublisher } from './metrics/retention';
 import { BackupMonitor } from './storage/backup';
 import { ReportQueueMonitor } from './storage/reportqueue';
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
   }
 
   const metrics = createMetrics(config);
+  publishLimits(metrics, config);
 
   // Sampled rather than pushed, so nothing in the write path carries a metrics
   // dependency. The interval is the scrape cache window: sampling faster would

@@ -177,7 +177,13 @@ describe('clientTokenCookie', () => {
     expect(
       clientTokenCookie(
         'token123456789012',
-        config({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://chat.example.com' }),
+        // Production also refuses the published hash salt, so a config that
+        // starts must set one.
+        config({
+          NODE_ENV: 'production',
+          ALLOWED_ORIGINS: 'https://chat.example.com',
+          IP_HASH_SALT: 'a-real-secret',
+        }),
       ),
     ).toContain('Secure');
   });

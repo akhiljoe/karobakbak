@@ -30,7 +30,7 @@ import {
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
-import { clearResumeToken, loadResumeToken } from '../resume';
+import { loadResumeToken, saveResumeToken } from '../resume';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
 function socketUrl(): string {
@@ -167,6 +167,20 @@ export function useChat(): ChatApi {
     };
   }, [url]);
 
+  /**
+   * Persist whatever the reducer decided the token is.
+   *
+   * The write lives here rather than in `reduce`, which is documented as pure
+   * and which React may invoke more than once for the same action. It ran
+   * inside the reducer before, above the guard that discards a stale frame —
+   * so a late `partner_left` for a finished match cleared the token belonging
+   * to the conversation the user was in. Running after the reducer has decided
+   * whether an action applies is the ordering that bug needed.
+   */
+  useEffect(() => {
+    saveResumeToken(state.resumeToken ?? '');
+  }, [state.resumeToken]);
+
   /* --- typing ------------------------------------------------------------- */
 
   const stopTyping = useCallback(() => {
@@ -247,7 +261,9 @@ export function useChat(): ChatApi {
     // chose to walk out of. Nothing is told to the server and nothing needs to
     // be: the session's TTL and the janitor end an abandoned match anyway, and
     // the partner sees the same "they left" they would have seen regardless.
-    clearResumeToken();
+    // Leaving offline drops the token directly: there is no server round trip
+    // to produce a state change, so nothing else would clear it.
+    saveResumeToken('');
     dispatch({ type: 'user_left' });
   }, [sendCommand, stopTyping]);
 

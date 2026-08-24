@@ -65,6 +65,24 @@ groups:
             looks exactly like a quiet week, and it is the first thing to
             suspect after changing the URL.
 
+      # The number that proves expiry is enforced rather than attempted. A worker
+      # falling behind still deletes steadily, so `chat_retention_deleted_total`
+      # looks healthy either way; a backlog that stays above zero across passes
+      # does not. Generous `for`, because a pass legitimately leaves rows behind
+      # between runs — what matters is whether it clears them.
+      - alert: RetentionBacklogGrowing
+        expr: sum(chat_retention_backlog) > 0
+        for: 2h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Data past its deletion deadline is still stored"
+          description: >-
+            Rows have been past their retention deadline for two hours without
+            being collected. Either the worker is not keeping up with volume or
+            it is not running. This is the promise the landing page makes, and
+            nothing else in the system notices when it stops being true.
+
       - alert: RetentionDeletionFailing
         expr: increase(chat_deletion_failures_total[1h]) > 0
         for: 5m
@@ -118,14 +136,31 @@ groups:
             records are going to the outage spool, which is bounded and is not
             durable storage (D28).
 
+      # Ratios against the limits the application exports, not copied numbers.
+      # This fired at a hardcoded 40000 — 80% of the *default* record ceiling
+      # and unreachable on any deployment that lowered it. The spool would fill
+      # and start dropping while the rule watched a threshold nothing could
+      # reach. The byte ceiling had no rule at all, and a workload with larger
+      # records reaches that one first.
       - alert: SpoolNearCapacity
-        expr: chat_spool_records > 40000
+        expr: chat_spool_records / chat_spool_max_records > 0.8
         for: 10m
         labels:
           severity: ticket
         annotations:
           summary: "The outage spool is filling"
           description: "Records are dropped once it is full, oldest policy first."
+
+      - alert: SpoolNearByteCapacity
+        expr: chat_spool_bytes / chat_spool_max_bytes > 0.8
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The outage spool is filling by size"
+          description: >-
+            The spool is bounded by bytes as well as by record count, and a
+            workload with larger records reaches this ceiling first.
 
       # `> 0` is load-bearing, and was found by running this stack rather than
       # by reading it. `chat_backup_last_success_timestamp` is an unlabelled
@@ -140,7 +175,7 @@ groups:
       # anyway: the two states have different causes and different fixes.
       - alert: BackupsStale
         expr: chat_backup_last_success_timestamp > 0
-          and time() - chat_backup_last_success_timestamp > 93600
+          and time() - chat_backup_last_success_timestamp > chat_backup_max_age_seconds
         for: 30m
         labels:
           severity: ticket
@@ -152,7 +187,7 @@ groups:
 
       - alert: BackupsNeverObserved
         expr: chat_backup_last_success_timestamp == 0
-          and time() - chat_process_process_start_time_seconds > 93600
+          and time() - chat_process_process_start_time_seconds > chat_backup_max_age_seconds
         for: 30m
         labels:
           severity: ticket

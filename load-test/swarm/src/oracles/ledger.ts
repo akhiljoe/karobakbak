@@ -276,7 +276,10 @@ export async function analyseLedger(paths: readonly string[]): Promise<LedgerAna
           stats.messagesAcked += 1;
           if (event.ms !== undefined) stats.ackLatency.push(event.ms);
           if (event.route) stats.routes.set(event.route, (stats.routes.get(event.route) ?? 0) + 1);
-          if (event.delivered === false) {
+          // `withheld` only. `undelivered` is not a moderation outcome — the
+          // message was allowed and nobody was there — and folding the two
+          // together would report a held seat as a policy action.
+          if (event.ackStatus === 'withheld') {
             stats.messagesWithheld += 1;
             break;
           }

@@ -168,7 +168,7 @@ describe('delivery across two instances', () => {
         clientMsgId: 'c_correlate',
         matchId,
         route: 'remote',
-        delivered: true,
+        status: 'routed',
       });
       expect(ack.messageId).toMatch(/^msg_/);
     } finally {
@@ -462,7 +462,7 @@ describe('moderation over the wire (§14.2, D20)', () => {
       const ack = payloadOf<MessageAckPayload>(await alice.waitForFrame('message_ack'));
       // Default policy is flag-and-deliver: refusing a message somebody was
       // allowed to send is far more visible than a flag nobody acts on.
-      expect(ack.delivered).toBe(true);
+      expect(ack.status).toBe('routed');
       const received = payloadOf<IncomingMessagePayload>(await bob.waitForFrame('message'));
       expect(received.text).toBe('my site is example.com');
     } finally {
@@ -505,7 +505,7 @@ describe('moderation over the wire (§14.2, D20)', () => {
       const ack = payloadOf<MessageAckPayload>(await alice.waitForFrame('message_ack'));
       // The frame was valid and there is nothing to retry, so this is an ack,
       // not an error (D20).
-      expect(ack.delivered).toBe(false);
+      expect(ack.status).toBe('withheld');
 
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect(bob.frames.filter((frame) => frame.type === 'message')).toHaveLength(0);
@@ -587,7 +587,7 @@ describe('a message cannot outlive its conversation (I6)', () => {
     }
   });
 
-  it('still routes while the partner is reconnecting, and is refused once they are gone', async () => {
+  it('is accepted but undelivered while the partner is reconnecting, and refused once they are gone', async () => {
     const { alice, bob } = await pairAcrossInstances();
     try {
       bob.terminate();
@@ -598,15 +598,20 @@ describe('a message cannot outlive its conversation (I6)', () => {
       // PARTNER_GONE, the pipeline turned that into "not matched", and one
       // message destroyed the very thing the window exists to protect.
       //
-      // It is accepted and routed. `delivered` stays true because that flag has
-      // always meant "accepted and routed", never "received" (§14.3, D14) — the
-      // publish goes to a channel nobody is listening on. The message reaches
-      // nobody and is deliberately not buffered: holding message text in a
-      // Redis key is what I8 forbids, which is why the client disables the
-      // composer rather than pretending it went through.
+      // It is accepted, and the ack says plainly that nobody received it. The
+      // publish goes to a channel nobody is listening on, and nothing is
+      // buffered — holding message text in a Redis key is what I8 forbids — so
+      // this message will not arrive later.
+      //
+      // This assertion used to read `delivered: true`, because that field
+      // carried the moderation verdict rather than an outcome. It was
+      // defensible under D7, where a partner without a socket meant the
+      // conversation was over; under §28 the gap is ordinary and lasts tens of
+      // seconds, so it meant the sender saw a "sent" tick for a message that
+      // had already reached nobody.
       alice.command('message', { text: 'hello?' }, 'c_during');
       const ack = await alice.waitForFrame('message_ack');
-      expect(payloadOf<{ delivered: boolean }>(ack).delivered).toBe(true);
+      expect(payloadOf<MessageAckPayload>(ack).status).toBe('undelivered');
 
       // Still in the conversation, which is the property that matters.
       alice.command('typing', { active: true });

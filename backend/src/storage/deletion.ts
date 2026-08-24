@@ -177,6 +177,56 @@ export class DeletionWorker {
   }
 
   /**
+   * Rows past their deadline that still exist, per table. Refreshed each pass.
+   *
+   * The measurement that proves expiry is being *enforced* rather than
+   * attempted. `chat_retention_deleted_total` cannot answer it: a worker
+   * falling behind still deletes steadily, so throughput looks identical
+   * whether the backlog is empty or growing without bound. This is zero when
+   * the worker is keeping up, whatever the volume, batch size or interval.
+   *
+   * Held rows are excluded. A hold suspends deletion deliberately, so counting
+   * held rows as a backlog would alert on the system working as designed.
+   *
+   * Cheap: every predicate is served by the partial indexes on
+   * `retention_expires_at where legal_hold = false` that the delete statements
+   * already use.
+   */
+  lastBacklog: Record<string, number> | null = null;
+
+  async sampleBacklog(): Promise<void> {
+    try {
+      const { rows } = await this.db.query<{ table_name: string; n: string }>(
+        `select 'conversations' as table_name, count(*)::text as n
+           from conversations
+          where retention_expires_at < now() and legal_hold = false
+         union all
+         select 'messages', count(*)::text
+           from messages m
+          where m.retention_expires_at < now() and m.legal_hold = false
+            and not exists (
+              select 1 from conversations c
+               where c.conversation_id = m.conversation_id and c.legal_hold = true)
+         union all
+         select 'reports', count(*)::text
+           from reports r
+          where r.retention_expires_at < now() and r.legal_hold = false
+            and not exists (
+              select 1 from conversations c
+               where c.conversation_id = r.conversation_id and c.legal_hold = true)`,
+      );
+      const next: Record<string, number> = {};
+      for (const row of rows) next[row.table_name] = Number(row.n);
+      this.lastBacklog = next;
+    } catch (err) {
+      // Keep the last good answer. Publishing zero from a failed read would be
+      // the most reassuring thing this process could wrongly say.
+      this.logger.warn('could not sample the retention backlog', dbErrorFields(err));
+    }
+  }
+
+
+  /**
    * Run passes until nothing is left. The scheduled path, and an explicit sweep.
    *
    * `maxPasses` bounds one run so a large backlog cannot hold the connection
@@ -195,8 +245,18 @@ export class DeletionWorker {
       for (const key of Object.keys(result.deleted) as Array<keyof DeletionCounts>) {
         total[key] += result.deleted[key];
       }
-      if (result.failed || !result.more) break;
+      if (result.failed) {
+        // No backlog sample. The database has just refused every statement in
+        // a pass, so asking it one more question adds load to something already
+        // unwell and would only fail too — and the monitor keeps its last good
+        // answer rather than publishing a zero it did not measure.
+        return total;
+      }
+      if (!result.more) break;
     }
+    // After draining, so the number reflects what is left rather than what was
+    // waiting when the run started.
+    await this.sampleBacklog();
     return total;
   }
 

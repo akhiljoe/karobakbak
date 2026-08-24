@@ -321,9 +321,54 @@ describe('loadConfig — origin allowlist (R9)', () => {
 
   it('starts in production once at least one origin is listed', () => {
     const config = loadConfig(
-      baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://chat.example.com' }),
+      baseEnv({
+        NODE_ENV: 'production',
+        ALLOWED_ORIGINS: 'https://chat.example.com',
+        // Production also refuses the published salt, so a config that starts
+        // must set one. Asserted in its own test below.
+        IP_HASH_SALT: 'a-real-secret',
+      }),
     );
     expect(config.http.allowedOrigins).toEqual(['https://chat.example.com']);
+  });
+
+  it('refuses the published salt in production rather than warning about it', () => {
+    // It salts every IP and client-token hash. Left at the default, those
+    // hashes are reproducible by anyone holding this source — and IPv4 is
+    // small enough to enumerate offline against a leaked database.
+    //
+    // This was a warning, on the reasoning that the production compose file
+    // already requires the variable. The exposure is the deployment that does
+    // not use that compose file, which is what a first deploy under pressure
+    // looks like.
+    expect(() =>
+      loadConfig(baseEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://a.example' })),
+    ).toThrow(/IP_HASH_SALT/);
+
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          NODE_ENV: 'production',
+          ALLOWED_ORIGINS: 'https://a.example',
+          IP_HASH_SALT: 'a-real-secret',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('keeps the default usable outside production', () => {
+    // A laptop is not an exposure, and threading a secret through every test
+    // and dev command would be friction with no security value.
+    expect(loadConfig(baseEnv()).security.ipHashSalt).toBe('change-me-in-production');
+  });
+
+  it('refuses a spool backend it cannot honour, instead of ignoring it', () => {
+    // `redis` was accepted, exposed on the config, and then ignored — startup
+    // built a file spool regardless. An operator choosing it to keep outage
+    // records off local disk got a plaintext file anyway.
+    expect(() => loadConfig(baseEnv({ SPOOL_BACKEND: 'redis' }))).toThrow(/not implemented/);
+    expect(() => loadConfig(baseEnv({ SPOOL_BACKEND: 'nonsense' }))).toThrow(/must be file/);
+    expect(loadConfig(baseEnv({ SPOOL_BACKEND: 'file' })).spool.backend).toBe('file');
   });
 
   it('still allows an empty allowlist outside production', () => {
@@ -338,12 +383,11 @@ describe('configWarnings', () => {
     expect(warnings.join(' ')).toMatch(/ALLOWED_ORIGINS/);
   });
 
-  it('warns about the default IP hash salt only in production', () => {
+  it('warns about the default IP hash salt outside production', () => {
+    // Production no longer reaches this: `assertCoherent` throws first. So the
+    // warning is the development case, where the default is a convenience.
     const dev = configWarnings(loadConfig(baseEnv()));
-    expect(dev.join(' ')).not.toMatch(/IP_HASH_SALT/);
-
-    const prod = configWarnings(loadConfig(baseEnv({ NODE_ENV: 'production' })));
-    expect(prod.join(' ')).toMatch(/IP_HASH_SALT/);
+    expect(dev.join(' ')).toMatch(/IP_HASH_SALT/);
 
     // Narrowed to the subject rather than asserting the whole list is empty:
     // this used to be `toEqual([])`, which made every unrelated warning added

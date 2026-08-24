@@ -305,7 +305,11 @@ export interface Config {
 
   readonly spool: {
     readonly enabled: boolean;
-    readonly backend: 'file' | 'redis';
+    /**
+     * Only `file`. `redis` is refused at startup rather than accepted and
+     * ignored — see `spoolBackend` for why it is not implemented.
+     */
+    readonly backend: 'file';
     readonly dir: string;
     readonly maxBytes: number;
     readonly maxRecords: number;
@@ -441,10 +445,42 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
   };
 }
 
-function spoolBackend(env: Env, key: string, fallback: 'file' | 'redis'): 'file' | 'redis' {
+/**
+ * The salt shipped in this repository.
+ *
+ * Named rather than repeated, because it is compared in two places and a
+ * typo in either would silently disable the check that matters.
+ */
+export const DEFAULT_IP_HASH_SALT = 'change-me-in-production';
+
+/**
+ * F-006: `redis` was accepted and then ignored.
+ *
+ * `SPOOL_BACKEND` took `file|redis`, exposed the answer on the config, and
+ * startup built a `FileSpool` regardless. An operator choosing `redis` — most
+ * likely to keep outage records off a local disk — got a plaintext file spool
+ * anyway, which is a storage decision silently reversed.
+ *
+ * There is no Redis spool, and there is a reason not to build one on the way
+ * past: a Redis-backed spool dies with a Redis restart, and Redis here runs
+ * with persistence deliberately off (D12). It would be *less* durable than the
+ * file it replaced while looking like an upgrade.
+ *
+ * So the value is refused rather than implemented. A configuration that cannot
+ * be honoured should fail at startup, where somebody is watching.
+ */
+function spoolBackend(env: Env, key: string, fallback: 'file'): 'file' {
   const raw = str(env, key, fallback);
-  if (raw === 'file' || raw === 'redis') return raw;
-  throw new ConfigError(`${key} must be file|redis, got ${JSON.stringify(raw)}`);
+  if (raw === 'file') return raw;
+  if (raw === 'redis') {
+    throw new ConfigError(
+      `${key}=redis is not implemented. The outage spool is bounded tolerance, ` +
+        'not durable storage (D28), and a Redis-backed one would die with a ' +
+        'Redis restart because persistence is off by design (D12) — less ' +
+        'durable than the file it replaced. Use file.',
+    );
+  }
+  throw new ConfigError(`${key} must be file, got ${JSON.stringify(raw)}`);
 }
 
 function moderationAction(env: Env, key: string, fallback: ConfigurableAction): ConfigurableAction {
@@ -687,7 +723,7 @@ export function loadConfig(env: Env = process.env): Config {
     },
 
     security: {
-      ipHashSalt: str(env, 'IP_HASH_SALT', 'change-me-in-production'),
+      ipHashSalt: str(env, 'IP_HASH_SALT', DEFAULT_IP_HASH_SALT),
     },
   };
 
@@ -710,6 +746,26 @@ function assertCoherent(config: Config): void {
     throw new ConfigError(
       'ALLOWED_ORIGINS must list at least one origin when NODE_ENV=production; ' +
         'an empty allowlist accepts WebSocket upgrades from any site',
+    );
+  }
+
+  // The salt is the control that makes an IP hash non-reversible and
+  // non-linkable outside the trusted boundary. A published default makes every
+  // hash reproducible by anyone holding this repository, so a database, a
+  // backup or an accidental disclosure becomes an offline dictionary attack
+  // over the whole IPv4 space — which is small enough to enumerate.
+  //
+  // This used to be a warning, on the reasoning that the production compose
+  // file already requires the variable. That is true and it is not enough: the
+  // exposure is a deployment that does not use that compose file, which is
+  // exactly what a first deploy under time pressure looks like. Warnings scroll
+  // past; a refusal does not.
+  if (config.isProduction && config.security.ipHashSalt === DEFAULT_IP_HASH_SALT) {
+    throw new ConfigError(
+      'IP_HASH_SALT is still the published default when NODE_ENV=production. ' +
+        'It salts every IP and client-token hash, so leaving it means those ' +
+        'hashes are reproducible by anyone with this source. Generate one: ' +
+        'openssl rand -base64 32',
     );
   }
 
@@ -839,10 +895,14 @@ export function configWarnings(config: Config): string[] {
         'can be matched again immediately.',
     );
   }
-  if (config.isProduction && config.security.ipHashSalt === 'change-me-in-production') {
+  if (config.security.ipHashSalt === DEFAULT_IP_HASH_SALT) {
+    // Production never reaches here — `assertCoherent` throws first — so this
+    // is the development case, where the default is a convenience rather than
+    // an exposure.
     warnings.push(
-      'IP_HASH_SALT is still the default value in production: per-IP rate-limit keys are ' +
-        'predictable. Set a secret salt.',
+      'IP_HASH_SALT is the published default: every IP and client-token hash is ' +
+        'reproducible from this source. Fine on a laptop, a startup failure in ' +
+        'production.',
     );
   }
   return warnings;

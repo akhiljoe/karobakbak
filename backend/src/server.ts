@@ -308,7 +308,12 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       // Liveness: is this process running. Deliberately independent of every
       // dependency, so a Redis outage does not make an orchestrator restart
       // processes that are working fine.
-      json(res, 200, { status: draining ? 'draining' : 'ok', instance: config.instanceId });
+      // No instance id. This endpoint is proxied to the public edge, and the
+      // id is of no use to anyone who cannot already reach the private
+      // network — while polling it across a deployment enumerates replicas and
+      // shows when one is draining, which is when a system is least robust.
+      // The same value is on every metric series, where it belongs.
+      json(res, 200, { status: draining ? 'draining' : 'ok' });
       return;
     }
 
@@ -752,7 +757,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           command.text,
         );
         if (outcome.kind === 'accepted') {
-          metrics.messagesDelivered.labels(outcome.delivered ? outcome.route : 'dropped').inc();
+          // The route it actually took, which is what `dropped` means here:
+          // routed at a session whose socket was gone. Previously this read the
+          // moderation verdict, so a message that reached nobody was counted as
+          // delivered on its nominal route.
+          metrics.messagesDelivered
+            .labels(outcome.status === 'routed' ? outcome.route : 'dropped')
+            .inc();
           metrics.deliveryLatency.labels(outcome.route).observe(secondsSince(started));
           for (const flag of outcome.flags) void flag;
           metrics.moderationFlags.labels(outcome.flags.length > 0 ? 'flag' : 'allow').inc();
@@ -915,7 +926,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           matchId: outcome.matchId,
           acceptedAt: outcome.acceptedAt,
           route: outcome.route,
-          delivered: outcome.delivered,
+          status: outcome.status,
         });
         return;
       case 'withheld':

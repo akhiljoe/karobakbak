@@ -40,6 +40,7 @@ export class RetentionMetricsPublisher {
     this.publishDeletion();
     this.publishBackup(nowMs);
     this.publishReportQueue();
+    this.publishBacklog();
   }
 
   /**
@@ -113,6 +114,24 @@ export class RetentionMetricsPublisher {
     // there is no cumulative total to subtract a previous sample from.
     for (const seconds of this.writer.takeWriteDurations()) {
       this.metrics.dbWriteLatency.observe(seconds);
+    }
+  }
+
+  /**
+   * The deletion backlog, sampled on the same slow cadence as everything else.
+   *
+   * Cached rather than queried inline: `publish()` is synchronous by design, so
+   * the worker holds the last answer and this reads it. A sample that has never
+   * succeeded publishes nothing, for the same reason the backup gauge does —
+   * a zero backlog from a monitor that could not read the database is the most
+   * reassuring thing this process could wrongly claim.
+   */
+  private publishBacklog(): void {
+    if (!this.deletion) return;
+    const backlog = this.deletion.lastBacklog;
+    if (backlog === null) return;
+    for (const [table, count] of Object.entries(backlog)) {
+      this.metrics.retentionBacklog.labels(table).set(count);
     }
   }
 

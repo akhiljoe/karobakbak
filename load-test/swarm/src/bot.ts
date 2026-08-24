@@ -1157,16 +1157,23 @@ export class Bot {
       cid: cid ?? undefined,
       messageId: payload.messageId,
       hash: sent?.hash,
-      delivered: payload.delivered,
+      ackStatus: payload.status,
       route: payload.route,
       ms: sent ? Date.now() - sent.at : undefined,
-      // An ack for a message sent while the partner's seat was held says
-      // `delivered: true` and means "accepted and routed" — routed to a session
-      // with no socket. Nothing is buffered (D43), so the partner will never
-      // see it, and the sender is never told. Marked here so the pair oracle
-      // treats it as a hole rather than a reorder; the product question it
-      // raises is recorded in `docs/SWARM-HANDOFF.md`.
-      ...(sent?.away === true ? { unconfirmed: true } : {}),
+      // The server now says this itself. It used to answer `delivered: true`
+      // for a message routed at a session with no socket — the moderation
+      // verdict wearing the name of an outcome — so this harness inferred the
+      // truth from its own view of when the partner was away, with 500ms of
+      // lead tolerance because a bot learns of a dropped partner a round trip
+      // late.
+      //
+      // `undelivered` is authoritative and needs no tolerance: it comes from
+      // the side that actually tried to deliver. The local inference stays as
+      // a second opinion, because a bot that saw its partner leave and got
+      // `routed` anyway is worth flagging rather than trusting.
+      ...(payload.status === 'undelivered' || sent?.away === true
+        ? { unconfirmed: true }
+        : {}),
     });
     this.persona.onAck?.(this, payload);
   }

@@ -137,7 +137,10 @@ describe('health and readiness', () => {
   it('serves /health from the process alone', async () => {
     const { status, body } = await get('/health');
     expect(status).toBe(200);
-    expect(body).toMatchObject({ status: 'ok', instance: http.ctx.config.instanceId });
+    // No instance id: this endpoint is proxied to the public edge, and polling
+    // it across a deployment would enumerate replicas and show when one is
+    // draining. The same value is on every metric series, where it belongs.
+    expect(body).toEqual({ status: 'ok' });
   });
 
   it('serves /ready from Redis', async () => {

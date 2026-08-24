@@ -2,10 +2,9 @@
  * The UI state machine. Pure, so every interesting decision this client makes
  * is testable without a browser, a socket or a render.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { canSend, initialState, reduce, type ChatState } from './machine';
-import { loadResumeToken } from '../resume';
 import { messageKindFor } from '../components/MessageList';
 import { toAction } from '../hooks/useChat';
 import type { AnyServerEnvelope, ErrorPayload, ServerFeatures } from '../protocol/types';
@@ -168,7 +167,7 @@ describe('messages', () => {
         matchId: 'm_1',
         acceptedAt: 'x',
         route: 'remote',
-        delivered: true,
+        status: 'routed',
       },
     });
     // message_ack means accepted and routed (D14). There is no read receipt in
@@ -186,7 +185,7 @@ describe('messages', () => {
         matchId: 'm_1',
         acceptedAt: 'x',
         route: 'local',
-        delivered: false,
+        status: 'withheld',
       },
     });
     // Not silently shown as sent: the sender would otherwise believe it landed.
@@ -202,7 +201,7 @@ describe('messages', () => {
         matchId: 'm_1',
         acceptedAt: 'x',
         route: 'local',
-        delivered: true,
+        status: 'routed',
       },
     });
     expect(state.messages).toEqual([]);
@@ -463,70 +462,45 @@ describe('frames this client does not know', () => {
  * clear it, which meant that after the first stranger walked away — the
  * ordinary way a conversation ends here — the tab held nothing, and the next
  * dropped socket opened a brand new session instead of reclaiming the one the
- * server was still holding a seat for. The conversation on screen was
- * destroyed by the client while the server was waiting for it to come back.
+ * server was still holding a seat for.
  *
- * These tests run against a real `sessionStorage` shape because `resume.ts`
- * swallows every storage error by design — in a bare Node environment with no
- * `window`, every read returns null and every assertion below would pass
- * without exercising anything.
+ * Asserted as state rather than through `sessionStorage`. The reducer no longer
+ * writes storage at all: it returns the value and `useChat` persists it in an
+ * effect, so these tests need no shim and describe the decision rather than its
+ * side effect.
  */
 describe('the resume token', () => {
-  beforeEach(() => {
-    const entries = new Map<string, string>();
-    const storage = {
-      getItem: (key: string) => entries.get(key) ?? null,
-      setItem: (key: string, value: string) => void entries.set(key, value),
-      removeItem: (key: string) => void entries.delete(key),
-      clear: () => entries.clear(),
-      key: (index: number) => [...entries.keys()][index] ?? null,
-      get length() {
-        return entries.size;
-      },
-    } satisfies Storage;
-    (globalThis as { window?: unknown }).window = { sessionStorage: storage };
-  });
-
-  it('is stored from the connected frame', () => {
-    connected();
-    expect(loadResumeToken()).toBe('t_test');
+  it('is taken from the connected frame', () => {
+    expect(connected().resumeToken).toBe('t_test');
   });
 
   it('survives a partner leaving, because the session does', () => {
-    const state = matched();
-    expect(loadResumeToken()).toBe('t_test');
-
-    const ended = reduce(state, { type: 'partner_left', matchId: 'm_1' });
+    const ended = reduce(matched(), { type: 'partner_left', matchId: 'm_1' });
 
     expect(ended.screen).toBe('ended');
     // The conversation ended; the session did not.
-    expect(loadResumeToken()).toBe('t_test');
+    expect(ended.resumeToken).toBe('t_test');
   });
 
   it('survives a skip and a block for the same reason', () => {
-    const state = matched();
-    reduce(state, { type: 'user_skipped' });
-    expect(loadResumeToken()).toBe('t_test');
-    reduce(state, { type: 'user_blocked' });
-    expect(loadResumeToken()).toBe('t_test');
+    expect(reduce(matched(), { type: 'user_skipped' }).resumeToken).toBe('t_test');
+    expect(reduce(matched(), { type: 'user_blocked' }).resumeToken).toBe('t_test');
   });
 
   it('is untouched by a stale frame for a conversation that already ended', () => {
     // The clear used to run *above* the guard below, so a late
     // `partner_skipped` for a finished match discarded the token belonging to
-    // the conversation the user was in now.
+    // the conversation the user was in now. Moving the write out of the reducer
+    // is what makes that ordering impossible rather than merely fixed.
     const state = matched();
     const after = reduce(state, { type: 'partner_left', matchId: 'm_previous' });
 
     expect(after).toBe(state);
-    expect(loadResumeToken()).toBe('t_test');
+    expect(after.resumeToken).toBe('t_test');
   });
 
   it('is dropped when the server says the session itself is gone', () => {
-    const state = matched();
-    expect(loadResumeToken()).toBe('t_test');
-
-    const gone = reduce(state, {
+    const gone = reduce(matched(), {
       type: 'server_error',
       payload: { code: 'SESSION_GONE', message: 'no such session', retryable: false },
     });
@@ -534,12 +508,11 @@ describe('the resume token', () => {
     expect(gone.screen).toBe('disconnected');
     // Nothing left to reclaim: offering this on the next connection would
     // present a credential for a session that no longer exists.
-    expect(loadResumeToken()).toBeNull();
+    expect(gone.resumeToken).toBeNull();
   });
 
   it('is replaced, not appended to, on every connection', () => {
-    connected();
-    reduce(initialState, {
+    const rotated = reduce(matched(), {
       type: 'connected',
       payload: {
         sessionId: 's_next',
@@ -553,7 +526,7 @@ describe('the resume token', () => {
     });
     // The server rotates on redemption; keeping the old one would offer a
     // spent credential and lose a conversation that could have resumed.
-    expect(loadResumeToken()).toBe('t_rotated_once');
+    expect(rotated.resumeToken).toBe('t_rotated_once');
   });
 });
 

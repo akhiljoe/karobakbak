@@ -147,8 +147,15 @@ export interface LedgerEvent {
   chars?: number;
   /** Per-match monotonic counter, so ordering survives a merge across workers. */
   seq?: number;
-  /** `message_ack.delivered` — false means moderation withheld it (D20). */
-  delivered?: boolean;
+  /**
+   * `message_ack.status` — what the server said became of the message.
+   *
+   * `routed` reached the partner's socket owner, `withheld` was stopped by
+   * policy (D20), `undelivered` reached nobody. This replaced a boolean named
+   * `delivered` that reported only the moderation verdict, so a message sent
+   * into a held seat was recorded here as delivered when it was not.
+   */
+  ackStatus?: string;
   /**
    * This ack cannot be read as proof the partner got it.
    *

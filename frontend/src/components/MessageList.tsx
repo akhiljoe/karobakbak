@@ -220,9 +220,18 @@ function MessageStatus({ status }: { status: ChatMessage['status'] }): JSX.Eleme
     sending: 'Sending…',
     sent: 'Sent',
     withheld: 'Not delivered',
+    // Distinct from `withheld`, and worth the extra word: one means the service
+    // stopped it, the other means the stranger was not there to receive it.
+    // Nothing is buffered (D43), so it will not arrive later — saying "Sent"
+    // here was the protocol's old boolean showing through, and it promised
+    // something that had already failed to happen.
+    undelivered: 'Nobody received this',
     failed: 'Failed',
   };
-  const tone = status === 'withheld' || status === 'failed' ? 'text-rose-400' : 'text-ink-500';
+  const tone =
+    status === 'withheld' || status === 'failed' || status === 'undelivered'
+      ? 'text-rose-400'
+      : 'text-ink-500';
   return <span className={tone}>· {label[status]}</span>;
 }
 
