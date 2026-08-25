@@ -182,6 +182,32 @@ describe('logger — content leakage prevention (DESIGN.md I8, §18.1)', () => {
   });
 });
 
+describe('logger — provider credentials (A4)', () => {
+  it('redacts a model provider key', () => {
+    // A leaked key is somebody else's bill, and it makes the persona spend
+    // ceiling meaningless. Same class of harm as `secret`, so it is on the same
+    // list rather than relying on nobody logging a config object.
+    expect(isForbiddenLogField('apiKey')).toBe(true);
+    expect(isForbiddenLogField('api_key')).toBe(true);
+  });
+
+  it('matches exactly, which is a property of the whole denylist', () => {
+    // Not specific to the key: the denylist is a case-sensitive Set, so
+    // `Password` is no more redacted than `ApiKey` is. Both spellings that
+    // anyone would actually write are covered above. Recorded here so the
+    // limitation is visible rather than discovered, since widening it to be
+    // case-insensitive is a change to the primary I8 control and deserves to
+    // be decided on its own rather than folded into a feature.
+    expect(isForbiddenLogField('ApiKey')).toBe(false);
+    expect(isForbiddenLogField('Password')).toBe(false);
+  });
+
+  it('leaves the provider and model names loggable, because they are metric labels', () => {
+    expect(isForbiddenLogField('provider')).toBe(false);
+    expect(isForbiddenLogField('model')).toBe(false);
+  });
+});
+
 describe('errorFields', () => {
   it('extracts error name, message and stack', () => {
     const fields = errorFields(new TypeError('bad thing'));

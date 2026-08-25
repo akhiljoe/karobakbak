@@ -411,3 +411,62 @@ describe('configWarnings', () => {
     expect(configured.join(' ')).not.toMatch(/BACKUP_REPORT_TOKEN/);
   });
 });
+
+describe('persona fill policy coherence (A3)', () => {
+  it('refuses a concurrency cap at or above the per-IP connection limit', () => {
+    // Every persona connects from the same address, so they share one
+    // connection bucket. A cap at or above the limit is a setting that looks
+    // applied and silently is not — the symptom is refused connections, which
+    // reads as "personas are broken" rather than "the cap is wrong".
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          PERSONAS_ENABLED: 'true',
+          MAX_CONNECTIONS_PER_IP: '10',
+          PERSONA_MAX_CONCURRENT: '10',
+        }),
+      ),
+    ).toThrow(/must be below/);
+  });
+
+  it('accepts a concurrency cap below the connection limit', () => {
+    const config = loadConfig(
+      baseEnv({
+        PERSONAS_ENABLED: 'true',
+        MAX_CONNECTIONS_PER_IP: '10',
+        PERSONA_MAX_CONCURRENT: '9',
+      }),
+    );
+    expect(config.personas.maxConcurrent).toBe(9);
+  });
+
+  it('refuses a per-character cap that can never bind', () => {
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          PERSONAS_ENABLED: 'true',
+          PERSONA_MAX_CONCURRENT: '3',
+          PERSONA_MAX_PER_CHARACTER: '5',
+        }),
+      ),
+    ).toThrow(/can never bind/);
+  });
+
+  it('does not police the relationship while personas are off', () => {
+    // An incoherent setting on a disabled feature should not stop the process
+    // starting; it becomes fatal the moment somebody turns personas on.
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          PERSONAS_ENABLED: 'false',
+          MAX_CONNECTIONS_PER_IP: '10',
+          PERSONA_MAX_CONCURRENT: '50',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('ships disabled, because the feature spends money per message', () => {
+    expect(loadConfig(baseEnv()).personas.enabled).toBe(false);
+  });
+});

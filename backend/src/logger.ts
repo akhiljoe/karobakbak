@@ -91,6 +91,12 @@ const FORBIDDEN_FIELDS = new Set([
   'credential',
   'authorization',
   'cookie',
+  // The model provider's key (A4). Not user content, but a leaked one is
+  // somebody else's bill and the whole persona budget stops meaning anything —
+  // the same class of harm as `secret`, so it belongs on the same list rather
+  // than relying on nobody ever putting a config object in a log line.
+  'apiKey',
+  'api_key',
   // The moderator's own words on an enforcement action. Not user content, but
   // it is free text typed while reading a conversation, so the most natural
   // thing to write in it is a quote from the conversation (I8).

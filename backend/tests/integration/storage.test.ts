@@ -106,6 +106,9 @@ describe('migrations', () => {
       'legal_holds',
       'messages',
       'moderation_events',
+      'persona_control',
+      'persona_conversations',
+      'persona_spend',
       'reports',
       'schema_migrations',
     ]);
@@ -150,6 +153,106 @@ describe('migrations', () => {
     );
     const privileges = new Set(grants.map((row) => row.privilege_type));
     expect(privileges).toEqual(new Set(['SELECT']));
+  });
+
+  it('denies the chat role any way to raise its own spend ceiling (D-AI-7)', async () => {
+    // Column-level grants: the persona process must add to the counter, which
+    // is the whole mechanism, and must not touch the limit. A process that can
+    // raise its own ceiling does not have one.
+    const grants = await ctx.rows<{ privilege_type: string; column_name: string | null }>(
+      `select privilege_type, column_name
+         from information_schema.column_privileges
+        where grantee = 'karobakbak_app'
+          and table_name = 'persona_spend'
+          and privilege_type = 'UPDATE'`,
+    );
+    const updatable = new Set(grants.map((row) => row.column_name));
+    expect(updatable.has('spent_micro_cents')).toBe(true);
+    expect(updatable.has('limit_micro_cents')).toBe(false);
+  });
+
+  it('keeps spend non-negative and the ceiling positive', async () => {
+    await expect(
+      ctx.db.query(
+        `insert into persona_spend (period, spent_micro_cents, limit_micro_cents)
+         values ('2020-01-01', -1, 100)`,
+      ),
+    ).rejects.toThrow(/persona_spend_non_negative/);
+
+    await expect(
+      ctx.db.query(
+        `insert into persona_spend (period, spent_micro_cents, limit_micro_cents)
+         values ('2020-02-01', 0, 0)`,
+      ),
+    ).rejects.toThrow(/persona_spend_limit_positive/);
+  });
+
+  it('denies the chat role any way to switch personas on (D-AI-9)', async () => {
+    // The switch governs a feature that spends money per message. A compromised
+    // chat process must not be able to enable it, so the chat role reads and
+    // never writes — the mirror image of why the console role can write it: a
+    // flip is a moderation action and belongs with the other audited ones.
+    const grants = await ctx.rows<{ privilege_type: string }>(
+      `select privilege_type from information_schema.role_table_grants
+        where grantee = 'karobakbak_app'
+          and table_name = 'persona_control'`,
+    );
+    const privileges = new Set(grants.map((row) => row.privilege_type));
+    expect(privileges).toEqual(new Set(['SELECT']));
+  });
+
+  it('lets the console flip a persona switch but never delete one', async () => {
+    // A deleted row is a switch that reverts to "enabled" with no record that
+    // it was ever turned off. Revoking is `enabled = true` with a name against
+    // it, which is a different and auditable thing.
+    const grants = await ctx.rows<{ privilege_type: string }>(
+      `select privilege_type from information_schema.role_table_grants
+        where grantee = 'karobakbak_console'
+          and table_name = 'persona_control'`,
+    );
+    const privileges = new Set(grants.map((row) => row.privilege_type));
+    expect(privileges.has('SELECT')).toBe(true);
+    expect(privileges.has('INSERT')).toBe(true);
+    expect(privileges.has('UPDATE')).toBe(true);
+    expect(privileges.has('DELETE')).toBe(false);
+  });
+
+  it('ships personas disabled, so a migration cannot start spending money', async () => {
+    // Turning personas on is a deliberate act with a name attached. If this row
+    // shipped enabled, the first deploy that ran the migration would begin
+    // paying a model provider with nothing in the audit trail to show who
+    // decided that.
+    const rows = await ctx.rows<{ enabled: boolean; updated_by: string }>(
+      `select enabled, updated_by from persona_control where scope = 'global'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.enabled).toBe(false);
+    expect(rows[0]?.updated_by).toBe('system');
+  });
+
+  it('refuses a persona switch row that names an unknown scope or mode', async () => {
+    await expect(
+      ctx.db.query(
+        `insert into persona_control (scope, subject, enabled, updated_by)
+         values ('nonsense', 'x', true, 'test')`,
+      ),
+    ).rejects.toThrow(/persona_control_scope_known/);
+
+    await expect(
+      ctx.db.query(
+        `insert into persona_control (scope, subject, enabled, mode, updated_by)
+         values ('character', 'x', true, 'maybe', 'test')`,
+      ),
+    ).rejects.toThrow(/persona_control_mode_known/);
+
+    // A global row with a subject would let two "global" switches exist, and
+    // whichever was read last would win.
+    await expect(
+      ctx.db.query(
+        `insert into persona_control (scope, subject, enabled, updated_by)
+         values ('global', 'oops', true, 'test')`,
+      ),
+    ).rejects.toThrow(/persona_control_global_has_no_subject/);
   });
 
   it('constrains the content type to what the application implements (§23.3)', async () => {

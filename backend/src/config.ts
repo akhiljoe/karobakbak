@@ -193,6 +193,54 @@ export interface Config {
    * at all". Sharing a TTL between them would tie a user-safety decision to a
    * moderation decision, and the right durations are not the same number.
    */
+  /**
+   * AI personas (`docs/AI-PERSONAS.md`).
+   *
+   * Off by default and off in the durable switch too: `persona_control` ships a
+   * disabled global row, so enabling personas takes both a deployment setting
+   * and a deliberate, audited act in the console. That is intentional for a
+   * feature that spends money per message.
+   */
+  readonly personas: {
+    readonly enabled: boolean;
+    /** How long one lone searcher waits before a persona is dispatched. */
+    readonly waitBeforeFillSeconds: number;
+    /**
+     * The most personas alive at once.
+     *
+     * Must stay below `limits.maxConnectionsPerIp`: every persona connects from the
+     * same address and they share one connection bucket. See `assertCoherent`.
+     */
+    readonly maxConcurrent: number;
+    readonly maxPerCharacter: number;
+    /** Minimum gap between dispatches, so a burst cannot outrun the join limiter. */
+    readonly minDispatchGapMs: number;
+    /** How often the supervisor decides whether to add or remove one. */
+    readonly tickIntervalMs: number;
+    /** Local hours during which personas may run. Equal values mean always. */
+    readonly activeStartHour: number;
+    readonly activeEndHour: number;
+    readonly utcOffsetMinutes: number;
+    /** How long the Redis mirror of the control table is trusted. */
+    readonly controlCacheTtlSeconds: number;
+
+    /**
+     * The monthly spend ceiling, in micro-cents (D-AI-7).
+     *
+     * Micro-cents because money is never a float here: one reply costs on the
+     * order of 80 of them, and accumulating that in a double before comparing
+     * against a ceiling is how a budget ends up wrong by a rounding error.
+     * The default is roughly 20 US dollars.
+     */
+    readonly monthlyLimitMicroCents: number;
+    /** Which vendor answers. A metric label and a control-plane subject. */
+    readonly provider: string;
+    /** Which model. Haiku is the tier the cost work settled on. */
+    readonly model: string;
+    /** Read from the environment; never logged, never in an error message. */
+    readonly apiKey: string;
+  };
+
   readonly enforcement: {
     /**
      * When false, ban keys are neither read nor written and the upgrade path
@@ -615,6 +663,29 @@ export function loadConfig(env: Env = process.env): Config {
       lateBlockSeconds: int(env, 'BLOCK_LATE_WINDOW_SECONDS', 120, 0, 3600),
     },
 
+    personas: {
+      enabled: bool(env, 'PERSONAS_ENABLED', false),
+      waitBeforeFillSeconds: int(env, 'PERSONA_WAIT_BEFORE_FILL_SECONDS', 25, 1, 3600),
+      maxConcurrent: int(env, 'PERSONA_MAX_CONCURRENT', 8, 1, 1000),
+      maxPerCharacter: int(env, 'PERSONA_MAX_PER_CHARACTER', 2, 1, 1000),
+      minDispatchGapMs: int(env, 'PERSONA_MIN_DISPATCH_GAP_MS', 6000, 0, 600_000),
+      tickIntervalMs: int(env, 'PERSONA_TICK_INTERVAL_MS', 3000, 500, 300_000),
+      activeStartHour: int(env, 'PERSONA_ACTIVE_START_HOUR', 0, 0, 23),
+      activeEndHour: int(env, 'PERSONA_ACTIVE_END_HOUR', 0, 0, 23),
+      utcOffsetMinutes: int(env, 'PERSONA_UTC_OFFSET_MINUTES', 330, -720, 840),
+      controlCacheTtlSeconds: int(env, 'PERSONA_CONTROL_CACHE_TTL_SECONDS', 20, 1, 3600),
+      monthlyLimitMicroCents: int(
+        env,
+        'PERSONA_MONTHLY_LIMIT_MICRO_CENTS',
+        200_000_000,
+        1,
+        1_000_000_000_000,
+      ),
+      provider: str(env, 'PERSONA_PROVIDER', 'anthropic'),
+      model: str(env, 'PERSONA_MODEL', 'claude-haiku-4-5'),
+      apiKey: str(env, 'PERSONA_API_KEY', ''),
+    },
+
     enforcement: {
       enabled: bool(env, 'ENFORCEMENT_ENABLED', true),
       defaultBanSeconds: int(env, 'ENFORCEMENT_DEFAULT_BAN_SECONDS', 2_592_000, 60, 31_536_000),
@@ -747,6 +818,28 @@ function assertCoherent(config: Config): void {
       'ALLOWED_ORIGINS must list at least one origin when NODE_ENV=production; ' +
         'an empty allowlist accepts WebSocket upgrades from any site',
     );
+  }
+
+  // Every persona connects from the same address, so the whole population
+  // shares one connection bucket. A concurrency cap at or above
+  // MAX_CONNECTIONS_PER_IP is a setting that looks applied and silently is not:
+  // the symptom is refused connections and a fill policy that sees only
+  // failures, which reads as "personas are broken" rather than "the cap is
+  // wrong". Same family as the heartbeat/TTL relationship below.
+  if (config.personas.enabled) {
+    if (config.personas.maxConcurrent >= config.limits.maxConnectionsPerIp) {
+      throw new ConfigError(
+        `PERSONA_MAX_CONCURRENT (${config.personas.maxConcurrent}) must be below ` +
+          `MAX_CONNECTIONS_PER_IP (${config.limits.maxConnectionsPerIp}): every persona connects ` +
+          'from the same address and they share one connection bucket',
+      );
+    }
+    if (config.personas.maxPerCharacter > config.personas.maxConcurrent) {
+      throw new ConfigError(
+        `PERSONA_MAX_PER_CHARACTER (${config.personas.maxPerCharacter}) exceeds ` +
+          `PERSONA_MAX_CONCURRENT (${config.personas.maxConcurrent}), so it can never bind`,
+      );
+    }
   }
 
   // The salt is the control that makes an IP hash non-reversible and

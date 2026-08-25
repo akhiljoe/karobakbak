@@ -55,6 +55,39 @@ export const MATCHMAKING_FAILURES = ['already_matched', 'session_gone', 'unknown
 export const FRAME_REJECTIONS = ['unreadable', 'invalid', 'oversized'] as const;
 /** Breaker states, as transition targets. */
 export const BREAKER_STATES = ['CLOSED', 'OPEN', 'HALF_OPEN'] as const;
+
+/**
+ * Why the supervisor did not dispatch a persona (A3).
+ *
+ * Every value is zero-initialised, for the reason `REJECT_REASONS` records:
+ * `'banned'` was written by the upgrade path and missing from that list, so the
+ * series never appeared and a dashboard showed "no data" for a refusal that was
+ * happening. The same mistake here would hide a fill policy that has quietly
+ * stopped filling.
+ */
+export const PERSONA_SKIP_REASONS = [
+  'disabled',
+  'nobody_waiting',
+  'humans_available',
+  'not_waited_long_enough',
+  'at_capacity',
+  'character_at_capacity',
+  'too_soon',
+  'queue_unreadable',
+] as const;
+
+/** The six limits in D-AI-5, by name. The safety numbers that matter most. */
+export const PERSONA_LIMITS = [
+  'sexual',
+  'minor',
+  'escalation',
+  'crisis',
+  'personal_info',
+  'identity',
+] as const;
+
+/** Token kinds, priced differently, so the bill stays explainable. */
+export const PERSONA_TOKEN_KINDS = ['input', 'output', 'cache_read', 'cache_write'] as const;
 export const PRIORITY_CLASSES: readonly RetentionPriority[] = ['p0', 'p1', 'p2', 'p3'];
 
 export type RejectReason = (typeof REJECT_REASONS)[number];
@@ -173,6 +206,46 @@ export interface Metrics {
    * interval.
    */
   readonly retentionBacklog: Gauge<'table'>;
+
+  /* ---------------------------------------------------------------------- */
+  /* AI personas (D-AI-8)                                                    */
+  /* ---------------------------------------------------------------------- */
+  /**
+   * None of these carries message content, and none ever can.
+   *
+   * Rule 1 names Prometheus labels *and values* explicitly, so the live persona
+   * feed that everybody asks for cannot be built here. What a persona said is
+   * read in the moderation console, audited. These answer how many, how fast,
+   * how much, and how often a limit tripped.
+   *
+   * `conversation_id` is deliberately absent from every label set below: it is
+   * unbounded cardinality and it is also half a content leak, since it joins a
+   * time series to a transcript.
+   */
+  readonly personaConversations: Counter<'persona_id' | 'outcome'>;
+  readonly personaReplies: Counter<'persona_id'>;
+  readonly personaSessionsActive: Gauge<string>;
+  readonly personaRepliesPerConversation: Histogram<string>;
+
+  /** Fill policy — is A3 doing what it claims. */
+  readonly personaFillDispatched: Counter<string>;
+  readonly personaFillSuppressed: Counter<'reason'>;
+  readonly personaWaitBeforeFill: Histogram<string>;
+  readonly personaWithdrawn: Counter<string>;
+
+  /** Spend. The numbers that answer "what will this cost me". */
+  readonly personaTokens: Counter<'provider' | 'model' | 'kind'>;
+  readonly personaCost: Counter<'provider' | 'model'>;
+  readonly personaBudgetRemaining: Gauge<string>;
+  readonly personaBudgetExhausted: Counter<string>;
+
+  /** Safety. Not optional, and the reason A5 is the phase that carries A4. */
+  readonly personaLimitTrips: Counter<'limit'>;
+  readonly personaSessionsFlagged: Counter<'reason'>;
+
+  /** Provider health, needed the moment there is more than one vendor. */
+  readonly personaProviderRequests: Counter<'provider' | 'model' | 'outcome'>;
+  readonly personaProviderLatency: Histogram<'provider'>;
 
   /* spool and breaker */
   readonly spoolRecords: Gauge<string>;
@@ -309,6 +382,76 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
       'Rows past their retention deadline that still exist',
       ['table'],
     ),
+    personaConversations: counter(
+      'chat_persona_conversations_total',
+      'Persona conversations, by character and how they ended',
+      ['persona_id', 'outcome'],
+    ),
+    personaReplies: counter('chat_persona_replies_total', 'Messages sent by personas', ['persona_id']),
+    personaSessionsActive: gauge('chat_persona_sessions_active', 'Personas currently connected'),
+    personaRepliesPerConversation: histogram(
+      'chat_persona_replies_per_conversation',
+      'Messages a persona sent in one conversation',
+      [1, 2, 4, 6, 8, 12, 16, 24],
+    ),
+
+    personaFillDispatched: counter('chat_persona_fill_dispatched_total', 'Personas dispatched to fill a gap'),
+    personaFillSuppressed: counter(
+      'chat_persona_fill_suppressed_total',
+      'Dispatches the fill policy declined, by reason',
+      ['reason'],
+    ),
+    personaWaitBeforeFill: histogram(
+      'chat_persona_wait_before_fill_seconds',
+      'How long the human had waited when a persona was dispatched',
+      [5, 10, 20, 30, 60, 120, 300],
+    ),
+    personaWithdrawn: counter(
+      'chat_persona_withdrawn_total',
+      'Searching personas pulled out because humans could pair instead',
+    ),
+
+    personaTokens: counter('chat_persona_tokens_total', 'Tokens by provider, model and kind', [
+      'provider',
+      'model',
+      'kind',
+    ]),
+    personaCost: counter('chat_persona_cost_micro_cents_total', 'Spend in micro-cents', [
+      'provider',
+      'model',
+    ]),
+    personaBudgetRemaining: gauge(
+      'chat_persona_budget_remaining_micro_cents',
+      'Micro-cents left in the current period ceiling',
+    ),
+    personaBudgetExhausted: counter(
+      'chat_persona_budget_exhausted_total',
+      'Times a call was refused because the ceiling was reached',
+    ),
+
+    personaLimitTrips: counter(
+      'chat_persona_limit_trips_total',
+      'D-AI-5 limits enforced, by limit',
+      ['limit'],
+    ),
+    personaSessionsFlagged: counter(
+      'chat_persona_sessions_flagged_total',
+      'Persona sessions flagged for human review, by reason',
+      ['reason'],
+    ),
+
+    personaProviderRequests: counter(
+      'chat_persona_provider_requests_total',
+      'Model calls by provider, model and outcome',
+      ['provider', 'model', 'outcome'],
+    ),
+    personaProviderLatency: histogram(
+      'chat_persona_provider_latency_seconds',
+      'Model call latency',
+      [0.25, 0.5, 1, 2, 4, 8, 16],
+      ['provider'],
+    ),
+
     spoolRecords: gauge('chat_spool_records', 'Records currently in the outage spool'),
     spoolBytes: gauge('chat_spool_bytes', 'Bytes currently in the outage spool'),
     spoolWrites: counter('chat_spool_writes_total', 'Records written to the outage spool'),
@@ -349,6 +492,13 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const reason of MATCHMAKING_FAILURES) metrics.matchmakingFailures.labels(reason).inc(0);
   for (const reason of FRAME_REJECTIONS) metrics.invalidFrames.labels(reason).inc(0);
   for (const state of BREAKER_STATES) metrics.breakerTransitions.labels(state).inc(0);
+
+  // Persona label sets. The fill reasons matter most: a policy that has quietly
+  // stopped filling looks identical to one that has nothing to fill, unless
+  // every reason is already on the graph at zero.
+  for (const reason of PERSONA_SKIP_REASONS) metrics.personaFillSuppressed.labels(reason).inc(0);
+  for (const limit of PERSONA_LIMITS) metrics.personaLimitTrips.labels(limit).inc(0);
+  for (const limit of PERSONA_LIMITS) metrics.personaSessionsFlagged.labels(limit).inc(0);
 
   return metrics;
 }

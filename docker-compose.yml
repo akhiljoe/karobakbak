@@ -197,6 +197,106 @@ services:
   # Migrations run once, as their own step, with credentials that are not the
   # application's (§8.1). The application role has no CREATE, so it could not
   # run these even if something asked it to.
+  # --------------------------------------------------------------------------
+  # AI personas (docs/AI-PERSONAS.md)
+  # --------------------------------------------------------------------------
+  # Its own process, for the same reason the console is: it holds a model
+  # provider's API key and talks to the internet, and the chat backend holds
+  # neither and needs neither. Running them together would put that credential
+  # in the address space of the process facing every user's socket.
+  #
+  # Off by default, and off twice. `PERSONAS_ENABLED` decides whether this
+  # process starts at all; `persona_control` in PostgreSQL decides whether
+  # anything may join, and it ships disabled. Enabling personas therefore takes
+  # a deployment change AND a deliberate, audited act — which is the right
+  # weight for a feature that spends money per message.
+  #
+  # Start it explicitly:  docker compose --profile personas up -d
+  personas:
+    profiles: ["personas"]
+    build:
+      context: ./backend
+    command: ["node", "dist/personas/main.js"]
+    environment:
+      # `development` for the same reason the backend uses it: outside
+      # production the message-content denylist THROWS rather than redacting,
+      # and this process handles message text on its way to a model provider.
+      # That is exactly where a leak would be most expensive to discover late.
+      NODE_ENV: development
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      PERSONAS_ENABLED: "true"
+
+      # Personas connect as ordinary WebSocket clients (D-AI-6), so they go
+      # through the same door everybody else does — by service name rather than
+      # localhost, because they are in a different container.
+      PERSONA_WS_URL: "ws://backend:8080/ws"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
+
+      # Empty means no model: personas run on the scripted voice, hold real
+      # conversations, exercise the fill policy, the control plane and the
+      # console, and spend nothing. That is a supported mode and the right way
+      # to see the system work before deciding to pay for it.
+      PERSONA_API_KEY: "${PERSONA_API_KEY:-}"
+      PERSONA_MODEL: "${PERSONA_MODEL:-claude-haiku-4-5}"
+
+      # Roughly 20 US dollars. Checked before every model call and failing
+      # closed, so this is a ceiling rather than an alert (D-AI-7).
+      PERSONA_MONTHLY_LIMIT_MICRO_CENTS: "${PERSONA_MONTHLY_LIMIT_MICRO_CENTS:-200000000}"
+
+      # Short locally so a persona turns up while you are still looking at the
+      # screen. The default is 25 seconds, which is the right wait for real
+      # traffic and far too long for a demo.
+      PERSONA_WAIT_BEFORE_FILL_SECONDS: "${PERSONA_WAIT_BEFORE_FILL_SECONDS:-8}"
+      PERSONA_TICK_INTERVAL_MS: "${PERSONA_TICK_INTERVAL_MS:-2000}"
+      PERSONA_MIN_DISPATCH_GAP_MS: "${PERSONA_MIN_DISPATCH_GAP_MS:-6000}"
+
+      # Must stay below MAX_CONNECTIONS_PER_IP: every persona connects from the
+      # same address and they share one connection bucket. `assertCoherent`
+      # refuses to start if this is violated rather than letting it fail
+      # silently as refused connections.
+      PERSONA_MAX_CONCURRENT: "${PERSONA_MAX_CONCURRENT:-4}"
+      PERSONA_MAX_PER_CHARACTER: "${PERSONA_MAX_PER_CHARACTER:-1}"
+
+      # 0/0 means always active. Production sets a window so personas run when
+      # people actually arrive rather than filling an empty 4am.
+      PERSONA_ACTIVE_START_HOUR: "${PERSONA_ACTIVE_START_HOUR:-0}"
+      PERSONA_ACTIVE_END_HOUR: "${PERSONA_ACTIVE_END_HOUR:-0}"
+
+      IP_HASH_SALT: "${IP_HASH_SALT:-local-development-salt-change-me}"
+      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgres://karobakbak:karobakbak@postgres:5432/karobakbak"
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      # Scraped by Prometheus. Without an endpoint every chat_persona_* series
+      # is recorded into a registry nothing can reach, which is the same failure
+      # as declaring a metric and never writing it.
+      PERSONA_METRICS_PORT: "8090"
+    # Overrides the image's healthcheck, which probes :8080 because that is
+    # where the chat server listens. This process is not the chat server and has
+    # no socket to serve; without the override the container reports unhealthy
+    # while working perfectly, which is the kind of false signal that teaches
+    # people to ignore health status.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    ulimits:
+      core: 0
+
   migrate:
     build:
       context: ./backend

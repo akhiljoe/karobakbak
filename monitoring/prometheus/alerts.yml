@@ -207,3 +207,127 @@ groups:
         annotations:
           summary: "Event-loop lag is high"
           description: "Every socket on this instance is feeling it."
+
+      # ----------------------------------------------------------------------
+      # AI personas (D-AI-8)
+      # ----------------------------------------------------------------------
+      # None of these reads message content, and none can: every series they
+      # touch carries counts and enum labels only. What a persona said is read
+      # in the console, audited (D-AI-12).
+
+      - alert: PersonaCrisisHandled
+        expr: increase(chat_persona_limit_trips_total{limit="crisis"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "A persona broke character for a self-harm signal"
+          description: >-
+            Somebody told an automated account they were in crisis. The persona
+            dropped character and gave helpline numbers, which is what it is
+            built to do — this fires because a person should know it happened,
+            not because anything is broken. The session is flagged for review.
+
+      - alert: PersonaMinorSignal
+        expr: increase(chat_persona_limit_trips_total{limit="minor"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A persona conversation showed a minor signal"
+          description: >-
+            The romantic register was locked irreversibly for that session and
+            the session was flagged. Sustained volume here is a review trigger
+            for the age-assurance decision in minor-safety-policy.md §3, which
+            is the whole reason this counter exists.
+
+      - alert: PersonaBudgetNearCeiling
+        expr: >-
+          chat_persona_budget_remaining_micro_cents > 0
+          and chat_persona_budget_remaining_micro_cents
+              < 0.2 * (chat_persona_budget_remaining_micro_cents
+                       + sum without(provider, model) (chat_persona_cost_micro_cents_total))
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Persona spend is within 20% of the monthly ceiling"
+          description: >-
+            Personas stop joining at the ceiling and live conversations finish.
+            Nothing breaks; the product carries on with humans only. This is
+            notice, so the ceiling is a decision rather than a surprise.
+
+      - alert: PersonaBudgetExhausted
+        expr: increase(chat_persona_budget_exhausted_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The persona spend ceiling has been reached"
+          description: >-
+            Model calls are refused and personas fall back to the scripted
+            voice. Raise PERSONA_MONTHLY_LIMIT_MICRO_CENTS deliberately or leave
+            it, but do not discover this on an invoice.
+
+      - alert: PersonaEnabledWhileExhausted
+        expr: >-
+          chat_persona_sessions_active > 0
+          and chat_persona_budget_remaining_micro_cents == 0
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: "Personas are running with no budget left"
+          description: >-
+            This should be impossible: the budget check runs before every model
+            call and fails closed. Personas still holding conversations long
+            after the ceiling means either the fallback voice is carrying them,
+            which is fine, or the check is not binding, which is not. Worth
+            looking at rather than assuming.
+
+      - alert: PersonaProviderFailing
+        expr: >-
+          sum without(model) (rate(chat_persona_provider_requests_total{outcome="error"}[10m]))
+          > 0.2 * sum without(model, outcome) (rate(chat_persona_provider_requests_total[10m]))
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "More than a fifth of model calls are failing"
+          description: >-
+            Personas fall back to the scripted voice rather than going silent,
+            so users see a duller conversation and not a broken one. Check the
+            vendor before assuming it is us; the per-provider control lever
+            exists for exactly this.
+
+      - alert: PersonaFillPolicyStalled
+        expr: >-
+          increase(chat_persona_fill_dispatched_total[6h]) == 0
+          and increase(chat_persona_fill_suppressed_total{reason="queue_unreadable"}[6h]) > 0
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Personas have dispatched nothing and cannot read the queue"
+          description: >-
+            The fill policy refuses to dispatch when it cannot see how many
+            humans are waiting, which is correct — dispatching into an unknown
+            queue is what it exists to prevent. But a policy that has been blind
+            for six hours is not filling anything, and nothing else reports it.
+
+      - alert: PersonaNeverCachingPrefix
+        expr: >-
+          increase(chat_persona_tokens_total{kind="cache_read"}[1h]) == 0
+          and increase(chat_persona_tokens_total{kind="input"}[1h]) > 100000
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Persona prompts are not hitting the prefix cache"
+          description: >-
+            Cache reads are a tenth of the input price, and the stable/volatile
+            prompt split exists to earn them. Zero reads against real input
+            volume means the split has broken — most likely something volatile
+            moved before the cache breakpoint, or the stable prefix fell below
+            the minimum cacheable size. There is no error for this; the bill is
+            simply several times larger.
