@@ -27,6 +27,8 @@ import {
   normaliseJustification,
   ReviewService,
 } from './review';
+import type { PersonaConsoleService } from './personas';
+import type { PersonaControl, ControlMode, ControlScope } from '../personas/control';
 import type { AdminRoute } from './server';
 import type { Config } from '../config';
 
@@ -35,8 +37,11 @@ export function createConsoleRoutes(deps: {
   logger: Logger;
   review: ReviewService;
   enforcement: EnforcementService;
+  /** Absent when the persona feature is not deployed; the routes then 404. */
+  personas?: PersonaConsoleService;
+  personaControl?: PersonaControl;
 }): readonly AdminRoute[] {
-  const { config, logger, review, enforcement } = deps;
+  const { config, logger, review, enforcement, personas, personaControl } = deps;
 
   /**
    * Turn the two validation errors into 400s.
@@ -63,6 +68,27 @@ export function createConsoleRoutes(deps: {
     const value = body.reportId;
     if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
       throw new JustificationRequiredError('request is missing a report');
+    }
+    return value;
+  };
+
+  const conversationId = (body: Record<string, unknown>): string => {
+    const value = body.conversationId;
+    if (typeof value !== 'string' || value.length === 0 || value.length > 128) {
+      throw new JustificationRequiredError('request is missing a conversation');
+    }
+    return value;
+  };
+
+  /** A closed set, so a body cannot invent a scope the table would reject. */
+  const controlScope = (value: unknown): ControlScope => {
+    if (value === 'global' || value === 'character' || value === 'provider') return value;
+    throw new JustificationRequiredError('scope must be global, character or provider');
+  };
+
+  const controlSubject = (value: unknown): string => {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 64) {
+      throw new JustificationRequiredError('a character or provider name is required');
     }
     return value;
   };
@@ -117,6 +143,92 @@ export function createConsoleRoutes(deps: {
             return { status: 409, body: { error: 'already_resolved' } };
           }
           return { status: 200, body: { status: 'resolved', outcome } };
+        }),
+    },
+
+    /* ---------------------------------------------------------------- */
+    /* AI personas (D-AI-12)                                             */
+    /* ---------------------------------------------------------------- */
+
+    {
+      // The list carries no user content — persona ids, our own generated
+      // surfaces, counts and costs — so it needs no justification and writes no
+      // audit row. Auditing a page rendered on every visit would bury the reads
+      // that matter in noise.
+      method: 'GET',
+      path: '/api/personas',
+      handle: async () =>
+        guard(async () => {
+          if (personas === undefined) return { status: 404, body: { error: 'not_deployed' } };
+          const [conversations, overview, switches] = await Promise.all([
+            personas.list(50, false),
+            personas.overview(),
+            personaControl === undefined ? Promise.resolve([]) : personaControl.list(),
+          ]);
+          return { status: 200, body: { conversations, overview, switches } };
+        }),
+    },
+
+    {
+      // POST, and not because it changes anything: it writes an audit row, and
+      // a GET that leaves a permanent record behind is one a browser, a proxy
+      // or a prefetcher will happily repeat on its own.
+      //
+      // Unlike a reported conversation, no report is required to open this
+      // (D-AI-12). That makes the audit row the only remaining control on
+      // reading a stranger's messages, which is why the justification is still
+      // mandatory here.
+      method: 'POST',
+      path: '/api/personas/open',
+      handle: async ({ body, identity }) =>
+        guard(async () => {
+          if (personas === undefined) return { status: 404, body: { error: 'not_deployed' } };
+          const justification = normaliseJustification(body.justification);
+          const detail = await personas.open(conversationId(body), justification, identity);
+          if (detail === null) return { status: 404, body: { error: 'not_found' } };
+          return { status: 200, body: detail };
+        }),
+    },
+
+    {
+      // The kill switch. A body may name a scope and a subject, which looks
+      // like the identity-hash rule being broken — it is not: a persona id and
+      // a provider name are source constants and public labels, not identities,
+      // and nothing a chat user does can reach this table. The rule protects
+      // against a console naming a *person*; it does not forbid naming a
+      // character the operator wrote.
+      method: 'POST',
+      path: '/api/personas/control',
+      handle: async ({ body, identity }) =>
+        guard(async () => {
+          if (personaControl === undefined) return { status: 404, body: { error: 'not_deployed' } };
+          const justification = normaliseJustification(body.justification);
+
+          const scope = controlScope(body.scope);
+          const subject = scope === 'global' ? '' : controlSubject(body.subject);
+          const enabled = body.enabled === true;
+          // Drain unless a hard stop was asked for explicitly. Ending live
+          // conversations mid-sentence is the exception, never the default.
+          const mode: ControlMode = body.mode === 'hard' ? 'hard' : 'drain';
+
+          await personaControl.set({
+            scope,
+            subject,
+            enabled,
+            mode,
+            updatedBy: identity.username,
+            reason: justification,
+          });
+
+          logger.info('persona control changed', {
+            actor: identity.accountId,
+            scope,
+            subject,
+            enabled,
+            mode,
+          });
+
+          return { status: 200, body: { scope, subject, enabled, mode } };
         }),
     },
 

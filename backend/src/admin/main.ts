@@ -28,8 +28,10 @@ import { createRedisClients } from '../redis/client';
 import { ScriptRunner } from '../redis/scripts';
 import { RedisStore } from '../redis/store';
 import { assertTlsWhereRequired, createDatabase } from '../storage/pool';
+import { PersonaControl } from '../personas/control';
 import { AdminAuth } from './auth';
 import { EnforcementService } from './enforce';
+import { PersonaConsoleService } from './personas';
 import { ReviewService } from './review';
 import { createConsoleRoutes } from './routes';
 import { createAdminServer } from './server';
@@ -70,7 +72,39 @@ async function main(): Promise<void> {
   const auth = new AdminAuth(database, config, logger);
   const review = new ReviewService(database, config, logger);
   const enforcement = new EnforcementService(database, store, config, logger);
-  const routes = createConsoleRoutes({ config, logger, review, enforcement });
+
+  /**
+   * The persona view is always mounted, even where personas are not deployed.
+   *
+   * The tables exist from the migration regardless, so the list is simply empty
+   * — and an empty view is a better answer than a missing route, which looks
+   * like a broken console rather than a feature nobody turned on. The switch it
+   * writes is the same durable one the persona service reads, so an operator
+   * can disable personas from here even while that service is down, which is
+   * exactly when they would want to.
+   */
+  const personas = new PersonaConsoleService(database, config);
+  const personaControl = new PersonaControl({
+    db: database,
+    redis: clients.command,
+    logger,
+    cacheKey: `${config.redis.keyPrefix}:persona:control`,
+    cacheTtlSeconds: config.personas.controlCacheTtlSeconds,
+    hours: {
+      startHour: config.personas.activeStartHour,
+      endHour: config.personas.activeEndHour,
+      utcOffsetMinutes: config.personas.utcOffsetMinutes,
+    },
+  });
+
+  const routes = createConsoleRoutes({
+    config,
+    logger,
+    review,
+    enforcement,
+    personas,
+    personaControl,
+  });
 
   const server = createAdminServer({ config, logger, auth, routes });
   await server.listen();

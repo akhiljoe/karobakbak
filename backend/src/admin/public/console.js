@@ -37,6 +37,13 @@
     selected: null,
     detail: null,
     busy: false,
+    // Personas. `view` is which tab is showing; the rest mirrors the reports
+    // side deliberately, so the two halves read the same way.
+    view: 'reports',
+    personas: [],
+    overview: null,
+    switches: [],
+    personaSelected: null,
   };
 
   /* --- transport --------------------------------------------------------- */
@@ -471,13 +478,256 @@
       });
   });
 
+  /* --- personas ---------------------------------------------------------- */
+
+  /**
+   * Micro-cents to something a person can read.
+   *
+   * The server holds money as integer micro-cents so a budget check cannot be
+   * wrong by a rounding error. That is the right representation and a terrible
+   * thing to show somebody, so it is converted exactly here and nowhere else.
+   */
+  function money(microCents) {
+    if (typeof microCents !== 'number') return '--';
+    return '$' + (microCents / 100000000).toFixed(4);
+  }
+
+  function describeSurface(surface) {
+    if (!surface) return 'no profile declared';
+    var parts = [];
+    if (surface.name) parts.push(surface.name);
+    if (surface.age) parts.push(String(surface.age));
+    if (surface.gender) parts.push(surface.gender);
+    if (surface.country) parts.push(surface.country);
+    return parts.length ? parts.join(', ') : 'no profile declared';
+  }
+
+  function meta(list, pairs) {
+    clear(list);
+    for (var i = 0; i < pairs.length; i += 1) {
+      list.appendChild(el('dt', null, pairs[i][0]));
+      list.appendChild(el('dd', null, pairs[i][1]));
+    }
+  }
+
+  function renderSpend() {
+    var o = state.overview;
+    if (!o) return;
+
+    var globalSwitch = null;
+    for (var i = 0; i < state.switches.length; i += 1) {
+      if (state.switches[i].scope === 'global') globalSwitch = state.switches[i];
+    }
+    // Absent means enabled: the fail-closed behaviour lives in the service, and
+    // "read successfully, found no row" is a different condition from "could
+    // not read".
+    var enabled = globalSwitch === null ? true : globalSwitch.enabled;
+
+    meta($('spend-meta'), [
+      ['Personas', enabled ? 'enabled' : 'disabled (' + globalSwitch.mode + ')'],
+      ['Spent this month', money(o.spentMicroCents)],
+      ['Ceiling', money(o.limitMicroCents)],
+      ['Conversations today', String(o.conversationsToday)],
+      ['Flagged for review', String(o.flaggedOpen)],
+    ]);
+  }
+
+  function renderPersonaList() {
+    var list = $('personas-list');
+    clear(list);
+    show($('personas-empty'), state.personas.length === 0);
+
+    for (var i = 0; i < state.personas.length; i += 1) {
+      var row = state.personas[i];
+      var item = document.createElement('li');
+      item.className = 'queue-item' + (row.flagged ? ' is-urgent' : '');
+
+      var button = el('button', 'queue-button');
+      button.type = 'button';
+      button.appendChild(el('span', 'queue-category', row.personaId));
+      button.appendChild(el('span', 'queue-age', age(row.startedAt)));
+      button.appendChild(el('span', 'queue-meta', describeSurface(row.surface)));
+
+      var facts = row.replies + ' replies';
+      if (row.costMicroCents > 0) facts += ' | ' + money(row.costMicroCents);
+      if (row.limitsTripped && row.limitsTripped.length) {
+        facts += ' | limits: ' + row.limitsTripped.join(', ');
+      }
+      button.appendChild(el('span', 'queue-meta', facts));
+
+      button.addEventListener('click', selectPersona.bind(null, row));
+      item.appendChild(button);
+      list.appendChild(item);
+    }
+  }
+
+  function selectPersona(row) {
+    state.personaSelected = row;
+    show($('persona-placeholder'), false);
+    show($('persona-review'), false);
+    show($('persona-gate'), true);
+    setError($('persona-open-error'), '');
+    $('persona-reason').value = '';
+
+    $('persona-open-title').textContent = row.personaId;
+    meta($('persona-open-meta'), [
+      ['Presented as', describeSurface(row.surface)],
+      ['Started', age(row.startedAt)],
+      ['Replies', String(row.replies)],
+      ['Limits tripped', row.limitsTripped.length ? row.limitsTripped.join(', ') : 'none'],
+    ]);
+  }
+
+  function renderPersonaTranscript(detail) {
+    $('persona-review-title').textContent = detail.personaId;
+    meta($('persona-review-meta'), [
+      ['Presented as', describeSurface(detail.surface)],
+      ['Replies', String(detail.replies)],
+      ['Cost', money(detail.costMicroCents)],
+      ['Limits tripped', detail.limitsTripped.length ? detail.limitsTripped.join(', ') : 'none'],
+    ]);
+
+    show($('persona-expired'), detail.conversationPresent === false);
+
+    var list = $('persona-transcript');
+    clear(list);
+    for (var i = 0; i < detail.messages.length; i += 1) {
+      var message = detail.messages[i];
+      var line = document.createElement('li');
+      // Reuses the reports transcript's own classes rather than inventing a
+      // parallel set: `reporter` is the right-hand side, which is ours here.
+      // Which side is which is the whole point of this view — a transcript with
+      // the speakers swapped would attribute the stranger's words to us.
+      line.className = 'line ' + (message.fromPersona ? 'reporter' : 'reported');
+
+      var head = el('div', 'line-head');
+      head.appendChild(el('span', null, message.fromPersona ? 'persona' : 'stranger'));
+      head.appendChild(el('span', null, clock(message.at)));
+      line.appendChild(head);
+
+      // textContent, via `el`. See the header of this file.
+      line.appendChild(el('div', 'line-body', message.body));
+
+      if (message.moderationAction && message.moderationAction !== 'allow') {
+        var flags = el('div', 'line-flags');
+        flags.appendChild(el('span', 'flag', message.moderationAction));
+        line.appendChild(flags);
+      }
+      list.appendChild(line);
+    }
+
+    show($('persona-gate'), false);
+    show($('persona-review'), true);
+  }
+
+  function loadPersonas() {
+    return api('GET', '/api/personas')
+      .then(function (payload) {
+        state.personas = payload.conversations || [];
+        state.overview = payload.overview || null;
+        state.switches = payload.switches || [];
+        renderSpend();
+        renderPersonaList();
+      })
+      .catch(function (err) {
+        setError($('control-error'), err.message);
+      });
+  }
+
+  $('personas-refresh').addEventListener('click', function () {
+    void loadPersonas();
+  });
+
+  $('persona-gate').addEventListener('submit', function (event) {
+    event.preventDefault();
+    if (state.busy || state.personaSelected === null) return;
+
+    state.busy = true;
+    setError($('persona-open-error'), '');
+
+    api('POST', '/api/personas/open', {
+      conversationId: state.personaSelected.conversationId,
+      justification: $('persona-reason').value,
+    })
+      .then(renderPersonaTranscript)
+      .catch(function (err) {
+        setError($('persona-open-error'), err.message);
+      })
+      .then(function () {
+        state.busy = false;
+      });
+  });
+
+  function changeControl(enabled, mode) {
+    if (state.busy) return;
+    state.busy = true;
+    setError($('control-error'), '');
+    show($('control-ok'), false);
+
+    api('POST', '/api/personas/control', {
+      scope: 'global',
+      enabled: enabled,
+      mode: mode,
+      justification: $('control-reason').value,
+    })
+      .then(function () {
+        $('control-ok').textContent = enabled
+          ? 'Personas enabled.'
+          : mode === 'hard'
+            ? 'Personas stopped. Live conversations were ended.'
+            : 'Personas draining. No new conversations; existing ones finish.';
+        show($('control-ok'), true);
+        $('control-reason').value = '';
+        return loadPersonas();
+      })
+      .catch(function (err) {
+        setError($('control-error'), err.message);
+      })
+      .then(function () {
+        state.busy = false;
+      });
+  }
+
+  $('control-enable').addEventListener('click', function () {
+    changeControl(true, 'drain');
+  });
+  $('control-drain').addEventListener('click', function () {
+    changeControl(false, 'drain');
+  });
+  $('control-hard').addEventListener('click', function () {
+    changeControl(false, 'hard');
+  });
+
+  /* --- view switching ---------------------------------------------------- */
+
+  function setView(view) {
+    state.view = view;
+    var onReports = view === 'reports';
+
+    show($('console'), onReports);
+    show($('personas-view'), !onReports);
+    $('tab-reports').className = 'view-tab' + (onReports ? ' is-current' : '');
+    $('tab-personas').className = 'view-tab' + (onReports ? '' : ' is-current');
+
+    if (!onReports && state.overview === null) void loadPersonas();
+  }
+
+  $('tab-reports').addEventListener('click', function () {
+    setView('reports');
+  });
+  $('tab-personas').addEventListener('click', function () {
+    setView('personas');
+  });
+
   /* --- boot -------------------------------------------------------------- */
 
   function render() {
     var signedIn = state.identity !== null;
     show($('gate'), !signedIn);
-    show($('console'), signedIn);
     show($('who'), signedIn);
+    show($('views'), signedIn);
+    show($('console'), signedIn && state.view === 'reports');
+    show($('personas-view'), signedIn && state.view === 'personas');
     if (signedIn) {
       $('who-name').textContent = state.identity.username;
       $('who-role').textContent = state.identity.role.replace(/_/g, ' ');

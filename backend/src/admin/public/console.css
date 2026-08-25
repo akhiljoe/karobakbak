@@ -535,3 +535,95 @@ button:disabled {
     border-bottom: 1px solid var(--ink-800);
   }
 }
+
+/* --------------------------------------------------------------------------
+ * Personas
+ * --------------------------------------------------------------------------
+ * Reuses the queue and transcript classes rather than adding a parallel set:
+ * the two views do the same job on different subjects, and looking different
+ * would imply they carry different guarantees. They do not — both disclose a
+ * stranger's words and both are audited.
+ */
+
+.views {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.view-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-400);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.view-tab:hover {
+  color: var(--ink-200);
+  border-color: var(--ink-700);
+}
+
+.view-tab.is-current {
+  color: var(--ink-100);
+  border-color: var(--accent, var(--ink-600));
+  background: var(--ink-900);
+}
+
+/* The spend figure and the switch share a column deliberately: the decision to
+ * turn personas off is usually made because of a number. */
+.spend {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+  background: var(--ink-900);
+}
+
+.spend .meta {
+  margin: 0;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--ink-800);
+  border-radius: var(--radius);
+}
+
+.control input[type='text'] {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--ink-700);
+  border-radius: var(--radius);
+  background: var(--ink-950, #0b0d10);
+  color: var(--ink-100);
+  font: inherit;
+  font-size: 13px;
+}
+
+.control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.control-buttons button {
+  flex: 1 1 auto;
+  font-size: 12px;
+}
+
+/* A flagged conversation is one where a minor signal or a crisis fired. It is
+ * the only thing in this list that needs a person, so it is the only thing
+ * given colour. */
+.queue-item.is-urgent .queue-button {
+  border-left: 2px solid rgba(226, 100, 60, 0.6);
+}
+

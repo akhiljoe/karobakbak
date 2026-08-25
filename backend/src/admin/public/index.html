@@ -26,6 +26,10 @@
         <span class="brand-mark">karobakbak</span>
         <span class="brand-sub">moderation</span>
       </div>
+      <nav class="views" id="views" hidden>
+        <button type="button" class="view-tab is-current" id="tab-reports">Reports</button>
+        <button type="button" class="view-tab" id="tab-personas">Personas</button>
+      </nav>
       <div class="who" id="who" hidden>
         <span id="who-name"></span>
         <span class="who-role" id="who-role"></span>
@@ -159,6 +163,103 @@
               <p class="error" id="verdict-error" role="alert" hidden></p>
               <p class="ok" id="verdict-ok" role="status" hidden></p>
             </form>
+          </div>
+        </section>
+      </section>
+
+      <!--
+        Personas.
+
+        The list carries no message text: persona ids, the surfaces this service
+        generated, counts and costs. Opening a conversation is what discloses
+        what a stranger typed, and unlike a report there is no report gating it
+        (D-AI-12) — which is exactly why the reason box is still mandatory.
+      -->
+      <section class="console" id="personas-view" hidden>
+        <aside class="queue">
+          <div class="queue-head">
+            <h2>Persona conversations</h2>
+            <button type="button" class="link" id="personas-refresh">Refresh</button>
+          </div>
+
+          <div class="spend" id="spend-block">
+            <dl class="meta" id="spend-meta"></dl>
+          </div>
+
+          <!--
+            The switch sits beside the spend figure on purpose. The decision to
+            turn personas off is usually made *because* of a number, and putting
+            the number and the switch on different screens is how the switch
+            gets found late.
+          -->
+          <form class="control" id="control-form">
+            <label for="control-reason">Reason</label>
+            <input
+              id="control-reason"
+              type="text"
+              maxlength="500"
+              placeholder="e.g. spend is climbing faster than expected"
+            />
+            <div class="control-buttons">
+              <button type="button" class="neutral" id="control-enable">Enable personas</button>
+              <button type="button" class="danger" id="control-drain">
+                Disable (let conversations finish)
+              </button>
+              <button type="button" class="danger" id="control-hard">Disable now (hard stop)</button>
+            </div>
+            <p class="muted small">
+              Disabling drains by default: no new personas join and conversations already running
+              finish. A hard stop ends them mid-sentence, which looks like a fault to the person
+              on the other end.
+            </p>
+            <p class="error" id="control-error" role="alert" hidden></p>
+            <p class="ok" id="control-ok" role="status" hidden></p>
+          </form>
+
+          <p class="muted small" id="personas-empty" hidden>
+            No persona conversations yet.
+          </p>
+          <ol class="queue-list" id="personas-list"></ol>
+        </aside>
+
+        <section class="case" id="persona-case">
+          <div class="placeholder" id="persona-placeholder">
+            <p>Select a conversation to read it.</p>
+            <p class="muted small">
+              One side of these is ours and the other side is a stranger's. Reviewing our own
+              writing means reading theirs alongside it, so every open is written to the audit
+              log before a single message is fetched.
+            </p>
+          </div>
+
+          <form class="open-gate" id="persona-gate" hidden>
+            <h2 id="persona-open-title">Conversation</h2>
+            <dl class="meta" id="persona-open-meta"></dl>
+            <label for="persona-reason">Why are you opening this conversation?</label>
+            <textarea
+              id="persona-reason"
+              rows="2"
+              maxlength="500"
+              placeholder="e.g. checking tone after a flagged session"
+              required
+            ></textarea>
+            <p class="muted small">
+              Recorded in the audit log with your name and the time. Minimum eight characters.
+            </p>
+            <button type="submit" class="primary" id="persona-open-button">Open conversation</button>
+            <p class="error" id="persona-open-error" role="alert" hidden></p>
+          </form>
+
+          <div class="review" id="persona-review" hidden>
+            <div class="review-head">
+              <h2 id="persona-review-title">Conversation</h2>
+              <dl class="meta" id="persona-review-meta"></dl>
+            </div>
+            <p class="muted small" id="persona-expired" hidden>
+              The transcript has already been deleted on schedule. The record of the conversation
+              having happened remains until it expires too.
+            </p>
+            <ol class="transcript" id="persona-transcript"></ol>
           </div>
         </section>
       </section>
