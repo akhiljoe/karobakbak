@@ -412,6 +412,85 @@ describe('configWarnings', () => {
   });
 });
 
+describe('persona provider, model and price (D-AI-10)', () => {
+  // The three settings are one decision, and every way of getting them out of
+  // step fails quietly at runtime rather than loudly at boot. All of these are
+  // only policed once a key is set: the keyless scripted mode reaches no
+  // provider at all and is a supported way to run.
+  const withKey = (overrides: Env = {}): Env =>
+    baseEnv({
+      PERSONAS_ENABLED: 'true',
+      PERSONA_API_KEY: 'sk-test',
+      ...overrides,
+    });
+
+  it('accepts the Anthropic default pairing', () => {
+    const config = loadConfig(withKey());
+    expect(config.personas.provider).toBe('anthropic');
+    expect(config.personas.model).toBe('claude-haiku-4-5');
+  });
+
+  it('accepts an OpenAI pairing', () => {
+    const config = loadConfig(
+      withKey({ PERSONA_PROVIDER: 'openai', PERSONA_MODEL: 'gpt-5-mini' }),
+    );
+    expect(config.personas.provider).toBe('openai');
+    expect(config.personas.model).toBe('gpt-5-mini');
+  });
+
+  it('refuses a provider with no adapter', () => {
+    expect(() => loadConfig(withKey({ PERSONA_PROVIDER: 'mistral' }))).toThrow(ConfigError);
+  });
+
+  it('refuses one vendor model against the other vendor key', () => {
+    // This is the quiet one. An Anthropic model id with an OpenAI key
+    // authenticates fine and then fails every single call, and the scripted
+    // fallback turns that into weeks of unhelpful conversations with nothing
+    // in the logs saying why.
+    expect(() =>
+      loadConfig(withKey({ PERSONA_PROVIDER: 'openai', PERSONA_MODEL: 'claude-haiku-4-5' })),
+    ).toThrow(/is not served by/);
+
+    expect(() =>
+      loadConfig(withKey({ PERSONA_PROVIDER: 'anthropic', PERSONA_MODEL: 'gpt-5-mini' })),
+    ).toThrow(/is not served by/);
+  });
+
+  it('refuses a model with no published price, because the ceiling could not bind', () => {
+    // `safeCost` downgrades an unpriced model to a log line and a zero rather
+    // than failing a conversation somebody is having, so an unpriced model
+    // spends against a budget that never binds. Boot is the only place this
+    // can be caught loudly.
+    expect(() => loadConfig(withKey({ PERSONA_MODEL: 'gpt-9-imaginary' }))).toThrow(
+      /MODEL_PRICES/,
+    );
+  });
+
+  it('polices none of it without a key, because nothing reaches a provider', () => {
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          PERSONAS_ENABLED: 'true',
+          PERSONA_PROVIDER: 'nonsense',
+          PERSONA_MODEL: 'also-nonsense',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('polices none of it while personas are off', () => {
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          PERSONAS_ENABLED: 'false',
+          PERSONA_API_KEY: 'sk-test',
+          PERSONA_PROVIDER: 'nonsense',
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
 describe('persona fill policy coherence (A3)', () => {
   it('refuses a concurrency cap at or above the per-IP connection limit', () => {
     // Every persona connects from the same address, so they share one

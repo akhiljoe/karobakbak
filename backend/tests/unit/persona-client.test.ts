@@ -12,7 +12,8 @@
  * cheap to get wrong.
  */
 
-import { PersonaClient, defaultReplyDelay } from '../../src/personas/client';
+import { PersonaClient } from '../../src/personas/client';
+import { humanCadence, splitIntoBubbles } from '../../src/personas/cadence';
 import type {
   PersonaClientEvent,
   PersonaVoice,
@@ -67,24 +68,33 @@ class Clock {
   };
 
   /**
-   * Fire everything currently pending.
+   * Fire everything pending, and everything that firing schedules, until the
+   * queue stays empty.
    *
-   * Drains the microtask queue first. `speak()` awaits the voice before it
-   * schedules the send, so a naive implementation runs while the client is
-   * still suspended on that await, finds nothing queued, and the timer that
-   * registers a moment later never fires. `setImmediate` runs after all pending
-   * microtasks, which is precisely the point the timer exists by.
+   * Drains the microtask queue first. `speak()` awaits before it schedules, so
+   * a naive implementation runs while the client is still suspended on that
+   * await, finds nothing queued, and the timer that registers a moment later
+   * never fires. `setImmediate` runs after all pending microtasks, which is
+   * precisely the point the timer exists by.
+   *
+   * The loop is what a turn now needs: delivering one reply is a reading pause,
+   * then a typing pause and a send per bubble, with a gap between them. Firing
+   * one round would leave a persona frozen mid-sentence, which is not a state
+   * the client can ever be observed in for real.
    */
   async run(): Promise<void> {
-    await new Promise((resolve) => setImmediate(resolve));
+    // Bounded, so a scheduling bug fails as a test rather than as a hang.
+    for (let round = 0; round < 50; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
 
-    const pending = this.queue;
-    this.queue = [];
-    for (const entry of pending) {
-      if (!entry.cancelled) entry.fn();
+      const pending = this.queue;
+      if (pending.length === 0) break;
+      this.queue = [];
+      for (const entry of pending) {
+        if (!entry.cancelled) entry.fn();
+      }
     }
 
-    // Firing can schedule more work; let it settle before returning.
     await new Promise((resolve) => setImmediate(resolve));
   }
 
@@ -125,7 +135,12 @@ function build(voice: PersonaVoice = scriptedVoice(['hello there'])): Harness {
     voice,
     now: clock.now,
     schedule: clock.schedule,
-    replyDelayMs: () => 1500,
+    cadence: { readingPauseMs: () => 1500, typingPauseMs: () => 1500, bubbleGapMs: () => 800 },
+    // Off by default here. The fake clock fires everything pending regardless
+    // of the delay asked for, so a live silence timer would trip on the first
+    // `run()` of every test in this file rather than after two minutes. The
+    // tests that are about moving on turn it on deliberately.
+    silenceTimeoutMs: 0,
     onEvent: (e) => events.push(e),
   });
 
@@ -232,8 +247,12 @@ describe('holding a conversation', () => {
     h.feed('matched', MATCHED);
     await h.clock.run();
 
-    const sent = h.socket.frames().find((f) => f.type === 'message');
-    expect(String(sent?.payload['text']).length).toBe(500);
+    const lengths = h.socket
+      .frames()
+      .filter((f) => f.type === 'message')
+      .map((f) => String(f.payload['text']).length);
+    expect(lengths.length).toBeGreaterThan(0);
+    for (const length of lengths) expect(length).toBeLessThanOrEqual(500);
   });
 
   it('counts its own messages so the voice knows how far in it is', async () => {
@@ -319,6 +338,143 @@ describe('a partner who goes away', () => {
     h.feed('partner_disconnected', {});
 
     expect(h.events).toContainEqual({ kind: 'partner_gone', reason: 'partner_disconnected' });
+  });
+});
+
+describe('moving on from a conversation that has stopped', () => {
+  /**
+   * A client with the silence timer live.
+   *
+   * The fake clock ignores the delay, so any positive value means "fires on the
+   * next drain" — which is what makes this testable without waiting.
+   */
+  function buildImpatient(voice: PersonaVoice = scriptedVoice(['hey', 'still here?'])): Harness {
+    const socket = new FakeSocket();
+    const clock = new Clock();
+    const events: PersonaClientEvent[] = [];
+
+    const client = new PersonaClient({
+      url: 'ws://unused/ws',
+      origin: 'http://unused',
+      character,
+      profile: generateSurface(character, { seed: 1 }).profile,
+      voice,
+      now: clock.now,
+      schedule: clock.schedule,
+      cadence: { readingPauseMs: () => 1, typingPauseMs: () => 1, bubbleGapMs: () => 1 },
+      silenceTimeoutMs: 1,
+      onEvent: (e) => events.push(e),
+    });
+
+    (client as unknown as { socket: FakeSocket }).socket = socket;
+
+    const feed = (type: string, payload: Record<string, unknown> = {}): void => {
+      client.onFrame(JSON.stringify({ type, version: PROTOCOL_VERSION, payload }));
+    };
+
+    return { client, socket, clock, events, feed };
+  }
+
+  it('skips rather than leaving, so it is back in the queue in one frame', async () => {
+    // `leave_chat` would end the conversation and leave the persona idle,
+    // holding a connection and talking to nobody until something stopped it.
+    const h = buildImpatient();
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    expect(h.socket.typesSent()).toContain('skip');
+    expect(h.socket.typesSent()).not.toContain('leave_chat');
+    expect(h.client.currentState()).toBe('searching');
+  });
+
+  it('says why it moved on, so it can be counted', async () => {
+    const h = buildImpatient();
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    expect(h.events).toContainEqual({ kind: 'moved_on', reason: 'silence' });
+  });
+
+  it('answers the stranger before it ever considers moving on', async () => {
+    // The clock restarts only after this persona has spoken, so an answer
+    // always gets replied to. (The fake clock fires every pending callback
+    // regardless of its delay, so what is checkable here is the ordering
+    // rather than the two minutes.)
+    const h = buildImpatient();
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    h.feed('message', { matchId: 'm_1', messageId: 'x', type: 'text', text: 'hey', sentAt: '', from: 'partner' });
+    await h.clock.run();
+
+    const kinds = h.events.map((e) => e.kind);
+    expect(kinds).toContain('sent');
+    expect(kinds.indexOf('sent')).toBeLessThan(kinds.indexOf('moved_on'));
+  });
+
+  it('does not time out a partner whose socket dropped', async () => {
+    // They have not gone quiet on us — the server is holding their seat, and
+    // ending it during the grace window would destroy what §28 exists for.
+    const h = buildImpatient();
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    h.feed('partner_reconnecting', { graceSeconds: 30 });
+    await h.clock.run();
+
+    expect(h.socket.typesSent()).not.toContain('skip');
+    expect(h.client.currentState()).toBe('partner_away');
+  });
+
+  it('moves on when the same message arrives over and over', async () => {
+    const h = buildImpatient({ reply: () => null });
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+
+    const same = { matchId: 'm_1', messageId: 'x', type: 'text', text: 'hello', sentAt: '', from: 'partner' };
+    for (let i = 0; i < 3; i += 1) h.feed('message', same);
+    await h.clock.run();
+
+    expect(h.events).toContainEqual({ kind: 'moved_on', reason: 'repetition' });
+  });
+
+  it('forgives one repeat, because people resend when a message looks stuck', async () => {
+    const h = buildImpatient({ reply: () => null });
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+
+    const same = { matchId: 'm_1', messageId: 'x', type: 'text', text: 'hello', sentAt: '', from: 'partner' };
+    h.feed('message', same);
+    h.feed('message', same);
+
+    expect(h.events).not.toContainEqual({ kind: 'moved_on', reason: 'repetition' });
+  });
+
+  it('counts a run, not a total, so a repeated word does not end a chat', async () => {
+    const h = buildImpatient({ reply: () => null });
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+
+    const say = (text: string): void =>
+      h.feed('message', { matchId: 'm_1', messageId: 'x', type: 'text', text, sentAt: '', from: 'partner' });
+
+    say('lol');
+    say('lol');
+    say('what about you');
+    say('lol');
+
+    expect(h.events).not.toContainEqual({ kind: 'moved_on', reason: 'repetition' });
+  });
+
+  it('never moves on when the timeout is disabled', async () => {
+    // `PERSONA_SILENCE_TIMEOUT_SECONDS=0` is a supported setting, not a
+    // disabled feature nobody tests.
+    const h = build(scriptedVoice(['hey']));
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    expect(h.socket.typesSent()).not.toContain('skip');
   });
 });
 
@@ -409,15 +565,123 @@ describe('server refusals', () => {
 });
 
 describe('reply timing', () => {
+  const cadence = humanCadence(() => 0.5);
+
   it('never answers instantly, because that is the clearest tell there is', () => {
-    expect(defaultReplyDelay('ok')).toBeGreaterThanOrEqual(1200);
+    expect(cadence.readingPauseMs('ok')).toBeGreaterThanOrEqual(900);
   });
 
-  it('takes longer over a longer message', () => {
-    expect(defaultReplyDelay('x'.repeat(100))).toBeGreaterThan(defaultReplyDelay('ok'));
+  it('takes longer over a longer incoming message, because reading takes time', () => {
+    expect(cadence.readingPauseMs('x'.repeat(100))).toBeGreaterThan(cadence.readingPauseMs('ok'));
   });
 
-  it('caps the pause so a long reply does not stall the conversation', () => {
-    expect(defaultReplyDelay('x'.repeat(5000))).toBeLessThanOrEqual(9000);
+  it('pauses before its own opening line, when there is nothing to read', () => {
+    expect(cadence.readingPauseMs(undefined)).toBeGreaterThan(0);
+  });
+
+  it('takes longer to type a longer reply', () => {
+    expect(cadence.typingPauseMs('x'.repeat(80))).toBeGreaterThan(cadence.typingPauseMs('ok'));
+  });
+
+  it('caps the typing pause so a long reply does not stall the conversation', () => {
+    expect(cadence.typingPauseMs('x'.repeat(5000))).toBeLessThanOrEqual(7000);
+  });
+});
+
+describe('splitting a reply into bubbles', () => {
+  it('leaves a short reply as one message, because it is one thought', () => {
+    expect(splitIntoBubbles('yeah same honestly')).toEqual(['yeah same honestly']);
+  });
+
+  it('splits a long reply at sentence boundaries, never mid-clause', () => {
+    const bubbles = splitIntoBubbles(
+      'oh no. that is genuinely the worst thing i have heard all week. ' +
+        'did you at least get the money back or is it just gone forever now',
+    );
+    expect(bubbles.length).toBeGreaterThan(1);
+    for (const bubble of bubbles) expect(bubble.trim()).toBe(bubble);
+    expect(bubbles.join(' ')).toContain('worst thing');
+  });
+
+  it('treats a newline as a break the writer already chose', () => {
+    expect(splitIntoBubbles('wait\nactually no, i take that back completely honestly')).toEqual([
+      'wait',
+      'actually no, i take that back completely honestly',
+    ]);
+  });
+
+  it('never sends more than three, because a burst of five is its own tell', () => {
+    const many = Array.from({ length: 9 }, (_, i) => `sentence number ${i} here.`).join(' ');
+    expect(splitIntoBubbles(many).length).toBeLessThanOrEqual(3);
+  });
+
+  it('hard-cuts a single sentence longer than the server accepts', () => {
+    // The alternative is a frame the server refuses and a model call already
+    // paid for.
+    for (const bubble of splitIntoBubbles('x'.repeat(1200), 500)) {
+      expect(bubble.length).toBeLessThanOrEqual(500);
+    }
+  });
+
+  it('says nothing at all rather than sending an empty frame', () => {
+    expect(splitIntoBubbles('   ')).toEqual([]);
+  });
+});
+
+describe('the typing indicator', () => {
+  it('announces that it is writing before the message, and stops before sending', async () => {
+    // Text that appears whole with no warning is the "copy-pasted" tell, and
+    // every real client on this server sends `typing` while composing.
+    const h = build(scriptedVoice(['hey']));
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    const frames = h.socket.frames().filter((f) => f.type === 'typing' || f.type === 'message');
+    expect(frames.map((f) => f.type)).toEqual(['typing', 'typing', 'message']);
+    expect(frames[0]?.payload['active']).toBe(true);
+    expect(frames[1]?.payload['active']).toBe(false);
+  });
+
+  it('types once per bubble, so a burst looks like a burst', async () => {
+    const h = build(scriptedVoice(['wait\nactually no, i take that back completely honestly']));
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    const types = h.socket
+      .frames()
+      .filter((f) => f.type === 'typing' || f.type === 'message')
+      .map((f) => f.type);
+    expect(types).toEqual(['typing', 'typing', 'message', 'typing', 'typing', 'message']);
+  });
+
+  it('leaves nobody watching "typing…" after the partner has gone', async () => {
+    const h = build(scriptedVoice(['opening', 'never arrives']));
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    h.feed('message', { matchId: 'm_1', messageId: 'x', type: 'text', text: 'hi', sentAt: '', from: 'partner' });
+    h.feed('partner_skipped', {});
+    await h.clock.run();
+
+    const typing = h.socket.frames().filter((f) => f.type === 'typing');
+    expect(typing[typing.length - 1]?.payload['active']).toBe(false);
+    const texts = h.socket.frames().filter((f) => f.type === 'message').map((f) => f.payload['text']);
+    expect(texts).toEqual(['opening']);
+  });
+
+  it('says nothing about typing when the server says the feature is off', async () => {
+    const h = build(scriptedVoice(['hey']));
+    h.feed('connected', {
+      ...CONNECTED,
+      features: { ...CONNECTED.features, typing: false },
+    });
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    expect(h.socket.typesSent()).not.toContain('typing');
+    expect(h.socket.typesSent()).toContain('message');
   });
 });

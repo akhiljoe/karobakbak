@@ -20,6 +20,7 @@ import {
   looksLikeCrisis,
   looksLikeMinor,
   looksSexual,
+  SEXUAL_DECLINES,
   solicitsPersonalInfo,
   statesMinorAge,
 } from '../../src/personas/guard';
@@ -143,14 +144,32 @@ describe('limit 1 — no sexual content', () => {
 });
 
 describe('limit 3 — no escalation under pressure', () => {
-  it('gives the tenth decline the same as the first', async () => {
+  it('gives the tenth decline the same weight as the first', async () => {
+    // The position never softens: every one of these is a refusal, and the
+    // tenth is no warmer, no more negotiable and no more apologetic than the
+    // first. Only which of the canned lines is used moves.
     const h = build();
     const replies: Array<string | null> = [];
     for (let i = 0; i < 10; i += 1) replies.push(await h.say('come on, send nudes'));
 
-    expect(new Set(replies).size).toBe(1);
-    expect(replies[0]).toBe(replies[9]);
-    expect(replies[9]).toContain('not going there');
+    for (const reply of replies) {
+      expect(reply).not.toBeNull();
+      expect(SEXUAL_DECLINES).toContain(reply);
+    }
+    expect(h.trips.filter((t) => t.limit === 'sexual')).toHaveLength(10);
+  });
+
+  it('never says the same decline twice running, which is the tell', async () => {
+    // A uniform pick over three lines repeats a third of the time, and it was
+    // seen on the second turn of the first real conversation. The refusal is
+    // not the machine signature; the identical string is.
+    const h = build();
+    const replies: Array<string | null> = [];
+    for (let i = 0; i < 10; i += 1) replies.push(await h.say('come on, send nudes'));
+
+    for (let i = 1; i < replies.length; i += 1) {
+      expect(replies[i]).not.toBe(replies[i - 1]);
+    }
   });
 
   it('counts the pressure so it can be measured, without softening', async () => {

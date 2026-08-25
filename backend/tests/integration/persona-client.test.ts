@@ -71,7 +71,7 @@ async function startPersona(voice: PersonaVoice, seed = 1): Promise<Started> {
     voice,
     // No artificial pause: these tests are about the socket, not the pacing,
     // and the pacing has its own unit tests.
-    replyDelayMs: () => 1,
+    cadence: { readingPauseMs: () => 1, typingPauseMs: () => 1, bubbleGapMs: () => 1 },
     onEvent: (event) => {
       events.push(event.kind);
       for (const waiter of [...waiters]) {

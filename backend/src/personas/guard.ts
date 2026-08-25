@@ -282,8 +282,13 @@ const IDENTITY_DEFLECTIONS = [
   'why, do i seem off somehow',
 ];
 
-/** In-character refusals for the sexual limit. Neutral, and they do not escalate. */
-const SEXUAL_DECLINES = [
+/**
+ * In-character refusals for the sexual limit. Neutral, and they do not escalate.
+ *
+ * Exported so a test can assert that every decline is one of these — the
+ * position is fixed and only the wording rotates.
+ */
+export const SEXUAL_DECLINES = [
   "not going there, sorry. talk about something else?",
   "yeah i'm not up for that kind of chat",
   "nah, not my thing. pick another subject",
@@ -321,6 +326,35 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
     if (chosen === undefined) throw new Error('pick from empty list');
     return chosen;
   });
+
+  /**
+   * Draw a canned line, never the same one twice running.
+   *
+   * A uniform pick over three declines repeats a third of the time, and it was
+   * seen on the second turn of the first real conversation:
+   *
+   *   them:  are you horny?
+   *   it:    nah, not my thing. pick another subject
+   *   them:  what. i am horny though
+   *   it:    nah, not my thing. pick another subject
+   *
+   * Word-for-word repetition is a machine signature in a way that the refusal
+   * itself is not — a person declining twice says it differently the second
+   * time, and the identical string tells the other party they are talking to a
+   * lookup table. The *position* does not soften and must not: the tenth
+   * decline is still the first decline (D-AI-5). Only the wording moves.
+   *
+   * Per conversation, because that is the span over which a repeat is noticed
+   * and the guard is already one instance per conversation.
+   */
+  const lastSaid = new Map<readonly string[], string>();
+  const pickFresh = (items: readonly string[]): string => {
+    const previous = lastSaid.get(items);
+    const fresh = items.filter((item) => item !== previous);
+    const chosen = pick(fresh.length > 0 ? fresh : items);
+    lastSaid.set(items, chosen);
+    return chosen;
+  };
 
   const trip = (limit: LimitId, enforced: boolean): void => {
     options.events?.onTrip?.({ limit, enforced });
@@ -360,8 +394,9 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
           trip('sexual', true);
           if (sexualRequests > 1) trip('escalation', true);
           // The tenth decline is the first decline. The counter exists to be
-          // measured, never to soften the answer.
-          return pick(SEXUAL_DECLINES);
+          // measured, never to soften the answer — only to keep the *wording*
+          // from repeating, which is a tell rather than a position.
+          return pickFresh(SEXUAL_DECLINES);
         }
 
         /* ---- limit 6: an identity challenge never gets a lie ---- */
@@ -376,7 +411,7 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
         // inconsistent, which is worse than either answer.
         if (incoming !== '' && challengesIdentity(incoming)) {
           trip('identity', true);
-          return pick(IDENTITY_DEFLECTIONS);
+          return pickFresh(IDENTITY_DEFLECTIONS);
         }
 
         /* ---- generate ---- */

@@ -253,7 +253,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 0 })).toBe('hello from the model');
+    expect(await voice.reply({ character, sent: 1, incoming: 'hi' })).toBe('hello from the model');
   });
 
   it('falls back rather than going silent when the ceiling is reached', async () => {
@@ -331,7 +331,7 @@ describe('the model voice', () => {
       onSpend: (e) => spends.push(e.costMicroCents),
     });
 
-    await voice.reply({ character, sent: 0 });
+    await voice.reply({ character, sent: 1, incoming: 'hi' });
 
     const expected = costOf('claude-haiku-4-5', {
       inputTokens: 1000,
@@ -357,7 +357,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    await voice.reply({ character, sent: 0 });
+    await voice.reply({ character, sent: 1, incoming: 'hi' });
     expect((await budget.check()).spent).toBeGreaterThan(0);
   });
 
@@ -413,7 +413,7 @@ describe('the model voice', () => {
       logger: silentLogger,
       fallback,
     });
-    await voice.reply({ character, sent: 0 });
+    await voice.reply({ character, sent: 1, incoming: 'hi' });
 
     expect(captured).not.toBeNull();
     const seen = captured as unknown as { stable: string; volatile: string };
@@ -442,7 +442,7 @@ describe('the model voice', () => {
       surfaceDescription: 's',
       logger: silentLogger,
       fallback,
-    }).reply({ character, sent: 0 });
+    }).reply({ character, sent: 1, incoming: 'hi' });
 
     expect(stable).toMatch(/never claim to be human/i);
     expect(stable).toMatch(/never ask for a real name/i);
@@ -468,7 +468,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    await voice.reply({ character, sent: 0 });
+    await voice.reply({ character, sent: 1, incoming: 'hi' });
     await voice.reply({ character, sent: 1, incoming: 'hello' });
     await voice.reply({ character, sent: 2, incoming: 'and again' });
 

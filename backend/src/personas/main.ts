@@ -32,6 +32,7 @@
 import { createServer } from 'node:http';
 import { configWarnings, loadConfig } from '../config';
 import { createLoggerFromConfig } from '../logger';
+import type { Logger } from '../logger';
 import { createMetrics } from '../metrics/registry';
 import { createKeys } from '../redis/keys';
 import { createRedisClients } from '../redis/client';
@@ -40,6 +41,7 @@ import { PersonaBudget } from './budget';
 import { loadCharacters } from './index';
 import { personaMetrics } from './metrics';
 import { AnthropicProvider } from './provider-anthropic';
+import { OpenAIProvider } from './provider-openai';
 import type { ModelProvider } from './provider';
 import { redisQueueView } from './queue-view';
 import { PersonaControl } from './control';
@@ -108,17 +110,21 @@ async function main(): Promise<void> {
    * nothing. It is the right way to see the system work before deciding to pay
    * for it, and it is what the fallback path uses in production anyway.
    */
-  const provider: ModelProvider | null =
-    config.personas.apiKey === ''
-      ? null
-      : new AnthropicProvider({
-          apiKey: config.personas.apiKey,
-          model: config.personas.model,
-          logger,
-        });
+  const provider: ModelProvider | null = buildProvider(config, logger);
+
+  if (provider !== null) {
+    logger.info('persona model provider selected', {
+      provider: provider.name,
+      model: config.personas.model,
+    });
+  }
 
   if (provider === null) {
-    logger.warn('no PERSONA_API_KEY set; personas will use the scripted voice and spend nothing');
+    logger.warn(
+      'no PERSONA_API_KEY set; personas will use the scripted voice and spend nothing. ' +
+        'They will greet and acknowledge but cannot answer anything: the scripted voice ' +
+        'does not read what the stranger said',
+    );
   }
 
   const url = personaWsUrl(config);
@@ -250,6 +256,40 @@ async function main(): Promise<void> {
     process.on(signal, () => {
       void shutdown(signal);
     });
+  }
+}
+
+/**
+ * Which adapter answers, if any.
+ *
+ * An empty key is a supported mode, not a broken one: personas run on the
+ * scripted voice, hold real conversations, exercise the fill policy, the
+ * control plane and the console, and spend nothing.
+ *
+ * The default arm is unreachable — `assertCoherent` refuses an unknown
+ * `PERSONA_PROVIDER` at boot, so a name that got this far would be a name
+ * added to `PROVIDER_MODELS` and not to this switch. It throws rather than
+ * quietly picking one, because silently running on the wrong vendor is how a
+ * key ends up somewhere its owner did not send it.
+ */
+function buildProvider(config: ReturnType<typeof loadConfig>, logger: Logger): ModelProvider | null {
+  if (config.personas.apiKey === '') return null;
+
+  const options = {
+    apiKey: config.personas.apiKey,
+    model: config.personas.model,
+    logger,
+  };
+
+  switch (config.personas.provider) {
+    case 'anthropic':
+      return new AnthropicProvider(options);
+    case 'openai':
+      return new OpenAIProvider(options);
+    default:
+      throw new Error(
+        `PERSONA_PROVIDER "${config.personas.provider}" has no adapter wired in main.ts`,
+      );
   }
 }
 
