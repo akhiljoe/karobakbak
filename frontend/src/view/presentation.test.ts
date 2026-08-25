@@ -11,7 +11,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { initialState, type ChatState } from '../state/machine';
-import { composerDisabled, connectionOf, phaseOf } from './presentation';
+import { composerDisabled, connectionOf, phaseOf,
+  PRESENCE_MIN_TO_SHOW,
+  showPresence,
+} from './presentation';
 
 function state(overrides: Partial<ChatState>): ChatState {
   return { ...initialState, ...overrides };
@@ -91,5 +94,42 @@ describe('whether the composer accepts input', () => {
 
   it('is open in a live conversation', () => {
     expect(composerDisabled(state({ screen: 'chatting', matchId: 'm_1' }))).toBe(false);
+  });
+});
+
+describe('showPresence', () => {
+  const counts = (online: number) => ({ online, conversations: Math.floor(online / 4) });
+
+  it('hides the counter in an empty room, because "1 online" tells people to leave', () => {
+    // Social proof of an empty room is worse than none. This is the honest
+    // half of the choice D21 forces: a true number can be withheld, a
+    // flattering one cannot be un-shown.
+    expect(showPresence(counts(1))).toBe(false);
+    expect(showPresence(counts(12))).toBe(false);
+  });
+
+  it('shows it once the room is genuinely busy', () => {
+    expect(showPresence(counts(101))).toBe(true);
+    expect(showPresence(counts(5000))).toBe(true);
+  });
+
+  it('is strictly above the threshold, not at it', () => {
+    expect(showPresence(counts(PRESENCE_MIN_TO_SHOW))).toBe(false);
+    expect(showPresence(counts(PRESENCE_MIN_TO_SHOW + 1))).toBe(true);
+  });
+
+  it('takes its own threshold, so a deployment can lower it without a code change', () => {
+    expect(showPresence(counts(30), 20)).toBe(true);
+    expect(showPresence(counts(30), 40)).toBe(false);
+  });
+
+  it('shows nothing before the first presence frame has arrived', () => {
+    expect(showPresence(null)).toBe(false);
+  });
+
+  it('shows nothing rather than NaN when the count is not a number', () => {
+    // The frame is server-built and validated, but a hidden counter is a much
+    // cheaper failure than "NaN online" on the landing page.
+    expect(showPresence({ online: Number.NaN, conversations: 0 })).toBe(false);
   });
 });
