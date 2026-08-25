@@ -119,6 +119,48 @@ export function composerDisabled(state: ChatState): boolean {
 }
 
 /**
+ * Below how many people online the counter is not shown at all.
+ *
+ * A live count is social proof, and social proof of an empty room is worse
+ * than no social proof: "1 online" tells a visitor to leave, more plainly than
+ * showing nothing does. Above the threshold the same number is the most
+ * persuasive thing on the page.
+ *
+ * The alternative that was considered and rejected was synthesising a
+ * flattering number. D21 forbids it — "fabricated counts are a trust bug that
+ * is impossible to walk back" — and the wire format is built to make it hard,
+ * with `approximate: true` sent as a literal so the UI cannot present a count
+ * as exact. Hiding a true number says nothing false; printing a false one
+ * cannot be undone once somebody notices.
+ */
+export const PRESENCE_MIN_TO_SHOW = 100;
+
+/** What the header and the landing screen need to know about presence. */
+export interface PresenceCounts {
+  readonly online: number;
+  readonly conversations: number;
+}
+
+/**
+ * Whether the presence counter is worth showing.
+ *
+ * Strictly above the threshold, not at it, so the first number anybody ever
+ * sees is comfortably past the point where it reads as a busy room.
+ *
+ * Takes the threshold as an argument rather than reading the constant, so a
+ * test can state its own and a deployment could later lower it without this
+ * function changing.
+ */
+export function showPresence(
+  presence: PresenceCounts | null,
+  minimum: number = PRESENCE_MIN_TO_SHOW,
+): boolean {
+  if (presence === null) return false;
+  if (!Number.isFinite(presence.online)) return false;
+  return presence.online > minimum;
+}
+
+/**
  * A line describing the search, given how many others are waiting.
  *
  * `waiting` counts everyone in the queue including this user, which is why one

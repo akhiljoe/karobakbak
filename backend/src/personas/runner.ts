@@ -120,6 +120,7 @@ export async function startPersona(
     character,
     profile: surface.profile,
     voice,
+    silenceTimeoutMs: deps.config.personas.silenceTimeoutSeconds * 1000,
     onEvent: (event) => {
       switch (event.kind) {
         case 'matched':
@@ -135,6 +136,17 @@ export async function startPersona(
           break;
         case 'partner_gone':
           void finishConversation('partner_left');
+          break;
+        case 'moved_on':
+          // The persona left of its own accord and is already back in the
+          // queue. The row has to be closed here — `skip` produces no server
+          // event for the side that sent it, so nothing else would ever finish
+          // this conversation and the console would show it open forever.
+          deps.logger.info('persona moved on', {
+            personaId: character.id,
+            reason: event.reason,
+          });
+          void finishConversation('we_left');
           break;
         case 'closed':
           void finishConversation('dropped');

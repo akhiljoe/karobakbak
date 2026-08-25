@@ -14,6 +14,7 @@ import { MessageCircle, Settings, SlidersHorizontal, Users } from 'lucide-react'
 
 import { ACCOUNTS_ENABLED } from '../features';
 import type { ChatState } from '../state/machine';
+import { showPresence } from '../view/presentation';
 
 interface AppHeaderProps {
   state: ChatState;
@@ -57,7 +58,7 @@ export function AppHeader({
 
         <div className="flex-1" />
 
-        {presence && (
+        {showPresence(presence) && presence && (
           <div
             className="flex items-center gap-1.5 text-xs text-ink-400 sm:gap-2"
             title="Counts are approximate"

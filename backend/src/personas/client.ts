@@ -59,8 +59,11 @@ import {
   type IncomingMessagePayload,
   type MatchedPayload,
   type Profile,
+  type ServerFeatures,
   type ServerLimits,
 } from '../protocol/types';
+import { humanCadence, splitIntoBubbles } from './cadence';
+import type { Cadence } from './cadence';
 import type { PersonaCharacter } from './types';
 
 /* -------------------------------------------------------------------------- */
@@ -136,9 +139,35 @@ class Bucket {
   }
 }
 
+/**
+ * How long a persona waits for an answer before moving on.
+ *
+ * Long enough that somebody typing a considered reply, or reading something
+ * else for a minute, is not abandoned mid-thought. Short enough that a persona
+ * is not sitting in a conversation that ended twenty minutes ago, holding a
+ * queue seat and one of the connections the whole population shares.
+ */
+const DEFAULT_SILENCE_TIMEOUT_MS = 120_000;
+
+/**
+ * Identical messages in a row before a persona decides this is not a person.
+ *
+ * Deliberately crude, and deliberately not a model call: judging whether the
+ * other party is a bot is not worth paying for on every turn, and the only
+ * signal cheap enough to be worth acting on is the one a person would notice
+ * too — the same words arriving again and again.
+ *
+ * Three rather than two, because a person genuinely does repeat themselves once
+ * when they think a message did not send.
+ */
+const REPEATS_BEFORE_MOVING_ON = 3;
+
 /* -------------------------------------------------------------------------- */
 /* Client                                                                     */
 /* -------------------------------------------------------------------------- */
+
+/** Why a persona left a conversation of its own accord. A metric label. */
+export type MoveOnReason = 'silence' | 'repetition';
 
 export type PersonaClientState =
   | 'connecting'
@@ -160,12 +189,22 @@ export interface PersonaClientOptions {
   /** Injected so tests do not wait. Returns a cancel function. */
   readonly schedule?: (fn: () => void, ms: number) => () => void;
   /**
-   * Delay before a reply, so a persona does not answer in 8ms.
+   * How long the persona spends reading, typing and pausing between bubbles.
    *
-   * Not politeness — a reply that arrives faster than a human could read the
-   * message is the single clearest tell available, and it costs nothing to fix.
+   * Not politeness. A reply that arrives faster than a human could read the
+   * message is the clearest tell available, and one that arrives whole with no
+   * typing indicator is the second — every real client on this server sends
+   * `typing` while composing. Injected so tests pin the intervals.
    */
-  readonly replyDelayMs?: (text: string) => number;
+  readonly cadence?: Cadence;
+  /**
+   * How long to wait for a reply before moving on to somebody else.
+   *
+   * Zero disables it, which is what the teardown tests run against. Nobody
+   * sits in front of a stranger who stopped answering ten minutes ago; a
+   * persona that does is holding a queue seat and a connection for nothing.
+   */
+  readonly silenceTimeoutMs?: number;
   readonly onEvent?: (event: PersonaClientEvent) => void;
 }
 
@@ -177,6 +216,7 @@ export type PersonaClientEvent =
   | { readonly kind: 'partner_away' }
   | { readonly kind: 'partner_back' }
   | { readonly kind: 'partner_gone'; readonly reason: string }
+  | { readonly kind: 'moved_on'; readonly reason: MoveOnReason }
   | { readonly kind: 'refused'; readonly code: string }
   | { readonly kind: 'closed'; readonly code: number };
 
@@ -194,15 +234,32 @@ export class PersonaClient {
   private state: PersonaClientState = 'connecting';
   private sessionId: string | null = null;
   private limits: ServerLimits | null = null;
+  private features: ServerFeatures | null = null;
   private buckets = new Map<string, Bucket>();
   private sentThisConversation = 0;
   private pendingReply: (() => void) | null = null;
   private closedReason: number | null = null;
   private messageCounter = 0;
+  private typingActive = false;
+  private silenceTimer: (() => void) | null = null;
+  private lastIncoming: string | null = null;
+  private repeatCount = 0;
+
+  /**
+   * Which `speak` run is the current one.
+   *
+   * A reply is now several waits long — read, type, send, pause, type, send —
+   * and a partner can leave during any of them. Bumping this abandons the run
+   * in progress at its next checkpoint, which is stronger than cancelling one
+   * timer: cancelling the timer a run is sitting on would let it wake and carry
+   * straight on to the next bubble.
+   */
+  private speakGeneration = 0;
 
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => () => void;
-  private readonly replyDelayMs: (text: string) => number;
+  private readonly cadence: Cadence;
+  private readonly silenceTimeoutMs: number;
 
   constructor(private readonly options: PersonaClientOptions) {
     this.now = options.now ?? (() => Date.now());
@@ -212,7 +269,8 @@ export class PersonaClient {
         const handle = setTimeout(fn, ms);
         return () => clearTimeout(handle);
       });
-    this.replyDelayMs = options.replyDelayMs ?? defaultReplyDelay;
+    this.cadence = options.cadence ?? humanCadence();
+    this.silenceTimeoutMs = options.silenceTimeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS;
   }
 
   currentState(): PersonaClientState {
@@ -263,6 +321,8 @@ export class PersonaClient {
   joinQueue(): boolean {
     if (!this.allow('join_queue')) return false;
     this.sentThisConversation = 0;
+    this.clearSilenceTimer();
+    this.resetRepetition();
     this.send('join_queue', { profile: this.options.profile });
     this.state = 'searching';
     return true;
@@ -279,11 +339,15 @@ export class PersonaClient {
   skip(): boolean {
     if (!this.allow('skip')) return false;
     this.send('skip', {});
+    this.sentThisConversation = 0;
+    this.clearSilenceTimer();
+    this.resetRepetition();
     this.state = 'searching';
     return true;
   }
 
   close(): void {
+    this.clearSilenceTimer();
     this.cancelPendingReply();
     this.socket?.close(1000);
     this.state = 'closed';
@@ -310,6 +374,7 @@ export class PersonaClient {
         const payload = envelope.payload as ConnectedPayload;
         this.sessionId = payload.sessionId;
         this.limits = payload.limits;
+        this.features = payload.features;
         this.state = 'idle';
         this.emit({ kind: 'connected', sessionId: payload.sessionId });
         return;
@@ -319,6 +384,7 @@ export class PersonaClient {
         const payload = envelope.payload as MatchedPayload;
         this.state = 'matched';
         this.sentThisConversation = 0;
+        this.resetRepetition();
         this.emit({ kind: 'matched', matchId: payload.matchId });
         // Opening line. A persona that waits for the stranger to speak first is
         // realistic but produces a lot of dead matches, so it opens.
@@ -333,6 +399,17 @@ export class PersonaClient {
         // Only reply while genuinely matched. A message can arrive after a
         // teardown began, and answering it would send into a match that is over.
         if (this.state !== 'matched') return;
+
+        // They answered, so the clock stops. It is restarted when this persona
+        // next finishes speaking, never here — otherwise a persona that chose
+        // to stay quiet would keep the conversation alive forever.
+        this.clearSilenceTimer();
+
+        if (this.countRepetition(text)) {
+          this.moveOn('repetition');
+          return;
+        }
+
         await this.speak(text);
         return;
       }
@@ -340,7 +417,11 @@ export class PersonaClient {
       case 'partner_reconnecting': {
         // The conversation has NOT ended. Nothing sent now is delivered and
         // nothing is buffered (D43), so the only correct behaviour is to wait.
+        // The silence clock stops too: a partner whose socket dropped has not
+        // gone quiet on us, and timing them out during their grace window would
+        // end a conversation the server is still holding open for them.
         this.state = 'partner_away';
+        this.clearSilenceTimer();
         this.cancelPendingReply();
         this.emit({ kind: 'partner_away' });
         return;
@@ -355,6 +436,8 @@ export class PersonaClient {
       case 'partner_skipped':
       case 'partner_disconnected': {
         this.state = 'idle';
+        this.clearSilenceTimer();
+        this.resetRepetition();
         this.cancelPendingReply();
         this.emit({ kind: 'partner_gone', reason: envelope.type });
         return;
@@ -374,12 +457,33 @@ export class PersonaClient {
   }
 
   /**
-   * Produce and send one reply, after a human-plausible pause.
+   * Produce and deliver one reply the way a person delivers one.
    *
-   * The pause is cancellable, because a partner can leave or drop during it and
-   * sending afterwards would either fail or land in the wrong conversation.
+   * ---------------------------------------------------------------------------
+   * THE SHAPE OF A TURN
+   * ---------------------------------------------------------------------------
+   *   read  ->  [typing on ... typing off, send]  ->  gap  ->  [again]
+   *
+   * The reading pause runs **concurrently with generation**, not after it. A
+   * person starts reading the moment the message lands; waiting for the model
+   * first and then pretending to read would add the model's latency on top of a
+   * delay that is already long enough, and the stranger would watch nothing
+   * happen for the whole of it.
+   *
+   * The typing indicator is on for exactly the interval the persona is
+   * "writing" each bubble and off the rest of the time — including between
+   * bubbles, because somebody who has just sent a line is not typing during the
+   * beat before the next one.
+   *
+   * Every wait is a checkpoint. A partner can leave during any of them, and a
+   * run that wakes into a conversation that has ended must send nothing: the
+   * frame would either be refused or land in whatever conversation holds that
+   * session id now.
    */
   private async speak(incoming: string | undefined): Promise<void> {
+    const generation = this.speakGeneration + 1;
+    this.speakGeneration = generation;
+
     const turn: VoiceTurn = {
       character: this.options.character,
       sent: this.sentThisConversation,
@@ -391,22 +495,143 @@ export class PersonaClient {
       return;
     }
 
-    const text = await this.options.voice.reply(turn);
+    /** Still the current run, and still in a conversation to send into. */
+    const live = (): boolean =>
+      this.speakGeneration === generation && this.state === 'matched';
+
+    // Reading and thinking happen while the reply is being produced, not after.
+    const [, text] = await Promise.all([
+      this.sleep(this.cadence.readingPauseMs(incoming)),
+      Promise.resolve(this.options.voice.reply(turn)),
+    ]);
+
+    if (!live()) return;
     if (text === null || text.trim() === '') return;
 
-    const capped = this.capToServerLimit(text);
+    const bubbles = splitIntoBubbles(text, this.limits?.maxMessageLength);
+    if (bubbles.length === 0) return;
 
-    await new Promise<void>((resolve) => {
+    let delivered = 0;
+
+    for (let i = 0; i < bubbles.length; i += 1) {
+      const bubble = bubbles[i];
+      if (bubble === undefined) continue;
+
+      if (!live()) break;
+      this.setTyping(true);
+      await this.sleep(this.cadence.typingPauseMs(bubble));
+
+      if (!live()) break;
+      // Off *before* the message, so the indicator never outlives the thing it
+      // announced — a stranger left watching "typing…" after the message landed
+      // is the same tell in the other direction.
+      this.setTyping(false);
+      this.send('message', { text: bubble, type: 'text' });
+      delivered += 1;
+      this.emit({ kind: 'sent', length: bubble.length });
+
+      if (i < bubbles.length - 1) {
+        await this.sleep(this.cadence.bubbleGapMs());
+      }
+    }
+
+    this.setTyping(false);
+
+    // One turn, however many bubbles carried it. The voice asks "how far into
+    // this conversation am I", and the honest answer counts exchanges: counting
+    // frames would make a persona that writes in bursts leave sooner than one
+    // that writes in paragraphs, for no reason a person would have.
+    if (delivered > 0) this.sentThisConversation += 1;
+
+    // The ball is in their court now, so the clock starts. Only when something
+    // was actually said — arming it after a turn this persona chose to sit out
+    // would time out a conversation nobody was waiting on.
+    if (delivered > 0) this.armSilenceTimer();
+  }
+
+  /**
+   * Start waiting for an answer.
+   *
+   * The one place a persona decides something without being told to by a frame.
+   * It is time-based, so the voice cannot own it: a voice is only ever asked
+   * about a message that arrived, and this is about one that did not.
+   */
+  private armSilenceTimer(): void {
+    this.clearSilenceTimer();
+    if (this.silenceTimeoutMs <= 0) return;
+
+    const cancel = this.schedule(() => {
+      this.silenceTimer = null;
+      if (this.state !== 'matched') return;
+      this.moveOn('silence');
+    }, this.silenceTimeoutMs);
+
+    this.silenceTimer = cancel;
+  }
+
+  private clearSilenceTimer(): void {
+    this.silenceTimer?.();
+    this.silenceTimer = null;
+  }
+
+  /**
+   * Leave, and look for somebody else.
+   *
+   * `skip` rather than `leave_chat`: it ends the match and re-enters the queue
+   * in a single frame the server already understands, which is exactly what a
+   * person pressing "next" does. `leave_chat` would end the conversation and
+   * leave the persona sitting idle, holding a connection and talking to nobody
+   * until the supervisor happened to stop it.
+   */
+  private moveOn(reason: MoveOnReason): void {
+    this.clearSilenceTimer();
+    this.cancelPendingReply();
+    this.setTyping(false);
+    this.resetRepetition();
+    // Emitted before the frame, so the conversation is closed out even if the
+    // local rate-limit mirror refuses the skip.
+    this.emit({ kind: 'moved_on', reason });
+    this.skip();
+  }
+
+  /**
+   * Count identical messages in a row, and say whether that is now too many.
+   *
+   * Whitespace and case are ignored, because a bot that varies neither is still
+   * a bot and a person who does is still saying the same thing.
+   */
+  private countRepetition(text: string): boolean {
+    const normalised = text.trim().toLowerCase();
+    if (normalised === '') return false;
+
+    if (normalised === this.lastIncoming) {
+      this.repeatCount += 1;
+    } else {
+      this.lastIncoming = normalised;
+      this.repeatCount = 1;
+    }
+
+    return this.repeatCount >= REPEATS_BEFORE_MOVING_ON;
+  }
+
+  private resetRepetition(): void {
+    this.lastIncoming = null;
+    this.repeatCount = 0;
+  }
+
+  /**
+   * Wait, cancellably.
+   *
+   * Resolving on cancel rather than rejecting keeps `speak` free of a rejection
+   * path that would have to be swallowed at each of its await points; the
+   * generation check after every wait is what decides whether to carry on.
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
       const cancel = this.schedule(() => {
         this.pendingReply = null;
-        // Re-check: the pause is where a partner leaves.
-        if (this.state === 'matched') {
-          this.send('message', { text: capped, type: 'text' });
-          this.sentThisConversation += 1;
-          this.emit({ kind: 'sent', length: capped.length });
-        }
         resolve();
-      }, this.replyDelayMs(capped));
+      }, ms);
 
       this.pendingReply = () => {
         cancel();
@@ -416,20 +641,36 @@ export class PersonaClient {
     });
   }
 
-  private cancelPendingReply(): void {
-    this.pendingReply?.();
+  /**
+   * Announce, or stop announcing, that this persona is writing.
+   *
+   * Idempotent, because the transitions are driven from several places and a
+   * repeated `typing: true` would spend a token from a bucket the server
+   * publishes precisely so that clients can avoid being limited. Skipped
+   * entirely when the server says the feature is off — being refused costs a
+   * round trip and tells the persona nothing it did not already know.
+   */
+  private setTyping(active: boolean): void {
+    if (this.typingActive === active) return;
+    if (this.features !== null && !this.features.typing) return;
+    if (active && this.state !== 'matched') return;
+    this.typingActive = active;
+    this.send('typing', { active });
   }
 
   /**
-   * Never send more than the server accepts.
+   * Abandon whatever this persona was in the middle of saying.
    *
-   * Being refused for length is a wasted round trip and, worse, a wasted model
-   * call — the text has already been paid for by the time it is rejected.
+   * Bumps the generation as well as cancelling the wait, because a cancelled
+   * wait *resolves* — and a run that resolved out of its reading pause would
+   * otherwise walk straight on into sending its first bubble.
    */
-  private capToServerLimit(text: string): string {
-    const max = this.limits?.maxMessageLength;
-    if (max === undefined || text.length <= max) return text;
-    return text.slice(0, max);
+  private cancelPendingReply(): void {
+    this.speakGeneration += 1;
+    // No frame: the match is over, or the partner is not there to see it. The
+    // flag is cleared so the next conversation starts from a known state.
+    this.typingActive = false;
+    this.pendingReply?.();
   }
 
   private allow(command: ClientEventType): boolean {
@@ -491,17 +732,4 @@ export class PersonaClient {
   closeCode(): number | null {
     return this.closedReason;
   }
-}
-
-/**
- * How long to wait before replying.
- *
- * Roughly reading time plus typing time, floored so a one-word answer is not
- * instant and capped so a long one does not stall the conversation. The numbers
- * are not precise about human behaviour and do not need to be — the failure
- * being avoided is a reply in 8ms, which no pause in this range resembles.
- */
-export function defaultReplyDelay(text: string): number {
-  const typingMs = text.length * 45;
-  return Math.min(9000, Math.max(1200, 600 + typingMs));
 }

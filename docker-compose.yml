@@ -237,6 +237,13 @@ services:
       # console, and spend nothing. That is a supported mode and the right way
       # to see the system work before deciding to pay for it.
       PERSONA_API_KEY: "${PERSONA_API_KEY:-}"
+
+      # The provider and the model are one decision. loadConfig refuses to start
+      # on a mismatched pair, because one vendor's model id against the other's
+      # key authenticates fine and then fails every call — which the scripted
+      # fallback would turn into weeks of unhelpful conversations with nothing
+      # in the logs saying why.
+      PERSONA_PROVIDER: "${PERSONA_PROVIDER:-anthropic}"
       PERSONA_MODEL: "${PERSONA_MODEL:-claude-haiku-4-5}"
 
       # Roughly 20 US dollars. Checked before every model call and failing
@@ -247,6 +254,9 @@ services:
       # screen. The default is 25 seconds, which is the right wait for real
       # traffic and far too long for a demo.
       PERSONA_WAIT_BEFORE_FILL_SECONDS: "${PERSONA_WAIT_BEFORE_FILL_SECONDS:-8}"
+
+      # How long a persona waits for a reply before moving on. Zero disables it.
+      PERSONA_SILENCE_TIMEOUT_SECONDS: "${PERSONA_SILENCE_TIMEOUT_SECONDS:-120}"
       PERSONA_TICK_INTERVAL_MS: "${PERSONA_TICK_INTERVAL_MS:-2000}"
       PERSONA_MIN_DISPATCH_GAP_MS: "${PERSONA_MIN_DISPATCH_GAP_MS:-6000}"
 

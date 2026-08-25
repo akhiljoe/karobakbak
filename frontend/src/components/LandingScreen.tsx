@@ -11,6 +11,7 @@ import { Lock, MessageCircle, Shield, Sparkles, Users } from 'lucide-react';
 
 import { clientConfig, hasLegalLinks } from '../config';
 import type { ChatState } from '../state/machine';
+import { showPresence } from '../view/presentation';
 import type { Profile } from '../protocol/types';
 import { isEmptyProfile } from '../profile';
 import { ProfileCard } from './ProfileCard';
@@ -67,7 +68,7 @@ export function LandingScreen({
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-        {presence && (
+        {showPresence(presence) && presence && (
           <div className="mb-6 inline-flex animate-fade-in items-center gap-2 rounded-full border border-ink-800 bg-ink-900/60 px-3.5 py-1.5 text-sm text-ink-300 sm:mb-8">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage-400 opacity-60" />

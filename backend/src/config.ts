@@ -10,6 +10,7 @@
  * Every variable is documented in .env.example and README.md.
  */
 import { RULE_IDS } from './moderation/rules';
+import { MODEL_PRICES, PROVIDER_MODELS, PROVIDER_NAMES } from './personas/provider';
 import type { ClientEventType } from './protocol/types';
 import { newInstanceId } from './util/ids';
 
@@ -205,6 +206,14 @@ export interface Config {
     readonly enabled: boolean;
     /** How long one lone searcher waits before a persona is dispatched. */
     readonly waitBeforeFillSeconds: number;
+    /**
+     * How long a persona waits for a reply before moving on to somebody else.
+     *
+     * Zero disables it. Nobody sits in front of a stranger who stopped answering
+     * ten minutes ago, and a persona that does is holding a queue seat and one of
+     * the connections the whole population shares.
+     */
+    readonly silenceTimeoutSeconds: number;
     /**
      * The most personas alive at once.
      *
@@ -666,6 +675,7 @@ export function loadConfig(env: Env = process.env): Config {
     personas: {
       enabled: bool(env, 'PERSONAS_ENABLED', false),
       waitBeforeFillSeconds: int(env, 'PERSONA_WAIT_BEFORE_FILL_SECONDS', 25, 1, 3600),
+      silenceTimeoutSeconds: int(env, 'PERSONA_SILENCE_TIMEOUT_SECONDS', 120, 0, 3600),
       maxConcurrent: int(env, 'PERSONA_MAX_CONCURRENT', 8, 1, 1000),
       maxPerCharacter: int(env, 'PERSONA_MAX_PER_CHARACTER', 2, 1, 1000),
       minDispatchGapMs: int(env, 'PERSONA_MIN_DISPATCH_GAP_MS', 6000, 0, 600_000),
@@ -839,6 +849,46 @@ function assertCoherent(config: Config): void {
         `PERSONA_MAX_PER_CHARACTER (${config.personas.maxPerCharacter}) exceeds ` +
           `PERSONA_MAX_CONCURRENT (${config.personas.maxConcurrent}), so it can never bind`,
       );
+    }
+
+    // The provider, the model and the price are one decision in three
+    // variables, and every way of getting them out of step fails quietly:
+    //
+    //  - an unknown provider name would silently keep whichever adapter the
+    //    wiring happens to construct first;
+    //  - a model with no row in MODEL_PRICES spends against a ceiling that
+    //    cannot bind, because `safeCost` downgrades the throw to a log and a
+    //    zero rather than failing a conversation somebody is having;
+    //  - one vendor's model id against the other's key authenticates fine and
+    //    then fails every single call, which the fallback turns into a month of
+    //    scripted conversations with nothing saying why.
+    //
+    // All three are refused at boot instead. Only when a key is set: the
+    // keyless scripted mode is supported and reaches no provider at all.
+    if (config.personas.apiKey !== '') {
+      const provider = config.personas.provider;
+      if (!PROVIDER_NAMES.includes(provider)) {
+        throw new ConfigError(
+          `PERSONA_PROVIDER "${provider}" is not one of: ${PROVIDER_NAMES.join(', ')}`,
+        );
+      }
+
+      const model = config.personas.model;
+      if (MODEL_PRICES[model] === undefined) {
+        throw new ConfigError(
+          `PERSONA_MODEL "${model}" has no row in MODEL_PRICES, so its spend cannot be ` +
+            'counted and PERSONA_MONTHLY_LIMIT_MICRO_CENTS would never bind. Add its ' +
+            'published rates to MODEL_PRICES rather than letting it default',
+        );
+      }
+
+      const offered = PROVIDER_MODELS[provider] ?? [];
+      if (!offered.includes(model)) {
+        throw new ConfigError(
+          `PERSONA_MODEL "${model}" is not served by PERSONA_PROVIDER "${provider}". ` +
+            `That provider offers: ${offered.join(', ')}`,
+        );
+      }
     }
   }
 

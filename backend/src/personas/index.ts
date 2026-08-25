@@ -71,7 +71,9 @@ export { compareAll, comparePair, describeFailures, DIFFERENTIATION } from './di
 export { NAME_POOLS, poolFor } from './names';
 export { Rng, randomSeed } from './rng';
 export { declaredCountries, generateSurface } from './surface';
-export { PersonaClient, defaultReplyDelay } from './client';
+export { PersonaClient } from './client';
+export { humanCadence, splitIntoBubbles } from './cadence';
+export type { Cadence } from './cadence';
 export type {
   PersonaClientEvent,
   PersonaClientOptions,
@@ -93,6 +95,8 @@ export type { QueueReader } from './queue-view';
 export {
   MODEL_PRICES,
   NO_USAGE,
+  PROVIDER_MODELS,
+  PROVIDER_NAMES,
   costOf,
   formatMicroCents,
   priceFor,
@@ -108,6 +112,8 @@ export type {
 } from './provider';
 export { AnthropicProvider } from './provider-anthropic';
 export type { AnthropicProviderOptions } from './provider-anthropic';
+export { OpenAIProvider } from './provider-openai';
+export type { OpenAIProviderOptions } from './provider-openai';
 export { PersonaBudget } from './budget';
 export type { BudgetCheck, BudgetState, PersonaBudgetOptions } from './budget';
 export { modelVoice } from './voice-model';

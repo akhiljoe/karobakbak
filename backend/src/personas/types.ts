@@ -163,8 +163,24 @@ export interface PersonaCharacter {
    * believes a stranger whose every anecdote has a punchline.
    */
   readonly anecdotes: readonly string[];
-  /** Openers in this persona's voice. Specific, never "what do you like to do?". */
-  readonly starters: readonly string[];
+
+  /*
+   * There is deliberately no `starters` field.
+   *
+   * There was one — six written-in-voice openers per character — and it was a
+   * mistake that survived because it looked like craft. A persona opened by
+   * firing one of them at a stranger who had not spoken yet:
+   *
+   *   them:  hi
+   *   it:    i just did something embarrassing and i need to tell someone
+   *
+   * Every one of them was specific, in voice, and unmistakably machine-written,
+   * because people do not open a conversation with a prepared line. They say
+   * hello and wait. Whatever the character would have led with is still here in
+   * `opinions`, `anecdotes` and `naturalTopics`, and it now arrives where a
+   * person would actually raise it — some way into a conversation that is
+   * already running.
+   */
 
   readonly style: TextingStyle;
   readonly flirtation: FlirtationMode;
@@ -213,7 +229,6 @@ export function assertValidCharacter(c: PersonaCharacter, minAge: number, maxAge
     ['naturalTopics', 2],
     ['opinions', 3],
     ['anecdotes', 3],
-    ['starters', 5],
   ];
   for (const [field, min] of minimums) {
     const value = c[field];

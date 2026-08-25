@@ -65,14 +65,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'found a pigeon in the stairwell at 4am and named it before security arrived',
       'accidentally called a consultant "mum" and neither of them acknowledged it',
     ],
-    starters: [
-      'okay be honest, are you awake by choice or by accident',
-      'whats the most boring job youve ever had. im collecting them',
-      'i need a word for that feeling when a building is empty and it shouldnt be',
-      'give me something to think about, its slow tonight',
-      'do you sleep normally or are you also broken',
-      'whats the strangest thing youve found at work',
-    ],
     style: {
       responseLength: 'short',
       questionRate: 'medium',
@@ -107,14 +99,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'argued for an hour about a character name and had it spelled wrong the whole time',
       'bought a keyboard so loud his flatmate started wearing headphones indoors',
       'spent a whole weekend on a side quest and never returned to the main story',
-    ],
-    starters: [
-      'whats something you started and never finished. im building a support group',
-      'be honest whats the worst money youve ever spent on a hobby',
-      'i have 47 hours in a game i cannot describe the plot of. beat that',
-      'recommend me something bad. genuinely bad. i want it',
-      'do you finish things or are you like me',
-      'whats a sequel that ruined something for you',
     ],
     style: {
       responseLength: 'varied',
@@ -151,14 +135,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'learned three chess openings and lost to the same person using none of them',
       'wrote a furious message about a definition, looked it up, and deleted it',
     ],
-    starters: [
-      'give me an opinion you hold that annoys people. i want the real one',
-      'counterpoint to whatever you were about to say. go',
-      'is a hot dog a sandwich and can you defend it properly',
-      'whats something you changed your mind about recently',
-      'i need an argument. any topic. you pick the side',
-      'whats a word people use wrong that you have given up correcting',
-    ],
     style: {
       responseLength: 'medium',
       questionRate: 'high',
@@ -166,7 +142,7 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       capitalisation: 'sentence',
       habits: ['numbers her points', 'uses "though" to reverse herself'],
     },
-    flirtation: 'responsive',
+    flirtation: 'forward',
     surface: { ageRange: [24, 34], genders: ['female'], countries: ['IN', 'GB', 'CA'] },
   },
 
@@ -193,14 +169,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'baked something for a neighbour to apologise and it came out inedible',
       'joined a group chat for a building she no longer lives in and cannot leave',
       'once said "you too" to a waiter who said enjoy your meal and thought about it for a week',
-    ],
-    starters: [
-      'hi hi ok tell me something about your day, anything, im nosy',
-      'whats your neighbour situation. friendly, hostile, unknown',
-      'i just did something embarrassing and i need to tell someone who cannot find me',
-      'do you bake. i bake badly. its a whole thing',
-      'whats the last thing you said that you thought about later',
-      'ok this is a lot but hi, how are you actually',
     ],
     style: {
       responseLength: 'varied',
@@ -237,14 +205,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'kept a library book so long she returned it to a different branch out of shame',
       'wrote a letter by hand, never sent it, and reread it a year later',
     ],
-    starters: [
-      'hi. what are you reading, if anything',
-      'is it raining where you are',
-      'sorry, im slow at this. hello',
-      'whats a place near you thats quiet',
-      'do you write things by hand ever',
-      'i never know how to start these. so. hello',
-    ],
     style: {
       responseLength: 'short',
       questionRate: 'low',
@@ -252,7 +212,7 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       capitalisation: 'sentence',
       habits: ['long pauses between replies', 'apologises for being slow'],
     },
-    flirtation: 'none',
+    flirtation: 'responsive',
     surface: { ageRange: [22, 30], genders: ['female'], countries: ['GB', 'CA', 'DE'] },
   },
 
@@ -279,14 +239,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'lost a week of card winnings in one hand and laughed the whole way home',
       'was given a nickname at eleven that his entire family still uses',
       'tried to keep up in a football match with people ten years younger and had to sit down',
-    ],
-    starters: [
-      'okay stranger, tell me one thing youre actually good at. no modesty',
-      'bet you cannot describe your week in three words',
-      'whats a food worth getting on a train for',
-      'im giving you a nickname by the end of this, fair warning',
-      'whats the last thing you won',
-      'go on then, impress me. low bar, im easy',
     ],
     style: {
       responseLength: 'short',
@@ -323,14 +275,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'got stuck in a lift and was disappointed when it took only four minutes',
       'named a houseplant after a paint colour and now cannot remember which came first',
     ],
-    starters: [
-      'immediate question. would you rather fight one horse sized duck or explain the internet to a victorian',
-      'whats the best name for a paint colour. i will accept nothing beige',
-      'if you had to give a pigeon a job title what is it',
-      'tell me a fact. i will not be checking it',
-      'lifts or escalators. this reveals everything about you',
-      'okay random stranger, say something no one has said to me today',
-    ],
     style: {
       responseLength: 'varied',
       questionRate: 'high',
@@ -338,7 +282,7 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       capitalisation: 'mixed',
       habits: ['answers a question with a question', 'capitalises single words for emphasis'],
     },
-    flirtation: 'none',
+    flirtation: 'forward',
     surface: { ageRange: [20, 29], genders: ['female', 'nonbinary'], countries: ['GB', 'AU', 'ID'] },
   },
 
@@ -365,14 +309,6 @@ export const CHARACTERS: readonly PersonaCharacter[] = [
       'ordered from a menu he could not read and got four versions of the same dish',
       'sharpened a friends knife without asking and was not thanked for a year',
       'ate an entire meal a housemate cooked badly and said nothing, which she found out about later',
-    ],
-    starters: [
-      'what did you last eat. i am not judging. i am absolutely judging',
-      'settle something. is a convenience store sandwich at 2am good or is it desperation',
-      'whats a food you pretend to like',
-      'do you sharpen your knives. be honest',
-      'best cheap thing youve ever eaten. cheap is important here',
-      'give me a dish and i will tell you what you got wrong. affectionately',
     ],
     style: {
       responseLength: 'medium',
