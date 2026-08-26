@@ -35,9 +35,6 @@ interface ProfileFieldsProps {
 }
 
 /** Countries sorted by the name a person reads, not by the code. */
-const COUNTRY_OPTIONS = [...COUNTRY_CODES]
-  .map((code) => ({ code, name: COUNTRY_NAMES[code] }))
-  .sort((a, b) => a.name.localeCompare(b.name));
 
 export function ProfileFields({
   profile,
@@ -111,20 +108,6 @@ export function ProfileFields({
         </Field>
       </div>
 
-      <Field label="Country">
-        <select
-          value={profile.country ?? ''}
-          onChange={(event) => onChange({ ...profile, country: orNull(event.target.value) })}
-          className={inputClass}
-        >
-          <option value="">Prefer not to say</option>
-          {COUNTRY_OPTIONS.map((option) => (
-            <option key={option.code} value={option.code}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-      </Field>
 
       <p className="text-xs leading-relaxed text-ink-500">
         Every stranger you match with sees this. Nothing here is checked by us, so treat what other

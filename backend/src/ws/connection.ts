@@ -37,6 +37,14 @@ export interface SocketConnectionDeps {
   sessionId: string;
   ipHash: string;
   clientHash: string;
+  /**
+   * The country the CDN resolved for this socket, or null.
+   *
+   * Held per connection rather than per session because it is a property of
+   * where the socket came from, and it is resolved once at the upgrade — the
+   * one moment the request headers exist.
+   */
+  country: string | null;
   config: Config;
   logger: Logger;
   /** Handle one validated command. Must not throw. */
@@ -62,6 +70,7 @@ export class SocketConnection implements Connection {
   readonly sessionId: string;
   readonly ipHash: string;
   readonly clientHash: string;
+  readonly country: string | null;
 
   private readonly socket: WebSocket;
   private readonly config: Config;
@@ -78,6 +87,7 @@ export class SocketConnection implements Connection {
     this.deps = deps;
     this.socket = deps.socket;
     this.sessionId = deps.sessionId;
+    this.country = deps.country;
     this.ipHash = deps.ipHash;
     this.clientHash = deps.clientHash;
     this.config = deps.config;

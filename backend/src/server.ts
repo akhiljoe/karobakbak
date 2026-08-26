@@ -52,6 +52,7 @@ import { Janitor } from './ws/janitor';
 import { SessionSubscriber } from './ws/subscriber';
 import {
   clientAddress,
+  clientCountry,
   clientTokenCookie,
   isOriginAllowed,
   resolveClientToken,
@@ -404,6 +405,9 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
 
     const address = clientAddress(req, config.http.trustProxyHops);
+    // Resolved here because this is the only point the request headers exist.
+    // Null on a laptop, where there is no CDN to have set it.
+    const country = clientCountry(req, config.http.trustProxyHops);
     const ipHash = hashIp(address, config.security.ipHashSalt);
     const { token, issued } = resolveClientToken(req);
     const clientHash = hashIp(token, config.security.ipHashSalt);
@@ -487,7 +491,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         metrics.resumes.labels('ok').inc();
         const restored = resumed;
         wss.handleUpgrade(req, socket, head, (ws) => {
-          attach(ws, restored.sessionId, restored.ipHash, restored.clientHash, {
+          attach(ws, restored.sessionId, restored.ipHash, restored.clientHash, country, {
             resumeToken: restored.resumeToken,
             matchId: restored.matchId,
           });
@@ -544,7 +548,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      attach(ws, sessionId, ipHash, clientHash, { resumeToken: outcome.resumeToken });
+      attach(ws, sessionId, ipHash, clientHash, country, { resumeToken: outcome.resumeToken });
     });
   }
 
@@ -600,6 +604,8 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     sessionId: string,
     ipHash: string,
     clientHash: string,
+    /** Resolved at the upgrade; null with no CDN in front. */
+    country: string | null,
     session: { resumeToken: string; matchId?: string | null } = { resumeToken: '' },
   ): void {
     const connection = new SocketConnection({
@@ -607,6 +613,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       sessionId,
       ipHash,
       clientHash,
+      country,
       config,
       logger,
       onCommand: (command, conn) => handleCommand(command, conn),
@@ -810,7 +817,21 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           }
         }
 
-        const outcome = await lifecycle.joinQueue(connection.sessionId, command.profile);
+        // The country is the server's, not the client's.
+        //
+        // It used to be a dropdown, which made it a claim like the name and the
+        // age — typed by a stranger and checked by nothing. It is now resolved
+        // from the connection at the upgrade, so whatever arrives in the frame
+        // is discarded rather than trusted. That is protocol rule 3: the only
+        // client-supplied field that survives is the message correlation id.
+        //
+        // Null when there is no CDN in front, which is every laptop. The field
+        // is simply absent then, exactly as it was when somebody declined to
+        // pick one.
+        const outcome = await lifecycle.joinQueue(connection.sessionId, {
+          ...command.profile,
+          country: connection.country,
+        });
         replyToSearch(connection, outcome);
         return;
       }
