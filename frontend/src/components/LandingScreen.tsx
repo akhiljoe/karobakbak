@@ -35,7 +35,6 @@
  * yes; to us, not entirely, and the FAQ says so in those words.
  */
 import { Lock, Sparkles } from 'lucide-react';
-import { SampleConversation } from './SampleConversation';
 
 import type { ChatState } from '../state/machine';
 import type { Profile } from '../protocol/types';
@@ -176,15 +175,6 @@ export function LandingScreen({
             : 'No signup · No profile · No commitment'}
         </div>
 
-        {/*
-          Below the reassurance, so the button keeps its position, and dropped
-          entirely where the viewport cannot afford it. The invariant: at
-          375x667 the path from arrival to "Start chatting" stays visible
-          without scrolling.
-        */}
-        <div className="mt-6 w-full tiny:hidden">
-          <SampleConversation />
-        </div>
 
 
 

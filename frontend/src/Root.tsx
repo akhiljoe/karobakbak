@@ -31,6 +31,7 @@ import { AuthModal } from './components/AuthModal';
 import { ContactCard } from './components/ContactCard';
 import { PremiumPage } from './components/PremiumPage';
 import { SupportCard } from './components/SupportCard';
+import { SampleConversation } from "./components/SampleConversation";
 import { SupportPage } from './components/SupportPage';
 import { NotFound } from './components/NotFound';
 import { SitePage } from './components/SitePage';
@@ -78,6 +79,7 @@ export function Root(): JSX.Element {
       <SitePage page={page}>
         {page.id === 'contact' ? <ContactCard /> : undefined}
         {page.id === 'about' ? <SupportCard /> : undefined}
+        {page.id === "how-it-works" ? <SampleConversation /> : undefined}
       </SitePage>
     );
   }

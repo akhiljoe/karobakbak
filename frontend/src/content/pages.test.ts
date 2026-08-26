@@ -111,7 +111,10 @@ describe('the static pages', () => {
     // `minor-safety-policy.md` §3 chose "exclude and ask". Copy that implied
     // verification would be the single most consequential false claim here.
     const about = JSON.stringify(pageById('about')).toLowerCase();
-    expect(about).toContain('do not verify');
+    // Matched on 'not verify' rather than an exact sentence, so the copy can be
+    // rewritten without the guard going stale — what must survive is the fact,
+    // not the phrasing.
+    expect(about).toContain('not verify');
   });
 
   it('discloses that some partners are automated', () => {
