@@ -107,13 +107,6 @@ export function SettingsSheet({
 
         <div className="h-2" />
 
-        <Toggle
-          label="Find the next stranger automatically"
-          description="When someone leaves, start looking again after a moment. Never after you block someone."
-          checked={preferences.autoSearch}
-          onChange={(value) => onChange('autoSearch', value)}
-        />
-
         <div className="h-2" />
 
         <Toggle

@@ -34,5 +34,30 @@ export const ACCOUNTS_ENABLED = false;
 /**
  * Matching filters. The modal renders read-only while this is false, so the
  * roadmap is visible without the controls promising anything.
+ *
+ * The option list is **gender, country and language**, all read from the
+ * declared profile and none of them verified.
+ *
+ * Gender was excluded first and then included. The argument against it stands
+ * on the record: filtering a self-declared field is nearer to targeting than to
+ * preference, and D37 was written about exactly that. What follows is a
+ * constraint on the copy rather than on the feature — nothing anywhere may
+ * suggest a filter has checked anything, because none of them has.
  */
 export const FILTERS_ENABLED = false;
+
+/**
+ * Whether subscriptions can actually be bought.
+ *
+ * Separate from `ACCOUNTS_ENABLED` because the two arrive in that order:
+ * accounts can exist before Razorpay is wired up, and in that window the
+ * premium page and the sign-in form say so rather than showing a button that
+ * opens nothing.
+ *
+ * Turning this on means a payment processor is live, which makes two published
+ * claims false and needs them fixed in the same change: the Terms say "there is
+ * no payment provider, because nothing is for sale", and the Privacy page says
+ * the site makes no third-party requests from the browser — a payment SDK is a
+ * third-party script, and the Content Security Policy blocks it until widened.
+ */
+export const PAYMENTS_ENABLED = false;

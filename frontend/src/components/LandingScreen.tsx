@@ -1,21 +1,44 @@
 /**
  * The landing screen, and the screen shown after a conversation ends.
  *
- * The copy is deliberate about what this product does and does not keep. It
- * says conversations are retained for a period and then deleted, because they
- * are — claiming they vanish the moment you close the tab would be the easy
- * lie, and the retention section of the design exists precisely so abuse can be
- * investigated.
+ * ---------------------------------------------------------------------------
+ * THE COMPOSITION IS THE FEATURE
+ * ---------------------------------------------------------------------------
+ * This page did not feel empty because it lacked content. It felt empty because
+ * everything on it was roughly the same size and evenly spaced, so nothing led.
+ * The fix is hierarchy rather than volume: one headline large enough to be the
+ * subject of the page, one button that is obviously the thing to press, and
+ * everything else deliberately quieter than both.
+ *
+ * Nothing is here that does not move somebody toward the button. The live count
+ * went to the searching screen, where "is anybody actually there" is a question
+ * being asked rather than decoration; the three-step strip went to its own page,
+ * because it explained something the button already implies.
+ *
+ * ---------------------------------------------------------------------------
+ * MOBILE IS THE LAYOUT, NOT A NARROWER ONE
+ * ---------------------------------------------------------------------------
+ * The composition is built to land inside one viewport at 375x667 and up, so
+ * nothing that matters sits below the fold on a phone. `overflow-y-auto` stays
+ * as a safety valve rather than a scroll surface: at 320px, in landscape, or
+ * with a large accessibility font, content that cannot fit must scroll rather
+ * than be clipped. A page that never scrolls but hides its own button is worse
+ * than one that scrolls a little.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THE COPY IS NOT ALLOWED TO SAY
+ * ---------------------------------------------------------------------------
+ * The retention line stays factual: conversations *are* kept for a period and
+ * then deleted, because abuse has to be investigable. "Nothing is stored" is
+ * the easy lie and the one a user would most reasonably feel betrayed by.
+ * Likewise "completely anonymous" — anonymous to the person you are talking to,
+ * yes; to us, not entirely, and the FAQ says so in those words.
  */
-import { Lock, MessageCircle, Shield, Sparkles, Users } from 'lucide-react';
+import { Lock, Sparkles } from 'lucide-react';
 
-import { clientConfig, hasLegalLinks } from '../config';
 import type { ChatState } from '../state/machine';
-import { showPresence } from '../view/presentation';
 import type { Profile } from '../protocol/types';
 import { isEmptyProfile } from '../profile';
-import { ProfileCard } from './ProfileCard';
-import { AdSlot } from './AdSlot';
 import { Button } from './Button';
 
 interface LandingScreenProps {
@@ -26,11 +49,7 @@ interface LandingScreenProps {
   autoSearchIn: number | null;
   onCancelAutoSearch(): void;
   profile: Profile;
-  onProfileChange(profile: Profile): void;
-  onProfileClear(): void;
 }
-
-const legalLinks = hasLegalLinks(clientConfig);
 
 export function LandingScreen({
   state,
@@ -39,10 +58,7 @@ export function LandingScreen({
   autoSearchIn,
   onCancelAutoSearch,
   profile,
-  onProfileChange,
-  onProfileClear,
 }: LandingScreenProps): JSX.Element {
-  const presence = state.features.presence ? state.presence : null;
   const connecting = state.screen === 'connecting' || state.screen === 'disconnected';
   // The strapline claims "no profile", which stops being true the moment
   // someone fills one in. Saying it anyway would be the kind of small
@@ -51,6 +67,12 @@ export function LandingScreen({
 
   return (
     <div className="relative flex h-full animate-fade-in flex-col overflow-y-auto">
+      {/*
+        Four points of drift, not a particle system. They sit well away from the
+        centre column so nothing competes with the headline, and the global
+        `prefers-reduced-motion` rule in index.css stops them dead for anybody
+        who has asked for that.
+      */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <span className="absolute left-[12%] top-[18%] h-2 w-2 animate-float-slow rounded-full bg-amber-400/40" />
         <span
@@ -67,42 +89,54 @@ export function LandingScreen({
         />
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-        {showPresence(presence) && presence && (
-          <div className="mb-6 inline-flex animate-fade-in items-center gap-2 rounded-full border border-ink-800 bg-ink-900/60 px-3.5 py-1.5 text-sm text-ink-300 sm:mb-8">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-sage-400" />
-            </span>
-            <span className="font-mono text-ink-100">{compact(presence.online)}</span> online
-            <span className="text-ink-600">·</span>
-            <Users className="h-3.5 w-3.5 text-ink-500" />
-            <span className="font-mono text-ink-100">{compact(presence.conversations)}</span> chatting
-          </div>
-        )}
+      {/*
+        `min-h-full` rather than `flex-1`: the hero is exactly one viewport tall
+        so the button is always reachable without scrolling, and the sections
+        below start where the fold is rather than being squeezed in beside it.
+      */}
+      <div className="flex min-h-full flex-col items-center justify-center px-5 py-6 text-center sm:px-6 sm:py-8 short:py-4">
 
-        <div className="relative mx-auto mb-6 flex h-16 w-16 items-center justify-center sm:mb-8 sm:h-20 sm:w-20">
-          <span className="absolute inset-0 animate-pulse-ring rounded-full bg-amber-400/10" />
-          <span className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-ink-900 shadow-lift ring-1 ring-ink-700 sm:h-16 sm:w-16">
-            <MessageCircle className="h-6 w-6 text-amber-400 sm:h-8 sm:w-8" strokeWidth={2} />
-          </span>
-        </div>
 
-        <h1 className="text-balance font-display text-4xl font-semibold tracking-tight text-ink-50 sm:text-6xl">
-          {ended ? 'That one is over.' : 'Meet someone new.'}
+        {/*
+          The focal point, and sized like one. 38px on a phone, 64px on a wide
+          desktop — large enough that the page has an unambiguous subject, which
+          is the whole of what was missing.
+        */}
+        <h1 className="text-balance font-display text-[2.375rem] font-semibold leading-[1.08] tracking-tight text-ink-50 sm:text-5xl lg:text-6xl">
+          {ended ? (
+            'That one is over.'
+          ) : (
+            <>
+              Talk to someone you&rsquo;ve{' '}
+              {/*
+                One accented phrase, not a gradient and not a second colour on
+                the page. It gives the headline somewhere to land and makes the
+                proposition — a person you do not know — the part that carries
+                the warmth. Italic because the serif has a genuinely good one.
+              */}
+              <span className="italic text-amber-300">never met</span>.
+            </>
+          )}
         </h1>
-        <p className="text-pretty mx-auto mt-4 max-w-md text-base text-ink-300 sm:mt-5 sm:text-lg">
+
+        <p className="text-pretty mx-auto mt-3.5 max-w-sm text-base text-ink-300 sm:mt-4 sm:max-w-md sm:text-lg short:mt-2">
           {ended
             ? 'There is no way back to that conversation. There is always another stranger.'
-            : 'Random. Anonymous. Instant. Talk to a stranger — no signup, no history, just a conversation.'}
+            : 'Random. Anonymous. Just a conversation.'}
         </p>
 
-        <div className="mt-8 flex w-full justify-center sm:mt-10">
-          <ProfileCard profile={profile} onChange={onProfileChange} onClear={onProfileClear} />
-        </div>
-
-        <div className="mt-5 w-full max-w-xs">
-          <Button size="lg" onClick={onStart} disabled={connecting} className="w-full">
+        {/*
+          Full width on a phone, where a centred pill wastes the thumb's easiest
+          target; back to its natural width from `sm` up, where a button the
+          width of the viewport reads as a form submit.
+        */}
+        <div className="mt-4 w-full max-w-md sm:mt-5 sm:max-w-xs short:mt-3">
+          <Button
+            size="lg"
+            onClick={onStart}
+            disabled={connecting}
+            className="w-full shadow-[0_6px_24px_-10px_rgba(255,180,32,0.55)] transition-shadow duration-300 hover:shadow-[0_10px_34px_-8px_rgba(255,180,32,0.7)]"
+          >
             <Sparkles className="h-5 w-5" />
             {connecting
               ? 'Connecting…'
@@ -128,71 +162,24 @@ export function LandingScreen({
           )}
         </div>
 
-        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-ink-500">
-          <Lock className="h-3 w-3" />
-          {/*
-            "Nothing kept after you leave" used to sit here, directly above a
-            footer correctly saying conversations are kept for a limited period.
-            The intended meaning was that the *declaration* is not kept
-            server-side, which is true and is a real design achievement (D34) —
-            but as written it was an unqualified retention claim, and it is the
-            line a user reads as the privacy promise.
-          */}
-          {declaredAnything
-            ? 'No signup · No account · Your profile stays on this device'
-            : 'No signup · No profile · Anonymous'}
-        </div>
-
-        <div className="mt-8 w-full max-w-xs">
-          <AdSlot slot={ended ? 'between-chats' : 'landing'} />
-        </div>
-      </div>
-
-      <footer className="shrink-0 border-t border-ink-800/50 px-6 py-4">
-        <div className="mx-auto flex max-w-md items-start justify-center gap-2 text-center text-xs leading-relaxed text-ink-500">
-          <Shield className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-600" />
-          <span>
-            Be kind. Report or block anyone who makes you uncomfortable. Conversations are kept for
-            a limited period so abuse can be investigated, then deleted automatically.
-          </span>
-        </div>
 
         {/*
-          The age gate links these too, but it is shown once per browser. Without
-          a second route, everybody who has already acknowledged it could never
-          reach the documents again — and a policy nobody can find is not
-          published (docs/policies/README.md step 5).
-
-          Here rather than in settings because this is the screen somebody sits
-          on before starting a conversation, which is when the question of what
-          is kept actually occurs to them.
+          Was `text-xs text-ink-500` — technically readable, visually invisible,
+          which wasted the most reassuring line on the page. It is the answer to
+          "what is this going to cost me", and it should be legible at a glance.
         */}
-        {legalLinks && (
-          <div className="mx-auto mt-3 flex max-w-md items-center justify-center gap-4 text-xs text-ink-600">
-            <a
-              href={clientConfig.legal.termsUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="underline underline-offset-2 transition-colors hover:text-ink-300"
-            >
-              Terms
-            </a>
-            <a
-              href={clientConfig.legal.privacyUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="underline underline-offset-2 transition-colors hover:text-ink-300"
-            >
-              Privacy
-            </a>
-          </div>
-        )}
-      </footer>
+        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-ink-400 short:mt-3">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-ink-500" />
+          {declaredAnything
+            ? 'No signup · No account · Your profile stays on this device'
+            : 'No signup · No profile · No commitment'}
+        </div>
+
+
+
+
+      </div>
+
     </div>
   );
-}
-
-function compact(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
 }

@@ -13,7 +13,7 @@
  */
 
 import { PersonaClient } from '../../src/personas/client';
-import { humanCadence, splitIntoBubbles } from '../../src/personas/cadence';
+import { humanCadence, openingBrevity, splitIntoBubbles } from '../../src/personas/cadence';
 import type {
   PersonaClientEvent,
   PersonaVoice,
@@ -588,6 +588,53 @@ describe('reply timing', () => {
   });
 });
 
+describe('keeping the first few messages short', () => {
+  // The prompt already asked for this and the model ignored it. The second
+  // message of a live conversation, to somebody who had said "hi" and "m", was
+  // thirty-five words carrying a whole declared profile and two anecdotes.
+  const DUMP =
+    "wait, that's it? i'm 29, nonbinary, us. bought three keyboards i can't " +
+    "justify and at least two games i'll never finish. you?";
+
+  it('cuts that opening reply back to its first sentence', () => {
+    expect(openingBrevity(DUMP, 1)).toBe("wait, that's it?");
+  });
+
+  it('leaves a reply that was already short alone', () => {
+    expect(openingBrevity('not much, you?', 1)).toBe('not much, you?');
+    expect(openingBrevity('ha fair', 0)).toBe('ha fair');
+  });
+
+  it('never stops in the middle of a clause', () => {
+    // A bubble that ends mid-thought reads as a truncation bug rather than as
+    // somebody being brief.
+    const kept = openingBrevity(DUMP, 2);
+    expect(kept.endsWith('?') || kept.endsWith('.') || kept.endsWith('!')).toBe(true);
+  });
+
+  it('caps a single long sentence at a word boundary', () => {
+    const rambling = 'so anyway i was thinking about the thing you said and it made me wonder';
+    const kept = openingBrevity(rambling, 0);
+    expect(kept.split(/\s+/).length).toBeLessThanOrEqual(12);
+    expect(rambling.startsWith(kept)).toBe(true);
+  });
+
+  it('takes the first line when the model laid out two', () => {
+    expect(openingBrevity('wait\nactually no, forget that entirely', 1)).toBe('wait');
+  });
+
+  it('stops applying once the conversation is actually running', () => {
+    // Somebody twenty messages deep has earned a longer answer, and by then the
+    // other person has decided they are talking to a person.
+    expect(openingBrevity(DUMP, 3)).toBe(DUMP);
+    expect(openingBrevity(DUMP, 20)).toBe(DUMP);
+  });
+
+  it('says nothing rather than something broken when given nothing', () => {
+    expect(openingBrevity('   ', 0)).toBe('');
+  });
+});
+
 describe('splitting a reply into bubbles', () => {
   it('leaves a short reply as one message, because it is one thought', () => {
     expect(splitIntoBubbles('yeah same honestly')).toEqual(['yeah same honestly']);
@@ -644,16 +691,39 @@ describe('the typing indicator', () => {
   });
 
   it('types once per bubble, so a burst looks like a burst', async () => {
-    const h = build(scriptedVoice(['wait\nactually no, i take that back completely honestly']));
+    // Driven past the opening turns first. `openingBrevity` deliberately cuts
+    // an early reply to one sentence, so a two-bubble burst is only possible
+    // once the conversation is actually running — which is the point of it.
+    const h = build(
+      scriptedVoice([
+        'hey',
+        'ok',
+        'sure',
+        'wait\nactually no, i take that back completely honestly',
+      ]),
+    );
     h.feed('connected', CONNECTED);
     h.feed('matched', MATCHED);
     await h.clock.run();
 
-    const types = h.socket
+    for (let i = 0; i < 3; i += 1) {
+      h.feed('message', {
+        matchId: 'm_1',
+        messageId: `x${i}`,
+        type: 'text',
+        text: 'and?',
+        sentAt: '',
+        from: 'partner',
+      });
+      await h.clock.run();
+    }
+
+    const tail = h.socket
       .frames()
       .filter((f) => f.type === 'typing' || f.type === 'message')
-      .map((f) => f.type);
-    expect(types).toEqual(['typing', 'typing', 'message', 'typing', 'typing', 'message']);
+      .map((f) => f.type)
+      .slice(-6);
+    expect(tail).toEqual(['typing', 'typing', 'message', 'typing', 'typing', 'message']);
   });
 
   it('leaves nobody watching "typing…" after the partner has gone', async () => {

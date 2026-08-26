@@ -3,6 +3,21 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      screens: {
+        /*
+          Short viewports, not narrow ones.
+
+          Every other breakpoint here is about width, and width was never the
+          problem: the landing screen overflowed by 82px on a 1536x695 laptop
+          while fitting comfortably on a taller phone. Compressing by width
+          would have squeezed the wrong screens and left that one broken.
+
+          760px catches the common laptop heights (695-720 after browser
+          chrome) and landscape phones, and leaves tall screens with their
+          generous spacing intact.
+        */
+        short: { raw: '(max-height: 760px)' },
+      },
       colors: {
         // Warm ink palette — deep charcoal base, warm cream text, amber accent
         ink: {
@@ -29,6 +44,38 @@ export default {
           700: '#b45c04',
           800: '#92480a',
           900: '#793c0c',
+        },
+        /*
+         * Warm light palette, for the support page.
+         *
+         * The rest of the product is dark (). This is the one surface that
+         * is not, and the difference is deliberate: asking for money in the same
+         * dark chrome as the chat reads as part of the product, and it is not.
+         */
+        coffee: {
+          50: '#fbf6f0',
+          100: '#f5e9da',
+          200: '#e8d0b3',
+          300: '#d9b285',
+          400: '#c8905a',
+          500: '#b5733e',
+          600: '#9c5a2e',
+          700: '#7d4527',
+          800: '#5f3520',
+          900: '#3d2316',
+          950: '#241308',
+        },
+        cream: {
+          50: '#fefcf9',
+          100: '#fdf8ef',
+          200: '#faedd3',
+          300: '#f4d9a6',
+          400: '#edbf6f',
+          500: '#e6a344',
+          600: '#d98a2f',
+          700: '#b86a25',
+          800: '#935322',
+          900: '#784521',
         },
         sage: {
           400: '#7fb069',
@@ -86,6 +133,10 @@ export default {
           '0%': { transform: 'scale(0.8)', opacity: '0.6' },
           '100%': { transform: 'scale(2.2)', opacity: '0' },
         },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-12px)' },
+        },
         'float-slow': {
           '0%,100%': { transform: 'translateY(0)' },
           '50%': { transform: 'translateY(-6px)' },
@@ -101,6 +152,7 @@ export default {
         'pop-in': 'pop-in 0.4s cubic-bezier(0.22,1,0.36,1) both',
         'pulse-ring': 'pulse-ring 2s ease-out infinite',
         'float-slow': 'float-slow 5s ease-in-out infinite',
+        float: 'float 6s ease-in-out infinite',
         'shimmer': 'shimmer 1.6s linear infinite',
       },
     },

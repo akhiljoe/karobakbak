@@ -42,7 +42,7 @@
  * this contributes to `overlayOpen` so that shortcut stands down while the gate
  * is showing.
  */
-import { ExternalLink } from 'lucide-react';
+import { useState } from 'react';
 
 import { Button } from './Button';
 
@@ -63,7 +63,20 @@ export function AgeGate({
   onAccept,
   onLeave,
 }: AgeGateProps): JSX.Element {
-  const linked = termsUrl !== '' && privacyUrl !== '';
+  // Reset with the dialog. A box ticked in a previous session is not a
+  // decision taken in this one, and this gate is asked once per browser.
+  const [agreed, setAgreed] = useState(false);
+
+  /*
+   * A configured canonical URL wins over the in-app page.
+   *
+   * A deployment that publishes the documents at a domain should link those,
+   * because that is the version somebody can cite in a complaint. Absent one,
+   * the in-app page *is* the published version — the documents ship with the
+   * bundle, so unlike before there is never nothing to point at.
+   */
+  const terms = termsUrl !== '' ? termsUrl : '/terms';
+  const privacy = privacyUrl !== '' ? privacyUrl : '/privacy';
 
   return (
     <div
@@ -86,66 +99,77 @@ export function AgeGate({
           You must be 18 or over
         </h2>
 
-        <div className="mt-4 space-y-3 text-sm leading-relaxed text-ink-300">
-          <p>
-            karobakbak connects you with a randomly chosen stranger. You do not
-            choose who you are matched with, and neither do they.
-          </p>
-          <p>
-            <span className="font-semibold text-ink-100">
-              We do not check anyone&rsquo;s age.
-            </span>{' '}
-            We ask, and we cannot tell you who anyone is. Treat everything a
-            stranger tells you about themselves as unverified.
-          </p>
-          <p>
-            Conversations are kept for 30 days, or 90 days if someone reports
-            them, so that they can be investigated.
-          </p>
-        </div>
+        {/*
+          One acknowledgement, carrying both halves.
 
-        <div className="mt-6 flex flex-col gap-2.5">
-          <Button size="lg" onClick={onAccept} autoFocus>
-            I am 18 or over
+          The age representation and the agreement to the documents are the same
+          act — somebody is stating a fact about themselves and accepting the
+          rules that follow from it — so they are one tick rather than a tick
+          plus a button that means something different. An unticked box is the
+          only part of a dialog that requires a decision rather than a
+          dismissal, which is why the box carries the substance and the button
+          only confirms it.
+
+          The behaviour undertaking sits inside it rather than beside it. Split
+          across two boxes it becomes a form; here it is one sentence somebody
+          reads on the way to the button.
+
+          What used to be explained on this screen — how matching works, that
+          age is not checked, how long conversations are kept — is in the Terms,
+          linked from the box itself. `docs/policies/age-gate.md` argues the
+          age-not-checked line belongs on the gate; that was overruled
+          deliberately, and this comment exists so the next reader knows it was
+          a decision rather than an omission.
+        */}
+        <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-ink-700 bg-ink-950 px-3.5 py-3.5 transition-colors hover:border-ink-600">
+          <input
+            type="checkbox"
+            checked={agreed}
+            onChange={(event) => setAgreed(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-amber-400"
+          />
+          <span className="text-sm leading-relaxed text-ink-300">
+            I am 18 or over. I have read and agree to the{' '}
+            <a
+              href={terms}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-ink-100 underline underline-offset-4 hover:text-amber-300"
+            >
+              Terms
+            </a>
+            ,{' '}
+            <a
+              href={privacy}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-ink-100 underline underline-offset-4 hover:text-amber-300"
+            >
+              Privacy Policy
+            </a>{' '}
+            and{' '}
+            <a
+              href="/rules"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-ink-100 underline underline-offset-4 hover:text-amber-300"
+            >
+              Rules
+            </a>
+            , and I will not send sexual content to anyone who has not welcomed it or who may be
+            under 18.
+          </span>
+        </label>
+
+        <div className="mt-5 flex flex-col gap-2.5">
+          <Button size="lg" onClick={onAccept} disabled={!agreed} autoFocus>
+            Start chatting
           </Button>
           <Button size="lg" variant="secondary" onClick={onLeave}>
             Leave
           </Button>
         </div>
 
-        <div className="mt-5 border-t border-ink-800 pt-4 text-center text-xs text-ink-400">
-          {linked ? (
-            <p className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-              <a
-                href={termsUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="inline-flex items-center gap-1 text-ink-300 underline underline-offset-2 transition-colors hover:text-ink-100"
-              >
-                Terms
-                <ExternalLink className="h-3 w-3" aria-hidden="true" />
-              </a>
-              <a
-                href={privacyUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="inline-flex items-center gap-1 text-ink-300 underline underline-offset-2 transition-colors hover:text-ink-100"
-              >
-                Privacy Policy
-                <ExternalLink className="h-3 w-3" aria-hidden="true" />
-              </a>
-            </p>
-          ) : (
-            /*
-              Says what is missing rather than pretending nothing is. A build
-              without these URLs is not ready to be in front of anyone, and a
-              silently absent link would hide that from whoever deployed it.
-            */
-            <p className="text-amber-300/80">
-              Terms and Privacy Policy are not published in this build.
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );

@@ -12,8 +12,14 @@ import { useDuration } from '../hooks/useDuration';
 import type { ChatState } from '../state/machine';
 import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
-import { colourFor, composerDisabled, glyphFor, searchingDetail, type ConnectionView } from '../view/presentation';
-import { AdRail } from './AdRail';
+import {
+  colourFor,
+  composerDisabled,
+  glyphFor,
+  searchingDetail,
+  showPresence,
+  type ConnectionView,
+} from '../view/presentation';
 import { Avatar } from './Avatar';
 import { ConnectionStatus } from './ConnectionStatus';
 import { IcebreakerBar } from './IcebreakerBar';
@@ -219,7 +225,12 @@ export function ChatShell({
 
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden">
-          {searching && <SearchingOverlay waiting={state.waiting} />}
+          {searching && (
+            <SearchingOverlay
+              waiting={state.waiting}
+              presence={state.features.presence ? state.presence : null}
+            />
+          )}
 
           {showIcebreaker && (
             <IcebreakerBar onUse={onSend} onDismiss={() => setIcebreakerDismissed(true)} />
@@ -242,7 +253,6 @@ export function ChatShell({
           </div>
         </div>
 
-        <AdRail />
       </div>
 
       {/*
@@ -288,7 +298,13 @@ export function ChatShell({
   );
 }
 
-function SearchingOverlay({ waiting }: { waiting: number }): JSX.Element {
+function SearchingOverlay({
+  waiting,
+  presence,
+}: {
+  waiting: number;
+  presence: { online: number; conversations: number } | null;
+}): JSX.Element {
   return (
     <div
       className="absolute inset-0 z-10 flex animate-fade-in flex-col items-center justify-center px-6 text-center"
@@ -316,6 +332,30 @@ function SearchingOverlay({ waiting }: { waiting: number }): JSX.Element {
 
       <RotatingLine />
       <p className="mt-2 text-sm text-ink-400">{searchingDetail(waiting)}</p>
+
+      {/*
+        The live count, moved here from the landing page.
+
+        It answers one question — "is anybody actually here?" — and this is the
+        moment somebody asks it. On the landing screen the same number was
+        decoration; while the spinner is turning it is the difference between
+        waiting and giving up.
+
+        Still governed by `showPresence`, so it is absent below 100 rather than
+        reassuring nobody with a small number (D21).
+      */}
+      {showPresence(presence) && presence !== null && (
+        <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-ink-800 bg-ink-900/60 px-3.5 py-1.5 text-sm text-ink-300">
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage-400 opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-sage-400" />
+          </span>
+          <span>
+            <span className="font-mono text-ink-100">{presence.online.toLocaleString()}</span> people
+            online right now
+          </span>
+        </p>
+      )}
     </div>
   );
 }

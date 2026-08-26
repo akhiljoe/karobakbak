@@ -22,11 +22,18 @@ ARG VITE_ADS_PROVIDER="noop"
 # notice saying so rather than pretending nothing is missing.
 ARG VITE_TERMS_URL=""
 ARG VITE_PRIVACY_URL=""
+# A Dockerfile only receives build args it declares. Compose passed these two
+# for a whole build before anyone noticed the links were still missing from the
+# bundle — there is no warning for an undeclared arg, it is simply dropped.
+ARG VITE_CONTACT_EMAIL=""
+ARG VITE_SUPPORT_URL=""
 ENV VITE_WS_URL=$VITE_WS_URL
 ENV VITE_ADS_ENABLED=$VITE_ADS_ENABLED
 ENV VITE_ADS_PROVIDER=$VITE_ADS_PROVIDER
 ENV VITE_TERMS_URL=$VITE_TERMS_URL
 ENV VITE_PRIVACY_URL=$VITE_PRIVACY_URL
+ENV VITE_CONTACT_EMAIL=$VITE_CONTACT_EMAIL
+ENV VITE_SUPPORT_URL=$VITE_SUPPORT_URL
 
 RUN npm run build
 
