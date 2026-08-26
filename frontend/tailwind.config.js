@@ -17,6 +17,16 @@ export default {
           generous spacing intact.
         */
         short: { raw: '(max-height: 760px)' },
+        /*
+         * Genuinely cramped, as distinct from merely short.
+         *
+         * `short` compresses spacing on ordinary laptops. Hiding content at that
+         * threshold means a 695px window — which is a very common laptop —
+         * never sees it at all. This is the lower bar, for viewports where the
+         * primary button really would be pushed out of reach. Set at 700 because
+         * a 695px window is exactly where the sample stops fitting.
+         */
+        tiny: { raw: '(max-height: 700px)' },
       },
       colors: {
         // Warm ink palette — deep charcoal base, warm cream text, amber accent
