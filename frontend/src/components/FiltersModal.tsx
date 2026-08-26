@@ -20,17 +20,24 @@
  * filtering on anonymous stranger chat was exactly what the minor-safety review
  * had to rule on (security §23–24).
  *
- * The ruling: **country and language only**. Gender was rejected — filtering by
- * a self-declared, unverified field on a service with no age assurance sells
- * targeting rather than preference, which is the harm D37 was written about.
- * Country and language narrow the pool without describing a person, and they
- * are the same revenue mechanic at a fraction of the risk.
+ * The list is **gender, country and language**, over the declared profile.
+ *
+ * Gender was held back once and then included, and the reasoning against it has
+ * not gone away — it is worth keeping visible rather than deleting. Filtering on
+ * a self-declared, unverified field is closer to targeting than to preference,
+ * and on a service with no age assurance that is the harm D37 was written about.
+ * Nothing here verifies anybody, and no copy may imply that it does.
+ *
+ * Inferring gender from message content instead of reading the declared field
+ * would be a materially different feature: it classifies conversation text for
+ * a purpose that is not safety, which the retention and purpose rules do not
+ * currently cover. It is not what this filters on.
  *
  * The controls stay disabled until segments exist behind them. Nothing here
  * promises to work.
  */
 import { useEffect } from 'react';
-import { Info, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowUpRight, Lock, SlidersHorizontal, X } from 'lucide-react';
 
 import { FILTERS_ENABLED } from '../features';
 import { Button } from './Button';
@@ -40,7 +47,7 @@ interface FiltersModalProps {
   onClose(): void;
 }
 
-const PLANNED = ['Country', 'Language'] as const;
+const PLANNED = ['Gender', 'Country', 'Language'] as const;
 
 export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element | null {
   useEffect(() => {
@@ -81,13 +88,30 @@ export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element 
         </div>
 
         {!FILTERS_ENABLED && (
-          <div className="mb-4 flex gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3.5 py-3">
-            <Info className="h-4 w-4 shrink-0 text-amber-400" />
-            <p className="text-xs leading-relaxed text-amber-100/90">
-              <span className="font-semibold">Not available yet.</span> Everyone is matched from a
-              single pool right now, so nothing here would change who you meet. These controls are
-              switched off rather than hidden so you can see what is planned.
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3.5 py-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-amber-200">
+              <Lock className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+              Part of Premium
             </p>
+            {/*
+              One line and a link. The Premium page already explains what this
+              costs, what it does and what it deliberately does not do — saying
+              it again here is the kind of repetition that trains people to stop
+              reading the notices that matter.
+
+              A new tab, not a route: this modal opens from the header, which is
+              present during a conversation, and navigating away in this tab
+              would unmount the app and drop the socket mid-chat.
+            */}
+            <a
+              href="/premium"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 text-xs font-medium text-amber-300 underline underline-offset-4 transition-colors hover:text-amber-200"
+            >
+              What you get
+              <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+            </a>
           </div>
         )}
 
@@ -98,17 +122,14 @@ export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element 
               className="flex items-center justify-between rounded-xl border border-ink-800 bg-ink-950 px-3.5 py-3 opacity-60"
             >
               <span className="text-sm text-ink-300">{label}</span>
-              <span className="rounded-full bg-ink-800 px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-ink-400">
-                Planned
+              <span className="inline-flex items-center gap-1 rounded-full bg-ink-800 px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-ink-400">
+                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                Premium
               </span>
             </li>
           ))}
         </ul>
 
-        <p className="mt-4 px-1 text-xs leading-relaxed text-ink-500">
-          Filters only start to help once enough people are online that a narrower pool still
-          matches quickly.
-        </p>
 
         <Button variant="secondary" className="mt-4 w-full" onClick={onClose}>
           Close

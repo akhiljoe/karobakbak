@@ -35,12 +35,14 @@ export const ACCOUNTS_ENABLED = false;
  * Matching filters. The modal renders read-only while this is false, so the
  * roadmap is visible without the controls promising anything.
  *
- * The option list is settled: **country and language only**. Gender filtering
- * was considered and rejected — it would sell targeting over a self-declared,
- * unverified field on a service with no age assurance, which is the opposite of
- * what D37 protects against. Country and language are the same revenue
- * mechanic with a fraction of the risk. The list can widen if age assurance
- * ever lands; it should not widen before then.
+ * The option list is **gender, country and language**, all read from the
+ * declared profile and none of them verified.
+ *
+ * Gender was excluded first and then included. The argument against it stands
+ * on the record: filtering a self-declared field is nearer to targeting than to
+ * preference, and D37 was written about exactly that. What follows is a
+ * constraint on the copy rather than on the feature — nothing anywhere may
+ * suggest a filter has checked anything, because none of them has.
  */
 export const FILTERS_ENABLED = false;
 

@@ -16,12 +16,18 @@
  * ---------------------------------------------------------------------------
  * WHAT PREMIUM IS ALLOWED TO BE
  * ---------------------------------------------------------------------------
- * Country and language. **Not gender** — that was a deliberate decision, and
- * the reasoning is worth keeping next to the code: gender filtering here would
- * sell targeting over a self-declared, unverified field on a service with no
- * age assurance. Country and language are the same revenue mechanic with a
- * fraction of the risk, and the option list can widen later if age assurance
- * ever lands.
+ * Gender, country and language — every one of them read from the declared
+ * profile, and not one of them verified.
+ *
+ * Gender was excluded first and then included. The argument against it is worth
+ * keeping next to the code rather than deleting with the decision: filtering a
+ * self-declared field is nearer to targeting than to preference, and on a
+ * service with no age assurance that is the harm D37 was written about.
+ *
+ * What follows is a constraint on the copy rather than on the feature. Nothing
+ * on this page may suggest a filter has checked anything, because none of them
+ * has — which is why "Nothing verified" is listed among what filtering does not
+ * do, immediately under the list of what it does.
  *
  * The free product does not get worse. Nothing that exists today moves behind
  * this, which is the only version of paid matching that does not make the
@@ -36,7 +42,7 @@
  * the thing that has to stay true; if it ever stops being true, this copy is a
  * lie and the whole anonymity claim goes with it.
  */
-import { Check, Globe, Languages, Mail, ShieldCheck } from "lucide-react";
+import { Check, Globe, Languages, Mail, ShieldCheck, Users } from "lucide-react";
 
 import { PAYMENTS_ENABLED } from "../features";
 import { RouteLink, useDocumentTitle } from "../router";
@@ -53,6 +59,11 @@ const INCLUDED: ReadonlyArray<{
   title: string;
   detail: string;
 }> = [
+  {
+    icon: Users,
+    title: "Match by gender",
+    detail: "Whatever people have said about themselves. Nobody has checked it.",
+  },
   {
     icon: Globe,
     title: "Match by country",
@@ -195,9 +206,9 @@ export function PremiumPage({ onSignIn }: PremiumPageProps): JSX.Element {
             </p>
             <ul className="mt-3 space-y-1.5">
               {[
-                "No gender filtering",
                 "No age filtering",
                 "No location beyond a country you choose",
+                "Nothing verified — every field is self-declared",
               ].map((item) => (
                 <li
                   key={item}
