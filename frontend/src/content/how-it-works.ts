@@ -1,20 +1,28 @@
 /**
- * "How it works" — the page the homepage used to be.
+ * "How it works".
+ *
+ * ---------------------------------------------------------------------------
+ * THE COPY IS THE OPERATOR'S
+ * ---------------------------------------------------------------------------
+ * Written in `docs/rewrite-wording/how_it_works.md` and transcribed here rather
+ * than paraphrased. If the two ever disagree, the draft is the source and this
+ * file is the stale one.
+ *
+ * One deliberate divergence: the draft offers "a name, age, gender or country"
+ * as optional details. Country stopped being one of those — it is resolved from
+ * the connection at the upgrade and cannot be set by hand — so the word is
+ * dropped here rather than published as an instruction nobody can follow.
  *
  * ---------------------------------------------------------------------------
  * WHY THIS IS A PAGE AND NOT A SCROLL
  * ---------------------------------------------------------------------------
- * This material — the three steps, what is different about it, the safety
- * controls — briefly lived as stacked sections below the homepage hero. That
- * turned the one screen this product needs into a long scroll, and it buried
- * the only thing the homepage is for, which is the button.
+ * This material briefly lived as stacked sections below the homepage hero,
+ * which turned the one screen this product needs into a long page and buried
+ * the only thing the homepage is for.
  *
- * A visitor who wants to understand the product before pressing anything is a
- * visitor with a *question*, and a question is answered by a page they choose
- * to open. The homepage answers the other case — somebody who is ready — and
- * those two audiences want opposite layouts.
- *
- * So: hero on the homepage, everything else one click up in the header.
+ * Somebody who wants to understand before pressing anything has a *question*,
+ * and a question is answered by a page they chose to open. The homepage answers
+ * the other case — somebody who is ready — and those two want opposite layouts.
  */
 
 import type { StaticPage } from './pages';
@@ -22,61 +30,68 @@ import type { StaticPage } from './pages';
 export const HOW_IT_WORKS: StaticPage = {
   id: 'how-it-works',
   title: 'How it works',
-  summary: 'What happens when you press the button, and what it costs you.',
+  summary:
+    "Talk to someone you've never met. No account, no profile to build, no commitment to stay.",
   sections: [
     {
       heading: '01 — Start',
       body: [
-        'Press "Start chatting". There is nothing to sign up for, nothing to install, and no ' +
-          'permission to grant. It runs in the browser you already have.',
-        'You can add a name, age, gender or country first if you want to. All four are optional, ' +
-          'none is checked, and they are gone when your session ends.',
+        'Press "Start chatting".',
+        'You will first be asked to confirm your age and agree to the Terms, Privacy Policy and ' +
+          'Rules. Once you are ready, you are in.',
+        'You can optionally add a name, age or gender before you start. You do not need to ' +
+          'provide any of them to chat.',
       ],
     },
     {
-      heading: '02 — Match',
+      heading: '02 — Get matched',
       body: [
-        'You are paired with another person at random. Not an algorithm choosing who you should ' +
-          'meet, not somebody who saw your profile — whoever is next.',
-        'Sometimes it is one of our automated accounts rather than a person. They never claim to ' +
-          'be human, and what you say in those conversations is sent to the company whose model ' +
-          'writes the replies. That happens in no other conversation.',
+        'You are matched with a stranger at random.',
+        'There is no profile to browse and no one to choose. You simply meet whoever is ' +
+          'available next.',
+        'If the conversation is not for you, you can leave and find someone else. You do not ' +
+          'need to explain why.',
       ],
     },
     {
       heading: '03 — Talk',
       body: [
-        'Text only, in real time. No photos, no voice, no video — the server refuses anything ' +
-          'that is not text.',
-        'When you are done, or if it is not going anywhere, you skip and get somebody else. You ' +
-          'never owe a stranger an explanation.',
-      ],
-    },
-    {
-      heading: 'What makes it different',
-      body: [
-        'No signup and no account. There is nothing to create and nothing to delete.',
-        'Nothing to install — it runs in the browser you already have.',
-        'You can leave at any time. One tap, and no explanation owed to anyone.',
-        'Conversations delete themselves: 30 days, or 90 if somebody reports one.',
+        'Have a conversation in real time.',
+        'You can keep it casual, ask questions, disagree, joke around or simply see where the ' +
+          'conversation goes. You are talking to a stranger, so share only what you are ' +
+          'comfortable sharing.',
+        'You can Skip at any time. You can also Block someone or Report a conversation if ' +
+          'something crosses a line.',
       ],
     },
     {
       heading: 'Three controls, always there',
       body: [
-        'Skip ends the conversation now and finds you somebody else.',
-        'Block ends it and makes sure that person is never matched with you again.',
-        'Report sends the conversation to be reviewed, and keeps it for 90 days so there is ' +
-          'something to look at.',
-        'These are controls you hold. They are not a promise that a stranger will behave — no ' +
-          'site can make that promise, and we are not going to pretend otherwise.',
+        'Skip ends the conversation and finds you someone else.',
+        'Block ends the conversation and prevents that person from being matched with you again.',
+        'Report sends a conversation for review when something needs our attention.',
+        'These controls give you a way out when a conversation is not right. They cannot ' +
+          'guarantee that every stranger will behave well — no service can make that promise.',
+      ],
+    },
+    {
+      heading: 'What about anonymity?',
+      body: [
+        'You do not need an account or a profile to start chatting. Optional profile details are ' +
+          'just that: optional.',
+        'That does not mean you should assume a stranger knows nothing about you, or that ' +
+          'everything you say is completely untraceable. Your conversations are with strangers, ' +
+          'so treat them that way. Do not share passwords, financial information, your precise ' +
+          'location or anything else you would not want a stranger to have.',
+        'For more on what information the service collects and how it is handled, see the ' +
+          'Privacy Policy.',
       ],
     },
     {
       heading: 'What it costs',
       body: [
-        'Nothing. The whole product is free and nothing that exists today will move behind a ' +
-          'payment.',
+        'Nothing.',
+        'Chatting is free. There is no signup required to start a conversation.',
       ],
     },
   ],

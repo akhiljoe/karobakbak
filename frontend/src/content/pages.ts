@@ -68,75 +68,80 @@ const ABOUT: StaticPage = {
     {
       heading: 'The short version',
       body: [
-        'karobakbak pairs you with a stranger at random for a text conversation. There is no ' +
-          'signup, no account and no profile that follows you around. If a conversation is not ' +
-          'going anywhere, you skip, and you get somebody else.',
-        'That is the entire product. Everything below is a consequence of trying to do that ' +
-          'one thing honestly.',
+        'karobakbak pairs you with a stranger at random for a conversation.',
+        'There is no signup, no account and no profile to build. Start a chat, talk to whoever ' +
+          'you meet, and leave whenever you want. If the conversation is not going anywhere, ' +
+          'skip and meet someone else.',
+        'That simplicity is the point.',
       ],
     },
     {
       heading: 'Why it exists',
       body: [
-        'Most places online show you people you already know, or people an algorithm decided ' +
-          'you should see. Talking to someone chosen at random is a different thing entirely: ' +
-          'nobody is performing for an audience, nothing is being scored, and neither of you ' +
-          'has a reputation to protect.',
-        'Conversations like that used to be ordinary and are now surprisingly rare.',
+        'Most of the internet is built around people you already know, people you follow, or ' +
+          'people an algorithm thinks you might like.',
+        'karobakbak is built around something different: talking to someone you have never met.',
+        'There is no audience watching your conversation. No follower count. No feed to ' +
+          'maintain. No reputation to build. Just two strangers and a conversation.',
+        'Sometimes it will be interesting. Sometimes it will be awkward. Sometimes it will last ' +
+          'thirty seconds. That is part of the idea.',
       ],
     },
     {
       heading: 'Text only, on purpose',
       body: [
-        'No photos, no video, no voice. This is not a feature waiting to be built — the server ' +
-          'refuses anything that is not text, and that refusal is what keeps the product from ' +
-          'becoming something that cannot be moderated properly.',
-        'It also means far less can go wrong. Nobody can send you an image you did not ask to ' +
-          'see, and nobody can record your face or your voice.',
+        'karobakbak is currently built around text conversations.',
+        'Keeping the experience focused on text makes the product simpler and gives us fewer ' +
+          'types of content to deal with. It also means you can have a conversation without ' +
+          'sharing your face, your voice or an image of yourself.',
+        'We may add other ways to communicate in the future. If we do, we will explain what ' +
+          'changes and what it means for you.',
       ],
     },
     {
-      heading: 'Anonymous, and what that actually means',
+      heading: 'Anonymous, with an important distinction',
       body: [
-        'We never ask for your name, email address or phone number, and there is nothing to ' +
-          'sign in to. The name, age, gender and country you can enter before a chat are a ' +
-          'label you choose to show, typed by you and checked by nobody. They are not kept ' +
-          'once your session ends — your browser re-sends them each time.',
-        'To the person you are talking to, you are anonymous and unfindable afterwards. To us, ' +
-          'not entirely: we hold the conversation for a limited period so abuse can be ' +
-          'investigated. We would rather be exact about that than claim something warmer and ' +
-          'less true.',
+        'You do not need to give us your name, email address or phone number to use the free ' +
+          'chat service.',
+        'You can optionally choose a name, age or gender to share with the person you are ' +
+          'matched with. Those details are self-declared — nobody verifies them.',
+        'But anonymous does not mean invisible.',
+        'Like any online service, karobakbak may process technical information and conversation ' +
+          'data for purposes such as operating the service, preventing abuse and responding to ' +
+          'reports.',
+        'We would rather be precise about that than make a bigger promise than the product can ' +
+          'keep.',
       ],
     },
     {
-      heading: 'Some partners are automated',
+      heading: 'Some conversations are with automated accounts',
       body: [
-        'Occasionally the stranger you are matched with is one of our automated accounts ' +
-          'rather than a person. They exist because a random chat service with nobody in it is ' +
-          'not a service.',
+        'Not every stranger you meet is a person. Some are automated accounts run by us, and ' +
+          'they exist because a random chat service with nobody in it is not a service.',
         'They will never claim to be human. Ask one directly whether it is a bot and it will ' +
-          'not tell you it is a person. What you say in those conversations is sent to the ' +
-          'company that generates the replies, which does not happen in any other conversation.',
+          'not tell you it is a person.',
+        'What you type in one of those conversations is sent to the company whose model writes ' +
+          'the replies. That happens in no other conversation, and the Privacy page sets out ' +
+          'who that is and what they may do with it.',
         'We would rather say this here than let you find out.',
       ],
     },
     {
       heading: 'Adults only',
       body: [
-        'You must be 18 or over. We ask, and we do not verify — which is a real limitation and ' +
-          'not one we are going to dress up as a safeguard. A gate that implied it had checked ' +
-          'would be worse than no gate, because it would manufacture confidence in the person ' +
-          'who passed it.',
-        'If you are under 18, this is not for you.',
+        'You must be 18 or over to use karobakbak.',
+        'We ask you to confirm your age, but that confirmation does not verify your identity or ' +
+          'prove your age.',
+        'If you are under 18, please do not use the service.',
       ],
     },
     {
-      heading: 'What it will not become',
+      heading: 'What it is not',
       body: [
-        'No feed. No followers. No streaks, no points, no reason to come back tomorrow other ' +
-          'than wanting to. Nothing here is designed to be hard to leave.',
-        'Some things may arrive later — they will arrive as this page changing, not as a ' +
-          'surprise.',
+        'No feed. No followers. No streaks. No points. No pressure to stay.',
+        'Nothing here is designed to make leaving difficult.',
+        'The product is deliberately small: meet a stranger, have a conversation, and leave ' +
+          'when you want. That is karobakbak.',
       ],
     },
   ],
