@@ -3,6 +3,21 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      screens: {
+        /*
+          Short viewports, not narrow ones.
+
+          Every other breakpoint here is about width, and width was never the
+          problem: the landing screen overflowed by 82px on a 1536x695 laptop
+          while fitting comfortably on a taller phone. Compressing by width
+          would have squeezed the wrong screens and left that one broken.
+
+          760px catches the common laptop heights (695-720 after browser
+          chrome) and landscape phones, and leaves tall screens with their
+          generous spacing intact.
+        */
+        short: { raw: '(max-height: 760px)' },
+      },
       colors: {
         // Warm ink palette — deep charcoal base, warm cream text, amber accent
         ink: {

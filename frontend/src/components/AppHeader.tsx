@@ -10,9 +10,11 @@
  * than no button. The filters control is the opposite case, and the reasoning
  * for the asymmetry is in `features.ts`.
  */
-import { MessageCircle, Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { Settings, SlidersHorizontal, Users } from 'lucide-react';
 
 import { ACCOUNTS_ENABLED } from '../features';
+import { LogoMark } from './Logo';
+import { SiteNav } from './SiteNav';
 import type { ChatState } from '../state/machine';
 import { showPresence } from '../view/presentation';
 
@@ -48,13 +50,18 @@ export function AppHeader({
           aria-label="karobakbak — home"
           className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition-opacity hover:opacity-80 active:scale-95"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ink-900 ring-1 ring-ink-700">
-            <MessageCircle className="h-4 w-4 text-amber-400" strokeWidth={2.2} />
-          </span>
+          <LogoMark size={26} />
           <span className="font-display text-base font-semibold tracking-tight text-ink-50">
             karobakbak
           </span>
         </button>
+
+        {/*
+          Between the brand and the live counts. On the app screen the nav is
+          secondary to the button below it, so it sits at nav weight rather than
+          competing for the eye.
+        */}
+        <SiteNav />
 
         <div className="flex-1" />
 

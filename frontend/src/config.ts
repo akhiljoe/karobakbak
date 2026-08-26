@@ -56,6 +56,28 @@ export interface ClientConfig {
     readonly termsUrl: string;
     readonly privacyUrl: string;
   };
+  /**
+   * Where people write in. Empty until there is a domain to host a role
+   * address on.
+   *
+   * Empty means the Contact link is omitted, never rendered as a `mailto:`
+   * pointing nowhere. An address that bounces is worse than no address: the
+   * Privacy Policy commits to acknowledging complaints within 24 hours, and an
+   * unread inbox is documented notice that was received and ignored.
+   */
+  readonly contactEmail: string;
+  /**
+   * Where "buy me a coffee" points. Empty hides it entirely.
+   *
+   * **A link, never an embed.** The Privacy Policy states that the site makes
+   * "no requests to any third party from your browser — no analytics, no
+   * trackers, no advertising, not even external fonts". A donation *widget* is
+   * a third-party script and would make that sentence false the day it shipped;
+   * an anchor makes no request until somebody clicks it and leaves. The whole
+   * value of that claim is that it is checkable, so it is worth more than the
+   * convenience of an embedded button.
+   */
+  readonly supportUrl: string;
   readonly timings: {
     /**
      * How long after the last keystroke the typing indicator is withdrawn.
@@ -101,6 +123,8 @@ export function loadClientConfig(env: Record<string, unknown>): ClientConfig {
       termsUrl: readString(env.VITE_TERMS_URL, ''),
       privacyUrl: readString(env.VITE_PRIVACY_URL, ''),
     },
+    contactEmail: readString(env.VITE_CONTACT_EMAIL, ''),
+    supportUrl: readString(env.VITE_SUPPORT_URL, ''),
     timings: {
       typingIdleMs: 3000,
       reconnectBackoffMs: [500, 1000, 2000, 5000, 10_000],

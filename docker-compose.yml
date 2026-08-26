@@ -55,6 +55,12 @@ services:
         # and the age gate says so on screen rather than linking nothing.
         VITE_TERMS_URL: "${VITE_TERMS_URL:-}"
         VITE_PRIVACY_URL: "${VITE_PRIVACY_URL:-}"
+
+        # Vite inlines these at build time, so a value that is only in .env and
+        # not forwarded here never reaches the bundle. Both links are omitted
+        # from the UI when empty rather than rendered pointing nowhere.
+        VITE_CONTACT_EMAIL: "${VITE_CONTACT_EMAIL:-}"
+        VITE_SUPPORT_URL: "${VITE_SUPPORT_URL:-}"
     ports:
       - "${FRONTEND_PORT:-8081}:80"
     environment:

@@ -45,7 +45,7 @@ export function ProfileCard({ profile, onChange, onClear }: ProfileCardProps): J
           </span>
           <span className="block text-xs text-ink-500">
             {empty
-              ? 'Optional — skip it and stay completely anonymous'
+              ? 'Optional · helps break the ice'
               : 'Shown to everyone you match with · tap to edit'}
           </span>
         </span>

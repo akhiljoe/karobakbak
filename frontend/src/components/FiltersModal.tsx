@@ -13,10 +13,21 @@
  * and say why. A user who wants this learns it is coming; nobody is told their
  * preference was applied when it was not.
  *
- * The options are intentionally *not* enumerated here. Gender and country
- * filtering on anonymous stranger chat is exactly the surface the minor-safety
- * review has to rule on (security §23–24), and shipping the option lists now
- * would prejudge that review.
+ * ---------------------------------------------------------------------------
+ * THE OPTION LIST IS NOW SETTLED, AND IT IS NARROWER THAN IT COULD BE
+ * ---------------------------------------------------------------------------
+ * This used to leave the options unenumerated, because gender and country
+ * filtering on anonymous stranger chat was exactly what the minor-safety review
+ * had to rule on (security §23–24).
+ *
+ * The ruling: **country and language only**. Gender was rejected — filtering by
+ * a self-declared, unverified field on a service with no age assurance sells
+ * targeting rather than preference, which is the harm D37 was written about.
+ * Country and language narrow the pool without describing a person, and they
+ * are the same revenue mechanic at a fraction of the risk.
+ *
+ * The controls stay disabled until segments exist behind them. Nothing here
+ * promises to work.
  */
 import { useEffect } from 'react';
 import { Info, SlidersHorizontal, X } from 'lucide-react';
@@ -29,7 +40,7 @@ interface FiltersModalProps {
   onClose(): void;
 }
 
-const PLANNED = ['Language', 'Interests', 'Region'] as const;
+const PLANNED = ['Country', 'Language'] as const;
 
 export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element | null {
   useEffect(() => {

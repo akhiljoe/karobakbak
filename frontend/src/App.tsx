@@ -46,12 +46,35 @@ export function App(): JSX.Element {
   const [authOpen, setAuthOpen] = useState(false);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
+  /**
+   * Whether the age gate is on screen *now*.
+   *
+   * Separate from `ageAcknowledged`, which is the durable fact. The gate used
+   * to be shown for the whole of `!ageAcknowledged`, which made it the first
+   * thing a visitor saw — a wall in front of a product they had not seen yet.
+   *
+   * `docs/policies/age-gate.md` asks for something narrower than that, twice:
+   * "a blocking interstitial **before the first conversation**", and "what the
+   * gate blocks is entering the queue, not opening the connection". It also
+   * requires Terms and Privacy to be "reachable **without** passing the gate",
+   * which a gate covering the landing screen made impossible — the only way to
+   * those links was through the thing they were supposed to be reachable
+   * around.
+   *
+   * So it opens when somebody tries to start a conversation. Same gate, same
+   * copy, same refusal to close on Escape or a backdrop click; it is asked at
+   * the moment it is actually about, which is the moment the policy names.
+   */
+  const [gateOpen, setGateOpen] = useState(false);
 
   /*
-    Read once, on the first render, rather than in an effect. An effect would
-    paint the landing screen for a frame before the gate covered it, and the one
-    frame a user sees first is the one this screen exists to put in front of
-    them.
+    Read once, on the first render, rather than in an effect. The gate no
+    longer covers the landing screen — it opens when somebody starts a
+    conversation — so the old reason for this (avoiding one painted frame of
+    landing screen before the gate appeared) is gone. It stays synchronous for a
+    smaller but still real one: `startSearch` reads `ageAcknowledged`, and a
+    value that arrives an effect late would let the very first press through
+    ungated.
 
     Storage being unreadable resolves to `false`, which shows the gate. That is
     the correct direction to fail.
@@ -89,7 +112,12 @@ export function App(): JSX.Element {
   // keypress reaching past this screen would be acting on a product the person
   // has not yet been allowed into.
   const overlayOpen =
-    !ageAcknowledged || filtersOpen || settingsOpen || authOpen || safetyOpen || reporting;
+    gateOpen ||
+    filtersOpen ||
+    settingsOpen ||
+    authOpen ||
+    safetyOpen ||
+    reporting;
 
   // Enter starts a search from the landing screen; Escape skips a conversation.
   // Both are ignored while the user is typing into something, and Escape also
@@ -132,9 +160,16 @@ export function App(): JSX.Element {
   // the one gesture guaranteed to precede any match, so the context is unlocked
   // there rather than on load, where it would be refused.
   const startSearch = useCallback(() => {
+    // The last moment before a conversation starts, which is exactly where the
+    // policy puts the gate. Acknowledging carries straight on into the search,
+    // because the person already asked for that by pressing the button.
+    if (!ageAcknowledged) {
+      setGateOpen(true);
+      return;
+    }
     unlockSound();
     chat.start(profile);
-  }, [chat, profile]);
+  }, [ageAcknowledged, chat, profile]);
 
   /**
    * Block this person and move on, in one action.
@@ -173,7 +208,12 @@ export function App(): JSX.Element {
     // would punish somebody for their browser settings; they are asked again
     // next time instead.
     setAgeAcknowledged(true);
-  }, []);
+    setGateOpen(false);
+    // Carry on into the search they asked for. Making them press "Start" a
+    // second time would read as the gate having failed.
+    unlockSound();
+    chat.start(profile);
+  }, [chat, profile]);
 
   const leaveFromGate = useCallback(() => {
     // `about:blank` rather than `window.close()`, which browsers refuse for a
@@ -195,7 +235,7 @@ export function App(): JSX.Element {
         reached — every control that starts a conversation is on the landing
         screen underneath, and `overlayOpen` stands the keyboard shortcuts down.
       */}
-      {!ageAcknowledged && (
+      {gateOpen && (
         <AgeGate
           termsUrl={clientConfig.legal.termsUrl}
           privacyUrl={clientConfig.legal.privacyUrl}

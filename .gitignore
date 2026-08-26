@@ -66,3 +66,7 @@ monitoring/prometheus/data/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Claude Design canvas runtime — generated vendor code, regenerated on every
+# export. The design source (.dc.html) is tracked; this is not.
+ui-integration/support.js

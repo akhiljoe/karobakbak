@@ -104,7 +104,39 @@ export function AgeGate({
           </p>
         </div>
 
-        <div className="mt-6 flex flex-col gap-2.5">
+        {/*
+          The agreement, at the moment it is actually being given. This screen
+          is the last thing before a conversation starts, which makes it the
+          honest place to say what continuing means — better than a line of
+          footer text nobody reads on the way past.
+
+          It does not replace the links below: `age-gate.md` requires both
+          documents to be reachable without passing this gate, which is what the
+          header menu is for.
+        */}
+        <p className="mt-5 text-sm leading-relaxed text-ink-400">
+          By continuing you agree to the{' '}
+          <a
+            href="/terms"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-ink-200 underline underline-offset-4 hover:text-amber-300"
+          >
+            Terms
+          </a>{' '}
+          and the{' '}
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-ink-200 underline underline-offset-4 hover:text-amber-300"
+          >
+            Privacy Policy
+          </a>
+          , and confirm you are 18 or over.
+        </p>
+
+        <div className="mt-5 flex flex-col gap-2.5">
           <Button size="lg" onClick={onAccept} autoFocus>
             I am 18 or over
           </Button>
@@ -113,7 +145,19 @@ export function AgeGate({
           </Button>
         </div>
 
-        <div className="mt-5 border-t border-ink-800 pt-4 text-center text-xs text-ink-400">
+        {/*
+          The documents ship with the bundle now (`content/legal.ts`), so the
+          gate always has somewhere real to point. This used to say "not
+          published in this build" whenever the external URLs were unset — true
+          then, and a lie now.
+
+          A configured external URL still wins: a deployment that publishes
+          canonical copies at a domain should link those, because that is the
+          version somebody can cite. Absent one, the in-app page *is* the
+          published version. Either way `docs/policies/age-gate.md` is
+          satisfied — both documents reachable without passing the gate.
+        */}
+        <div className="mt-5 border-t border-ink-800 pt-4 text-center text-sm text-ink-400">
           {linked ? (
             <p className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
               <a
@@ -137,12 +181,28 @@ export function AgeGate({
             </p>
           ) : (
             /*
-              Says what is missing rather than pretending nothing is. A build
-              without these URLs is not ready to be in front of anyone, and a
-              silently absent link would hide that from whoever deployed it.
+              A new tab, not a route. The gate is holding a pending "start
+              chatting" — navigating away in this tab would discard it, and
+              somebody who came back would have to press the button again and
+              wonder whether the first press did anything.
             */
-            <p className="text-amber-300/80">
-              Terms and Privacy Policy are not published in this build.
+            <p className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="rounded py-1 text-ink-300 underline underline-offset-4 transition-colors hover:text-ink-100"
+              >
+                Terms
+              </a>
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="rounded py-1 text-ink-300 underline underline-offset-4 transition-colors hover:text-ink-100"
+              >
+                Privacy Policy
+              </a>
             </p>
           )}
         </div>
