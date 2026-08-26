@@ -278,8 +278,6 @@ export function App(): JSX.Element {
               autoSearchIn={autoSearch.secondsLeft}
               onCancelAutoSearch={autoSearch.cancel}
               profile={profile}
-              onProfileChange={updateProfile}
-              onProfileClear={resetProfile}
             />
           )}
         </div>

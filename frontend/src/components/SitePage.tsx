@@ -23,7 +23,7 @@ import type { StaticPage } from "../content/pages";
 import { RouteLink, useDocumentTitle } from "../router";
 import { Logo } from "./Logo";
 import { SiteFooter } from "./SiteFooter";
-import { SiteNav } from "./SiteNav";
+import { SiteNav, SiteNavLinks } from "./SiteNav";
 
 interface SitePageProps {
   readonly page: StaticPage;
@@ -58,16 +58,24 @@ export function SitePage({ page, children }: SitePageProps): JSX.Element {
       <div className="flex min-h-full flex-col">
         <header className="safe-pt sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur-md">
           <div className="mx-auto flex h-14 w-full max-w-4xl items-center justify-between gap-3 px-5 sm:px-6">
-            <RouteLink
-              to="/"
-              aria-label="karobakbak — home"
-              className="rounded-lg transition-opacity hover:opacity-80"
-            >
-              <Logo size={24} />
-            </RouteLink>
+            {/*
+              Logo then menu, both on the left, matching the app header. The
+              menu panel drops from its own control rather than from the far
+              side of the screen.
+            */}
+            <div className="flex items-center gap-1.5">
+              <SiteNav />
+              <RouteLink
+                to="/"
+                aria-label="karobakbak — home"
+                className="rounded-lg transition-opacity hover:opacity-80"
+              >
+                <Logo size={24} />
+              </RouteLink>
+              <SiteNavLinks />
+            </div>
 
             <div className="flex items-center gap-2">
-              <SiteNav />
               <RouteLink
                 to="/"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-sm text-ink-200 transition-colors hover:border-ink-600 hover:text-ink-50"

@@ -25,12 +25,11 @@
  * Those live in the menu at every size. Putting all nine inline would be a
  * sitemap in a header, which means the product could not decide what mattered.
  */
-import { useEffect, useState } from 'react';
-import { Menu, X } from 'lucide-react';
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { Menu, X } from "lucide-react";
 
-import { clientConfig } from '../config';
-import { ACCOUNTS_ENABLED } from '../features';
-import { RouteLink } from '../router';
+import { RouteLink } from "../router";
 
 interface NavItem {
   readonly to: string;
@@ -38,23 +37,31 @@ interface NavItem {
 }
 
 const PRIMARY_BASE: readonly NavItem[] = [
-  { to: '/how-it-works', label: 'How it works' },
-  { to: '/safety', label: 'Safety' },
-  { to: '/faq', label: 'FAQ' },
-  { to: '/about', label: 'About' },
+  { to: "/how-it-works", label: "How it works" },
+  { to: "/premium", label: "Premium" },
+  { to: "/safety", label: "Safety" },
+  { to: "/faq", label: "FAQ" },
+  { to: "/about", label: "About" },
 ];
 
 const SECONDARY: readonly NavItem[] = [
-  { to: '/rules', label: 'Rules' },
-  { to: '/contact', label: 'Contact' },
-  { to: '/terms', label: 'Terms' },
-  { to: '/privacy', label: 'Privacy' },
+  { to: "/rules", label: "Rules" },
+  { to: "/contact", label: "Contact" },
+  { to: "/support", label: "Buy me a coffee" },
+  { to: "/terms", label: "Terms" },
+  { to: "/privacy", label: "Privacy" },
 ];
 
+/*
+ * Premium sits second — after the explanation, before the reassurance — which
+ * is where the design put it and where somebody looks once they have decided
+ * the product is interesting but not yet whether it is worth anything.
+ *
+ * It is not gated. `ACCOUNTS_ENABLED` governs signing in, which is a different
+ * question from whether the plan can be read about.
+ */
 function primary(): readonly NavItem[] {
-  if (!ACCOUNTS_ENABLED) return PRIMARY_BASE;
-  // Second, matching the design: after the explanation, before the reassurance.
-  return [PRIMARY_BASE[0]!, { to: '/premium', label: 'Premium' }, ...PRIMARY_BASE.slice(1)];
+  return PRIMARY_BASE;
 }
 
 /** Every path the header can reach, so nothing else has to repeat the list. */
@@ -63,37 +70,48 @@ export function navPaths(): ReadonlySet<string> {
 }
 
 const INLINE_CLASS =
-  'rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-ink-800/60 hover:text-ink-50';
+  "rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-ink-800/60 hover:text-ink-50";
 
 const PANEL_CLASS =
-  'rounded-lg px-3 py-2.5 text-base text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50';
+  "rounded-lg px-3 py-2.5 text-base text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50";
+
+/**
+ * The desktop inline links, rendered separately from the menu button.
+ *
+ * Split so a header can put the button at the far left — before the logo —
+ * while the links still sit after it. As one component the two could only ever
+ * be adjacent, which forced a choice between a leftmost button and links that
+ * read before the brand.
+ */
+export function SiteNavLinks(): JSX.Element {
+  return (
+    <nav aria-label="Site" className="hidden items-center gap-0.5 md:flex">
+      {primary().map((item) => (
+        <RouteLink key={item.to} to={item.to} className={INLINE_CLASS}>
+          {item.label}
+        </RouteLink>
+      ))}
+    </nav>
+  );
+}
 
 export function SiteNav(): JSX.Element {
   const [open, setOpen] = useState(false);
   const links = primary();
-  const support = clientConfig.supportUrl;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === "Escape") setOpen(false);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
   const close = (): void => setOpen(false);
 
   return (
     <>
-      <nav aria-label="Site" className="hidden items-center gap-0.5 md:flex">
-        {links.map((item) => (
-          <RouteLink key={item.to} to={item.to} className={INLINE_CLASS}>
-            {item.label}
-          </RouteLink>
-        ))}
-      </nav>
-
       <button
         onClick={() => setOpen(true)}
         aria-label="More"
@@ -103,56 +121,104 @@ export function SiteNav(): JSX.Element {
         <Menu className="h-5 w-5" />
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
+      {open &&
+        /*
+         * Rendered into `document.body`, not in place.
+         *
+         * The header carries `backdrop-blur-md`, and `backdrop-filter` creates
+         * a **containing block for fixed-position descendants** — exactly as
+         * `transform` and `filter` do. So `fixed inset-0` inside the header was
+         * not the viewport at all; it was the header's own box, 56px tall.
+         *
+         * The backdrop therefore only existed across that strip. Tapping
+         * anywhere below it hit nothing, because there was nothing there —
+         * which is why the X and the hamburger worked and the whole rest of the
+         * screen did not. No amount of click-versus-pointer handling could have
+         * fixed it.
+         *
+         * A portal escapes the containing block, so `fixed inset-0` means the
+         * viewport again.
+         */
+        createPortal(
           <div
-            className="absolute inset-0 animate-fade-in bg-ink-950/70 backdrop-blur-sm"
-            onClick={close}
-          />
+            className="fixed inset-0 z-50"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu"
+          >
+            {/*
+            A button, not a div.
 
-          <div className="safe-pt absolute inset-x-0 top-0 animate-fade-in border-b border-ink-700 bg-ink-900 px-3 pb-3 shadow-lift sm:inset-x-auto sm:right-3 sm:top-3 sm:w-64 sm:rounded-2xl sm:border">
-            <div className="flex justify-end py-1">
-              <button
-                onClick={close}
-                aria-label="Close menu"
-                className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+            iOS Safari does not reliably fire a click on a non-interactive
+            element, so a plain div backdrop swallowed the tap and the only way
+            out was the X. A button is focusable, keyboard operable, and taps
+            everywhere.
+          */}
+            <button
+              type="button"
+              aria-label="Close menu"
+              onClick={close}
+              /*
+               * `pointerdown` as well as `click`, because a tap that starts and
+               * ends a few pixels apart — which is most taps on a phone — can be
+               * interpreted as a scroll gesture and never become a click. Closing
+               * on the press is also what a person expects from a backdrop.
+               */
+              onPointerDown={close}
+              className="absolute inset-0 h-full w-full animate-fade-in cursor-default bg-ink-950/70 backdrop-blur-sm"
+            />
 
-            {/* Already inline on desktop; only the small header needs these. */}
-            <nav aria-label="Product" className="flex flex-col md:hidden">
-              {links.map((item) => (
-                <RouteLink key={item.to} to={item.to} onClick={close} className={PANEL_CLASS}>
-                  {item.label}
-                </RouteLink>
-              ))}
-            </nav>
+            {/*
+            Anchored left, because the control that opens it is on the left.
 
-            <div className="my-2 border-t border-ink-800 md:mt-0" />
-
-            <nav aria-label="More" className="flex flex-col">
-              {SECONDARY.map((item) => (
-                <RouteLink key={item.to} to={item.to} onClick={close} className={PANEL_CLASS}>
-                  {item.label}
-                </RouteLink>
-              ))}
-              {support !== '' && (
-                <a
-                  href={support}
-                  target="_blank"
-                  rel="noreferrer noopener"
+            A panel that appears on the opposite side of the screen from the
+            button pressed breaks the link between the two — the eye has to go
+            looking for what just happened. The hamburger sits beside the logo
+            on every header, so the panel drops from there.
+          */}
+            <div className="safe-pt absolute left-3 top-3 w-56 animate-fade-in rounded-2xl border border-ink-700 bg-ink-900 px-2 pb-2 shadow-lift sm:w-64">
+              <div className="flex justify-end py-1 pr-0.5">
+                <button
                   onClick={close}
-                  className={`${PANEL_CLASS} text-amber-300/90 hover:text-amber-300`}
+                  aria-label="Close menu"
+                  className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
                 >
-                  Buy me a coffee
-                </a>
-              )}
-            </nav>
-          </div>
-        </div>
-      )}
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Already inline on desktop; only the small header needs these. */}
+              <nav aria-label="Product" className="flex flex-col md:hidden">
+                {links.map((item) => (
+                  <RouteLink
+                    key={item.to}
+                    to={item.to}
+                    onClick={close}
+                    className={PANEL_CLASS}
+                  >
+                    {item.label}
+                  </RouteLink>
+                ))}
+              </nav>
+
+              <div className="my-2 border-t border-ink-800 md:mt-0" />
+
+              <nav aria-label="More" className="flex flex-col">
+                {SECONDARY.map((item) => (
+                  <RouteLink
+                    key={item.to}
+                    to={item.to}
+                    onClick={close}
+                    className={PANEL_CLASS}
+                  >
+                    {item.label}
+                  </RouteLink>
+                ))}
+              </nav>
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

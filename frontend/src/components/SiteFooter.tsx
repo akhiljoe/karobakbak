@@ -19,9 +19,7 @@
  * address that bounces is worse than no address, because the Privacy page
  * commits to acknowledging complaints within 24 hours.
  */
-import { Shield } from 'lucide-react';
 
-import { clientConfig } from '../config';
 import { STATIC_PAGES } from '../content/pages';
 import { RouteLink } from '../router';
 import { navPaths } from './SiteNav';
@@ -37,17 +35,10 @@ export function SiteFooter(): JSX.Element {
   const inHeader = navPaths();
   return (
     <footer className="safe-pb shrink-0 border-t border-ink-800/50 px-6 py-5 short:py-3">
-      <div className="mx-auto flex max-w-lg items-start justify-center gap-2 text-center text-sm leading-relaxed text-ink-300">
-        <Shield className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" />
-        <span>
-          Be kind. Report or block anyone who makes you uncomfortable. Conversations are kept for a
-          limited period so abuse can be investigated, then deleted automatically.
-        </span>
-      </div>
 
       <nav
         aria-label="Site"
-        className="mx-auto mt-4 flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400 short:mt-2.5"
+        className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400 short:mt-2.5"
       >
         {STATIC_PAGES.filter((page) => !inHeader.has(`/${page.id}`)).map((page) => (
           <RouteLink
@@ -59,16 +50,6 @@ export function SiteFooter(): JSX.Element {
           </RouteLink>
         ))}
 
-        {clientConfig.supportUrl !== '' && (
-          <a
-            href={clientConfig.supportUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="rounded py-1 underline underline-offset-4 transition-colors hover:text-amber-300"
-          >
-            Buy me a coffee
-          </a>
-        )}
 
 
       </nav>

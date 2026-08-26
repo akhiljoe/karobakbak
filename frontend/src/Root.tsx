@@ -30,7 +30,8 @@ import { App } from './App';
 import { AuthModal } from './components/AuthModal';
 import { ContactCard } from './components/ContactCard';
 import { PremiumPage } from './components/PremiumPage';
-import { ACCOUNTS_ENABLED } from './features';
+import { SupportCard } from './components/SupportCard';
+import { SupportPage } from './components/SupportPage';
 import { NotFound } from './components/NotFound';
 import { SitePage } from './components/SitePage';
 import { STATIC_PAGES } from './content/pages';
@@ -45,11 +46,16 @@ export function Root(): JSX.Element {
 
   if (path === '/') return <App />;
 
-  // Gated by the constant, not by configuration. With accounts off, `/premium`
-  // is a 404 like any other unknown path — the surface does not exist rather
-  // than existing and being disabled, because a pricing page for something
-  // nobody can buy is an advertisement for vapourware.
-  if (path === '/premium' && ACCOUNTS_ENABLED) {
+  // Always reachable, unlike sign-in.
+  //
+  // This used to be gated on `ACCOUNTS_ENABLED` on the grounds that a pricing
+  // page for something nobody can buy is an advertisement for vapourware. That
+  // conflated two things: an account is needed to *hold* a subscription, and
+  // nothing is needed to *read what one would be*. The page states plainly that
+  // it is not open yet, which is the honest version of the same caution, and
+  // hiding it entirely means somebody deciding whether this product is for them
+  // cannot find out what it will cost.
+  if (path === '/premium') {
     return (
       <>
         <PremiumPage onSignIn={() => setSignInOpen(true)} />
@@ -58,13 +64,21 @@ export function Root(): JSX.Element {
     );
   }
 
+  // Always available, unlike /premium. Asking for help with the bill does not
+  // depend on accounts existing, and the page is honest about payments not
+  // being connected yet.
+  if (path === '/support') return <SupportPage />;
+
   const page = PAGES.get(path);
   if (page !== undefined) {
     // Contact is the only page with something to *do* on it. Special-cased here
     // rather than giving every page an optional component slot in its data,
     // which would put React in the content layer for one exception.
     return (
-      <SitePage page={page}>{page.id === 'contact' ? <ContactCard /> : undefined}</SitePage>
+      <SitePage page={page}>
+        {page.id === 'contact' ? <ContactCard /> : undefined}
+        {page.id === 'about' ? <SupportCard /> : undefined}
+      </SitePage>
     );
   }
 

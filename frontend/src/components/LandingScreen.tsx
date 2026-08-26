@@ -10,11 +10,10 @@
  * subject of the page, one button that is obviously the thing to press, and
  * everything else deliberately quieter than both.
  *
- * Nothing here was added to fill space. The two new elements — the live count
- * and the three steps — are both *information*, and both answer a question the
- * button cannot: "is anybody actually there" and "what happens if I press
- * this". Random chat loses people to those two uncertainties, not to a shortage
- * of decoration.
+ * Nothing is here that does not move somebody toward the button. The live count
+ * went to the searching screen, where "is anybody actually there" is a question
+ * being asked rather than decoration; the three-step strip went to its own page,
+ * because it explained something the button already implies.
  *
  * ---------------------------------------------------------------------------
  * MOBILE IS THE LAYOUT, NOT A NARROWER ONE
@@ -37,14 +36,9 @@
  */
 import { Lock, Sparkles } from 'lucide-react';
 
-import { HowItWorks } from './HowItWorks';
-import { LogoMark } from './Logo';
 import type { ChatState } from '../state/machine';
-import { showPresence } from '../view/presentation';
 import type { Profile } from '../protocol/types';
 import { isEmptyProfile } from '../profile';
-import { ProfileCard } from './ProfileCard';
-import { AdSlot } from './AdSlot';
 import { Button } from './Button';
 
 interface LandingScreenProps {
@@ -55,8 +49,6 @@ interface LandingScreenProps {
   autoSearchIn: number | null;
   onCancelAutoSearch(): void;
   profile: Profile;
-  onProfileChange(profile: Profile): void;
-  onProfileClear(): void;
 }
 
 export function LandingScreen({
@@ -66,16 +58,12 @@ export function LandingScreen({
   autoSearchIn,
   onCancelAutoSearch,
   profile,
-  onProfileChange,
-  onProfileClear,
 }: LandingScreenProps): JSX.Element {
-  const presence = state.features.presence ? state.presence : null;
   const connecting = state.screen === 'connecting' || state.screen === 'disconnected';
   // The strapline claims "no profile", which stops being true the moment
   // someone fills one in. Saying it anyway would be the kind of small
   // dishonesty that costs trust when noticed.
   const declaredAnything = !isEmptyProfile(profile);
-  const live = showPresence(presence) && presence !== null;
 
   return (
     <div className="relative flex h-full animate-fade-in flex-col overflow-y-auto">
@@ -107,23 +95,7 @@ export function LandingScreen({
         below start where the fold is rather than being squeezed in beside it.
       */}
       <div className="flex min-h-full flex-col items-center justify-center px-5 py-6 text-center sm:px-6 sm:py-8 short:py-4">
-        {/*
-          The mark, with two conversation dots that breathe rather than orbit.
-          Smaller than it was: it is a signature on the page, not a hero image,
-          and the height it gave up went to the headline.
-        */}
-        <div className="relative mb-5 flex h-14 w-14 items-center justify-center sm:mb-6 sm:h-16 sm:w-16 short:mb-3 short:h-12 short:w-12">
-          <span className="absolute inset-0 animate-pulse-ring rounded-full bg-amber-400/10" />
-          <LogoMark size={48} className="relative" />
-          <span
-            className="absolute -right-1 top-1 h-1.5 w-1.5 animate-float-slow rounded-full bg-amber-400/60"
-            style={{ animationDelay: '0.4s' }}
-          />
-          <span
-            className="absolute -left-1.5 bottom-2 h-1 w-1 animate-float-slow rounded-full bg-sage-400/50"
-            style={{ animationDelay: '1.6s' }}
-          />
-        </div>
+
 
         {/*
           The focal point, and sized like one. 38px on a phone, 64px on a wide
@@ -152,10 +124,6 @@ export function LandingScreen({
             ? 'There is no way back to that conversation. There is always another stranger.'
             : 'Random. Anonymous. Just a conversation.'}
         </p>
-
-        <div className="mt-6 flex w-full justify-center sm:mt-7 short:mt-4">
-          <ProfileCard profile={profile} onChange={onProfileChange} onClear={onProfileClear} />
-        </div>
 
         {/*
           Full width on a phone, where a centred pill wastes the thumb's easiest
@@ -194,6 +162,7 @@ export function LandingScreen({
           )}
         </div>
 
+
         {/*
           Was `text-xs text-ink-500` — technically readable, visually invisible,
           which wasted the most reassuring line on the page. It is the answer to
@@ -206,56 +175,9 @@ export function LandingScreen({
             : 'No signup · No profile · No commitment'}
         </div>
 
-        {/*
-          The one line the removed footer was carrying that is not repeated
-          anywhere else on this screen. Retention is a fact somebody is entitled
-          to before they start rather than after, and the age gate states it
-          again at the moment of consent.
-        */}
-        <p className="mt-3 max-w-xs text-xs leading-relaxed text-ink-500 short:hidden">
-          Conversations are kept for a limited period so abuse can be investigated, then deleted.
-        </p>
 
-        {/*
-          Back in the hero, beside the button, because "what happens if I press
-          this" is asked *at* the button and a nav link is a worse answer than
-          three words in place. Dropped on short viewports, where the button
-          keeping its space matters more.
-        */}
-        <div className="mt-6 w-full short:hidden">
-          <HowItWorks />
-        </div>
 
-        {/*
-          Rendered only above 100 (D21, `showPresence`). Below that the element
-          does not exist at all: a small true number is worse for a visitor than
-          silence, and a large invented one is not on the table.
 
-          "online" rather than "chatting", because `online` counts people
-          connected and `conversations` counts pairs. Calling the first one
-          "chatting right now" would read better and be wrong.
-        */}
-        {live && (
-          <div className="mt-4 inline-flex animate-fade-in items-center gap-2 rounded-full border border-ink-800 bg-ink-900/60 px-3.5 py-1.5 text-sm text-ink-300">
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-sage-400" />
-            </span>
-            <span>
-              <span className="font-mono text-ink-100">{presence.online.toLocaleString()}</span>{' '}
-              people online right now
-            </span>
-          </div>
-        )}
-
-        {/*
-          `empty:hidden` because `AdSlot` renders `null` while ads are disabled,
-          which left this wrapper present, empty, and still spending its 24px
-          top margin. A gap held open for a thing that is not there.
-        */}
-        <div className="mt-6 w-full max-w-xs empty:hidden">
-          <AdSlot slot={ended ? 'between-chats' : 'landing'} />
-        </div>
       </div>
 
     </div>

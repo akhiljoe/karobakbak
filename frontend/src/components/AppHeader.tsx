@@ -10,11 +10,11 @@
  * than no button. The filters control is the opposite case, and the reasoning
  * for the asymmetry is in `features.ts`.
  */
-import { Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
 import { ACCOUNTS_ENABLED } from '../features';
 import { LogoMark } from './Logo';
-import { SiteNav } from './SiteNav';
+import { SiteNav, SiteNavLinks } from './SiteNav';
 import type { ChatState } from '../state/machine';
 import { showPresence } from '../view/presentation';
 
@@ -38,6 +38,9 @@ export function AppHeader({
   return (
     <header className="safe-pt sticky top-0 z-30 border-b border-ink-800 bg-ink-950/85 backdrop-blur-md">
       <div className="flex h-12 items-center gap-2 px-3 sm:gap-3 sm:px-6">
+        {/* Leftmost, before the brand, so the panel drops from the page edge. */}
+        <SiteNav />
+
         {/*
           The brand is the way home, which is what a logo is everywhere else.
           A button rather than an <a href="/">: a reload would drop the socket
@@ -56,12 +59,7 @@ export function AppHeader({
           </span>
         </button>
 
-        {/*
-          Between the brand and the live counts. On the app screen the nav is
-          secondary to the button below it, so it sits at nav weight rather than
-          competing for the eye.
-        */}
-        <SiteNav />
+        <SiteNavLinks />
 
         <div className="flex-1" />
 
@@ -92,7 +90,19 @@ export function AppHeader({
           aria-label="Matching filters"
           className="inline-flex h-9 items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 px-2.5 text-sm text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
         >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
+          <span className="relative inline-flex">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              {/*
+                A lock rather than a shield. `ShieldX` is already the block
+                control in the conversation header, and a shield on a matching
+                preference would read as a safety feature — which filtering
+                explicitly is not: it narrows the pool and verifies nothing.
+              */}
+              <Lock
+                className="absolute -right-1 -top-1 h-2.5 w-2.5 text-amber-400"
+                aria-hidden="true"
+              />
+            </span>
         </button>
 
         <button
