@@ -155,12 +155,34 @@ export function openingBrevity(text: string, sent: number): string {
   // said which thought comes first.
   const firstLine = trimmed.split(/\n+/)[0]?.trim() ?? trimmed;
 
-  const sentence = firstLine.match(/^[^.!?]*[.!?]*/)?.[0]?.trim() ?? firstLine;
+  const sentence = firstSentence(firstLine);
   const kept = sentence === '' ? firstLine : sentence;
 
   const words = kept.split(/\s+/);
   if (words.length <= OPENING_MAX_WORDS) return kept;
   return words.slice(0, OPENING_MAX_WORDS).join(' ');
+}
+
+/**
+ * A sentence ends at `.`, `!` or `?` **followed by whitespace or the end of the
+ * string** — never at one sitting inside a word.
+ *
+ * Written after an integration test caught the naive version cutting
+ * "have a look at http://example.com" down to "have a look at http://example."
+ * — the dot in the domain looked exactly like a full stop. Decimals and
+ * abbreviations break the same way, and the persona would have been sending
+ * truncated URLs to real people.
+ *
+ * The lookahead is what distinguishes a terminator from a separator. The second
+ * alternative is the fallback: a line with no sentence break at all is one
+ * sentence, not zero.
+ */
+const SENTENCE = /.*?[.!?](?=\s|$)\s*|.+$/g;
+
+/** The first sentence of a line, or the whole line when it has no break. */
+function firstSentence(line: string): string {
+  const match = /^.*?[.!?](?=\s|$)/.exec(line);
+  return match?.[0]?.trim() ?? line;
 }
 
 /**
@@ -216,7 +238,7 @@ export function splitIntoBubbles(text: string, maxLength?: number): string[] {
  * punctuation.
  */
 function sentences(text: string): string[] {
-  const parts = text.match(/[^.!?]+[.!?]*\s*/g);
+  const parts = text.match(SENTENCE);
   if (parts === null) return [text];
 
   const out: string[] = [];
