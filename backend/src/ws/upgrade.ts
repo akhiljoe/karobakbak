@@ -7,6 +7,7 @@
  * from the plumbing and tested directly.
  */
 import type { IncomingMessage } from 'node:http';
+import { isCountryCode } from '../protocol/types';
 
 import type { Config } from '../config';
 import { newClientToken } from '../util/ids';
@@ -41,6 +42,46 @@ export function clientAddress(req: IncomingMessage, trustProxyHops: number): str
 
   if (chain.length < trustProxyHops) return peer;
   return chain[chain.length - trustProxyHops] ?? peer;
+}
+
+/**
+ * The country the CDN says this connection came from, or null.
+ *
+ * ---------------------------------------------------------------------------
+ * TRUSTED ONLY BEHIND A PROXY, FOR THE SAME REASON AS THE ADDRESS
+ * ---------------------------------------------------------------------------
+ * `CF-IPCountry` is a header, and a header is whatever the sender wrote unless
+ * something in front overwrites it. Cloudflare sets it at the edge and replaces
+ * any value the client supplied, so it is trustworthy **only** on the
+ * assumption that the request actually came through Cloudflare.
+ *
+ * That is the same assumption `clientAddress` makes about `X-Forwarded-For`,
+ * and it is gated the same way: with no trusted proxy configured the header is
+ * ignored entirely rather than believed. On a laptop there is no CDN, so this
+ * returns null and nothing displays — which is correct, not a bug to work
+ * around by trusting it in development.
+ *
+ * The geo-block in `nginx.conf` already rests on this header, so nothing new is
+ * being trusted here; what is new is that the value now reaches a user's screen
+ * rather than only deciding whether to serve them.
+ *
+ * ---------------------------------------------------------------------------
+ * VALIDATED AGAINST THE KNOWN LIST, NEVER PASSED THROUGH
+ * ---------------------------------------------------------------------------
+ * Cloudflare sends `XX` when it cannot tell and `T1` for Tor, and neither is a
+ * country. Anything not in `COUNTRY_CODES` is discarded rather than shown,
+ * because this string is rendered to the other person and an unrecognised value
+ * would be displayed verbatim.
+ */
+export function clientCountry(req: IncomingMessage, trustProxyHops: number): string | null {
+  if (trustProxyHops <= 0) return null;
+
+  const header = req.headers['cf-ipcountry'];
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === undefined) return null;
+
+  const code = raw.trim().toUpperCase();
+  return isCountryCode(code) ? code : null;
 }
 
 /**

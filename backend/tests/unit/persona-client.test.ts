@@ -670,6 +670,19 @@ describe('splitting a reply into bubbles', () => {
     }
   });
 
+  it('does not treat a dot inside a word as the end of a sentence', () => {
+    // An integration test caught this: a persona sending a link had it cut to
+    // 'have a look at http://example.' because the dot in the domain looked
+    // exactly like a full stop. Decimals and abbreviations break the same way.
+    const link = 'have a look at http://example.com';
+    expect(openingBrevity(link, 1)).toBe(link);
+    expect(splitIntoBubbles(link)).toEqual([link]);
+  });
+
+  it('still splits when the dot really does end a sentence', () => {
+    expect(openingBrevity('sure. and then this happened', 1)).toBe('sure.');
+  });
+
   it('says nothing at all rather than sending an empty frame', () => {
     expect(splitIntoBubbles('   ')).toEqual([]);
   });
