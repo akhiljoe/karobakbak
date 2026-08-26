@@ -62,7 +62,7 @@ import {
   type ServerFeatures,
   type ServerLimits,
 } from '../protocol/types';
-import { humanCadence, splitIntoBubbles } from './cadence';
+import { humanCadence, openingBrevity, splitIntoBubbles } from './cadence';
 import type { Cadence } from './cadence';
 import type { PersonaCharacter } from './types';
 
@@ -508,7 +508,10 @@ export class PersonaClient {
     if (!live()) return;
     if (text === null || text.trim() === '') return;
 
-    const bubbles = splitIntoBubbles(text, this.limits?.maxMessageLength);
+    // Short at the start, whatever the voice produced. A stranger who opens
+    // with a paragraph is one you stop reading.
+    const shaped = openingBrevity(text, this.sentThisConversation);
+    const bubbles = splitIntoBubbles(shaped, this.limits?.maxMessageLength);
     if (bubbles.length === 0) return;
 
     let delivered = 0;

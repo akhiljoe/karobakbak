@@ -109,6 +109,61 @@ export function humanCadence(random: () => number = Math.random): Cadence {
 }
 
 /**
+ * How many of a persona's own turns count as "the beginning".
+ *
+ * Three: the greeting, and the two exchanges after it. That is the span in
+ * which a real conversation is still deciding whether it is a conversation.
+ */
+const OPENING_TURNS = 3;
+
+/** The most words an opening reply may carry, however many it was given. */
+const OPENING_MAX_WORDS = 12;
+
+/**
+ * Cut an early reply down to the size a stranger actually opens with.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS NOT LEFT TO THE PROMPT
+ * ---------------------------------------------------------------------------
+ * The prompt already says "usually under fifteen words" and "never more than
+ * two sentences". The second message of a live conversation was:
+ *
+ *   wait, that's it? i'm 29, nonbinary, us. bought three keyboards i can't
+ *   justify and at least two games i'll never finish. you?
+ *
+ * Thirty-five words, three sentences, an entire declared profile and two
+ * anecdotes — to somebody who had so far said "hi" and "m". Every instruction
+ * it broke was already written down, which is the whole argument for putting
+ * limits between the model and the socket rather than inside the prompt: an
+ * instruction is a request, and this is not.
+ *
+ * It keeps the **first sentence**, never a truncation mid-clause, because a
+ * bubble that stops in the middle of a thought reads as a bug rather than as
+ * brevity. If that one sentence is still long it is cut at a word boundary.
+ *
+ * Late in a conversation this does nothing. Somebody twenty messages deep has
+ * earned the right to a longer answer, and by then the other person has decided
+ * they are talking to a person.
+ */
+export function openingBrevity(text: string, sent: number): string {
+  if (sent >= OPENING_TURNS) return text;
+
+  const trimmed = text.trim();
+  if (trimmed === '') return trimmed;
+
+  // First line first: a reply the model laid out over two lines has already
+  // said which thought comes first.
+  const firstLine = trimmed.split(/\n+/)[0]?.trim() ?? trimmed;
+
+  const sentence = firstLine.match(/^[^.!?]*[.!?]*/)?.[0]?.trim() ?? firstLine;
+  const kept = sentence === '' ? firstLine : sentence;
+
+  const words = kept.split(/\s+/);
+  if (words.length <= OPENING_MAX_WORDS) return kept;
+  return words.slice(0, OPENING_MAX_WORDS).join(' ');
+}
+
+/**
  * Split one generated reply into the messages a person would actually send.
  *
  * Splits only at sentence boundaries and newlines — never mid-word and never
