@@ -24,7 +24,7 @@ import type { StaticPage } from './pages';
 export const CONTACT: StaticPage = {
   id: 'contact',
   title: 'Contact',
-  summary: 'One person reads this. Here is how to reach them, and what to expect.',
+  summary: 'How to get in touch, and what to expect back.',
   sections: [
     {
       heading: 'Reporting a conversation? Use Report instead',
@@ -42,8 +42,7 @@ export const CONTACT: StaticPage = {
       body: [
         'Something broken. A question this site did not answer. A privacy request. A legal ' +
           'notice. Anything about how the service is run.',
-        'Feedback is genuinely welcome, including the blunt kind. This is one person building ' +
-          'something, not a company managing a brand.',
+        'Feedback is genuinely welcome, including the blunt kind.',
       ],
     },
     {

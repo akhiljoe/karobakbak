@@ -6,6 +6,7 @@
  * a field added in one place and not the other is a setting that appears to
  * exist and does not.
  */
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Eraser } from 'lucide-react';
 
@@ -44,6 +45,11 @@ export function ProfileFields({
   onClear,
   appliesToNextMatch = false,
 }: ProfileFieldsProps): JSX.Element {
+  // The raw string, because "1" and "01" parse the same and only one of
+  // them is somebody halfway through typing "18".
+  const [ageText, setAgeText] = useState(profile.age === null ? '' : String(profile.age));
+  const minorDeclared = declaresMinor(ageText, profile.age);
+
   const empty = isEmptyProfile(profile);
 
   return (
@@ -68,10 +74,26 @@ export function ProfileFields({
             max={MAX_DECLARED_AGE}
             value={profile.age ?? ''}
             placeholder={`${MIN_DECLARED_AGE}+`}
-            onChange={(event) => onChange({ ...profile, age: parseAge(event.target.value) })}
-            className={inputClass}
+            aria-invalid={minorDeclared}
+            aria-describedby={minorDeclared ? 'age-minor-warning' : undefined}
+            onChange={(event) => {
+              setAgeText(event.target.value);
+              onChange({ ...profile, age: parseAge(event.target.value) });
+            }}
+            className={`${inputClass} ${minorDeclared ? 'border-rose-500 focus:border-rose-400' : ''}`}
           />
         </Field>
+
+        {minorDeclared && (
+          <p
+            id="age-minor-warning"
+            role="alert"
+            className="col-span-2 -mt-1 text-sm leading-relaxed text-rose-400"
+          >
+            karobakbak is for adults. You must be {MIN_DECLARED_AGE} or over to use it — please
+            close this tab.
+          </p>
+        )}
 
         <Field label="Gender">
           <select
@@ -183,6 +205,29 @@ function orNull(value: string): string | null {
  * the minimum under the cursor — the server is the authority on the bound, and
  * the input's own `min` communicates it.
  */
+/**
+ * Whether a declared age should be objected to *while it is being typed*.
+ *
+ * The hard part is that "1" is a prefix of "18" and "19". Warning on it would
+ * fire on the way to a perfectly good answer, which is the same mistake
+ * `parseAge` avoids by refusing to clamp.
+ *
+ * So a lone "1" is left alone and everything else under the minimum is
+ * flagged immediately: "2" through "9" cannot become a valid age without a
+ * second digit, and any two-digit number is already whatever it is going to be.
+ *
+ * It warns rather than blocks. The gate has already asked, the server is the
+ * authority on the bound, and a field that refuses the keystroke teaches
+ * somebody to lie one digit differently rather than to leave.
+ */
+function declaresMinor(raw: string, age: number | null): boolean {
+  if (age === null) return false;
+  if (age >= MIN_DECLARED_AGE) return false;
+  const digits = raw.trim();
+  if (digits === '1') return false;
+  return true;
+}
+
 function parseAge(value: string): number | null {
   if (value.trim() === '') return null;
   const parsed = Number.parseInt(value, 10);

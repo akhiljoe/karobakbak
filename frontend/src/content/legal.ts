@@ -59,9 +59,28 @@ const TERMS: StaticPage = {
     {
       heading: 'Who you are agreeing with',
       body: [
-        `karobakbak is run by one person, as a sole proprietor in India. There is no company ` +
-          `behind it and no support department. You can reach the operator at ${contact}.`,
+        `karobakbak is operated as a sole proprietorship in India. You can reach the operator ` +
+          `at ${contact}.`,
         'By using the service you accept these terms. If you do not, do not use it.',
+      ],
+    },
+    {
+      heading: 'How matching works',
+      body: [
+        'You are paired with a randomly chosen stranger. You do not choose who you are matched ' +
+          'with, and neither do they. Sometimes that partner is one of our automated accounts ' +
+          'rather than a person.',
+        'Nothing anybody tells you about themselves is verified — not their name, age, gender or ' +
+          'country. Treat all of it as unverified, because that is exactly what it is.',
+      ],
+    },
+    {
+      heading: 'How long conversations are kept',
+      body: [
+        'Conversations are kept for 30 days and then deleted automatically. If somebody reports ' +
+          'a conversation it is kept for 90 days instead, so that there is time to review it.',
+        'This is why the service can act on a report at all. The Privacy page sets out ' +
+          'everything else that is held and for how long.',
       ],
     },
     {
@@ -133,8 +152,8 @@ const TERMS: StaticPage = {
       heading: 'The service comes as it is',
       body: [
         'There is no guarantee of availability, of finding a match, or that any particular ' +
-          'conversation will be pleasant. This is a free service run by one person; it will ' +
-          'sometimes be down, and features may change or disappear.',
+          'conversation will be pleasant. This is a free service; it will sometimes be down, and ' +
+          'features may change or disappear.',
         'We do not screen people before they are matched with you. Automated rules catch some ' +
           'things and miss others.',
       ],
@@ -201,8 +220,7 @@ const PRIVACY: StaticPage = {
     {
       heading: 'Who is responsible',
       body: [
-        `The service is operated by one person as a sole proprietor in India, reachable at ` +
-          `${contact}.`,
+        `The service is operated as a sole proprietorship in India, reachable at ${contact}.`,
       ],
     },
     {

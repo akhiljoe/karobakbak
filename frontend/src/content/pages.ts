@@ -90,7 +90,7 @@ const ABOUT: StaticPage = {
       body: [
         'No photos, no video, no voice. This is not a feature waiting to be built — the server ' +
           'refuses anything that is not text, and that refusal is what keeps the product from ' +
-          'becoming something one person cannot moderate.',
+          'becoming something that cannot be moderated properly.',
         'It also means far less can go wrong. Nobody can send you an image you did not ask to ' +
           'see, and nobody can record your face or your voice.',
       ],
@@ -137,16 +137,6 @@ const ABOUT: StaticPage = {
           'than wanting to. Nothing here is designed to be hard to leave.',
         'Some things may arrive later — they will arrive as this page changing, not as a ' +
           'surprise.',
-      ],
-    },
-    {
-      heading: 'Who runs it',
-      body: [
-        'One person, as a sole proprietor in India. Not a company, and not a support ' +
-          'department. Reports are read by that person.',
-        'That is worth knowing when you decide how much to trust this: the response times in ' +
-          'the Terms are what one person can actually meet, rather than what sounds ' +
-          'reassuring.',
       ],
     },
   ],
