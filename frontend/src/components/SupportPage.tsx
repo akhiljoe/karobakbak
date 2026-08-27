@@ -35,6 +35,7 @@ import { ArrowLeft, Check, Heart } from 'lucide-react';
 import { clientConfig } from '../config';
 import { PAYMENTS_ENABLED } from '../features';
 import { RouteLink, useDocumentTitle } from '../router';
+import { secondaryNav } from './SiteNav';
 import { LogoMark } from './Logo';
 
 /**
@@ -247,11 +248,23 @@ export function SupportPage(): JSX.Element {
             aria-label="More"
             className="safe-pb mt-10 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-coffee-500"
           >
-            {[
-              { to: '/about', label: 'About' },
-              { to: '/terms', label: 'Terms' },
-              { to: '/privacy', label: 'Privacy' },
-            ].map((item) => (
+            {/*
+              The same links the footer carries everywhere else, in this page's
+              own palette rather than its component.
+
+              `SiteFooter` is dark by construction, and this is the one surface
+              in the product that is deliberately not (see the `coffee` note in
+              `tailwind.config.js`): asking for money in the chat's chrome reads
+              as part of the product, and it is not. So the *list* is shared and
+              the colours are local — which is the half worth sharing, since the
+              bug this page would otherwise repeat is a link set that quietly
+              falls out of step with the rest of the site.
+
+              "Buy me a coffee" is dropped because it points here.
+            */}
+            {secondaryNav()
+              .filter((item) => item.to !== '/support')
+              .map((item) => (
               <RouteLink
                 key={item.to}
                 to={item.to}

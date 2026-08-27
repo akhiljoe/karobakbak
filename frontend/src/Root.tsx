@@ -27,11 +27,12 @@
 import { useState } from 'react';
 
 import { App } from './App';
+import { AboutPage } from './components/AboutPage';
 import { AuthModal } from './components/AuthModal';
-import { ContactCard } from './components/ContactCard';
+import { ContactPage } from './components/ContactPage';
+import { HowItWorksPage } from './components/HowItWorksPage';
 import { PremiumPage } from './components/PremiumPage';
-import { SupportCard } from './components/SupportCard';
-import { SampleConversation } from "./components/SampleConversation";
+import { RulesPage } from './components/RulesPage';
 import { SupportPage } from './components/SupportPage';
 import { NotFound } from './components/NotFound';
 import { SitePage } from './components/SitePage';
@@ -70,18 +71,30 @@ export function Root(): JSX.Element {
   // being connected yet.
   if (path === '/support') return <SupportPage />;
 
+  /*
+   * The three pages that argue for the product get their own layouts.
+   *
+   * They are still in `STATIC_PAGES` — the footer, the header menu and
+   * `pages.test.ts` all read that list, and dropping them from it would remove
+   * them from the navigation rather than restyle them. What changes here is
+   * only which component renders the words: `AboutPage` and `HowItWorksPage`
+   * read the same `content/` entries `SitePage` would have.
+   */
+  if (path === '/about') return <AboutPage />;
+  if (path === '/how-it-works') return <HowItWorksPage />;
+  if (path === '/rules') return <RulesPage />;
+  if (path === '/contact') return <ContactPage />;
+
   const page = PAGES.get(path);
   if (page !== undefined) {
-    // Contact is the only page with something to *do* on it. Special-cased here
-    // rather than giving every page an optional component slot in its data,
-    // which would put React in the content layer for one exception.
-    return (
-      <SitePage page={page}>
-        {page.id === 'contact' ? <ContactCard /> : undefined}
-        {page.id === 'about' ? <SupportCard /> : undefined}
-        {page.id === "how-it-works" ? <SampleConversation /> : undefined}
-      </SitePage>
-    );
+    // Nothing left here needs a slot.
+    //
+    // About, How it works, Rules and Contact each used to take one — a donation
+    // card, a sample conversation, an address block. All four now have their
+    // own layouts, which is where a thing that only ever appeared on one page
+    // belonged. What remains on `SitePage` is FAQ, Safety, Terms and Privacy:
+    // four documents that genuinely are the same shape.
+    return <SitePage page={page} />;
   }
 
   return <NotFound />;

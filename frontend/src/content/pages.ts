@@ -38,11 +38,33 @@ import { LEGAL_PAGES } from './legal';
 
 export interface PageSection {
   readonly heading: string;
+  /** Paragraphs, in order, before any list. */
   readonly body: readonly string[];
+  /**
+   * Items the drafts set as a list — the prohibitions on Rules, the topics on
+   * Contact.
+   *
+   * Held apart from `body` rather than as more paragraphs because the designs
+   * set them as tiles, and a renderer cannot tell a one-line paragraph from a
+   * list item by looking at it. `SitePage` renders them as an ordinary list, so
+   * a page that never gets a bespoke layout still shows everything.
+   */
+  readonly bullets?: readonly string[];
+  /** Paragraphs that come after the list. */
+  readonly tail?: readonly string[];
 }
 
 export interface StaticPage {
   readonly id: StaticPageId;
+  /**
+   * A standfirst under the summary, where a page has one.
+   *
+   * Only Rules does. It is the sentence that scopes everything below it — that
+   * the rules bind anonymous users too — and it belongs to the page rather than
+   * to any numbered section, which is exactly how the draft and the design set
+   * it.
+   */
+  readonly intro?: string;
   /** Shown in the footer link and as the sheet's title. */
   readonly title: string;
   /** One line under the title. */
@@ -81,10 +103,14 @@ const ABOUT: StaticPage = {
         'Most of the internet is built around people you already know, people you follow, or ' +
           'people an algorithm thinks you might like.',
         'karobakbak is built around something different: talking to someone you have never met.',
-        'There is no audience watching your conversation. No follower count. No feed to ' +
-          'maintain. No reputation to build. Just two strangers and a conversation.',
+        'There is no audience watching your conversation.',
+        'No follower count.',
+        'No feed to maintain.',
+        'No reputation to build.',
+        'Just two strangers and a conversation.',
         'Sometimes it will be interesting. Sometimes it will be awkward. Sometimes it will last ' +
-          'thirty seconds. That is part of the idea.',
+          'thirty seconds.',
+        'That is part of the idea.',
       ],
     },
     {
@@ -103,8 +129,8 @@ const ABOUT: StaticPage = {
       body: [
         'You do not need to give us your name, email address or phone number to use the free ' +
           'chat service.',
-        'You can optionally choose a name, age or gender to share with the person you are ' +
-          'matched with. Those details are self-declared — nobody verifies them.',
+        'You can optionally choose a name, age, gender or country to share with the person you ' +
+          'are matched with. Those details are self-declared — nobody verifies them.',
         'But anonymous does not mean invisible.',
         'Like any online service, karobakbak may process technical information and conversation ' +
           'data for purposes such as operating the service, preventing abuse and responding to ' +
@@ -138,10 +164,15 @@ const ABOUT: StaticPage = {
     {
       heading: 'What it is not',
       body: [
-        'No feed. No followers. No streaks. No points. No pressure to stay.',
+        'No feed.',
+        'No followers.',
+        'No streaks.',
+        'No points.',
+        'No pressure to stay.',
         'Nothing here is designed to make leaving difficult.',
         'The product is deliberately small: meet a stranger, have a conversation, and leave ' +
-          'when you want. That is karobakbak.',
+          'when you want.',
+        'That is karobakbak.',
       ],
     },
   ],
@@ -259,142 +290,340 @@ const FAQ: StaticPage = {
   ],
 };
 
+/*
+ * Safety, transcribed from `docs/rewrite-wording/safety.md`.
+ *
+ * The draft is the source; this file is the stale one whenever they disagree,
+ * and `pages.test.ts` holds it to that.
+ */
 const SAFETY: StaticPage = {
   id: 'safety',
   title: 'Safety',
-  summary: 'What we do, what you can do, and where the limits are.',
+  summary: 'Talking to strangers can be interesting, funny and unexpected. It can also go wrong.',
+  intro:
+    'Here' + '’' + 's what we do to give you control, what you can do to protect ' +
+    'yourself, and what we cannot guarantee.',
   sections: [
     {
       heading: 'Three controls, always available',
       body: [
-        'Skip ends the conversation now. Block ends it and prevents that person being matched ' +
-          'with you again. Report sends it to a reviewer.',
-        'Block sits in the conversation header rather than behind a menu, because a safe ' +
-          'action buried three taps deep is one most people never take.',
+      ],
+      bullets: [
+        'Skip ends the conversation and finds you someone else.',
+        'Block ends the conversation and prevents that person from being matched with you again.',
+        'Report sends the conversation to our team for review.',
+      ],
+      tail: [
+        'You do not need to explain why you left. If a conversation makes you uncomfortable, leave it.',
       ],
     },
     {
       heading: 'You never owe a stranger an explanation',
       body: [
-        'Leaving is free and nobody is told why. There is no penalty for skipping, no ' +
-          'reputation to protect, and nobody sees a record of how many conversations you ' +
-          'ended.',
-        'If something feels off, that feeling is enough. Go.',
+        'You can end a conversation at any time.',
+        'There is no penalty for skipping, and you do not need the other person\'s permission to leave.',
+        'If something feels wrong, that is enough. You can leave first and work out the reason later.',
       ],
     },
     {
-      heading: 'What we check automatically',
+      heading: 'Protect your personal information',
       body: [
-        'Messages pass through rules that run on our own servers — not an outside service. ' +
-          'They catch some things and miss others, and they are a floor rather than a ceiling.',
-        'Automated accounts have additional limits applied between the model and the ' +
-          'connection, so they cannot be talked around by anything a user types.',
+        'Remember that you are talking to a stranger.',
+        'Do not share things such as:',
+      ],
+      bullets: [
+        'Your password or login details',
+        'Bank or payment information',
+        'Your home address',
+        'Your phone number',
+        'Your workplace or school',
+        'Your precise location',
+        'Private social-media accounts',
+        'Personal information that could be used to identify or locate you',
+      ],
+      tail: [
+        'Be careful with details that seem harmless individually. Your age, city, workplace and other small details can become identifying when put together.',
+        'And once you send something, you cannot control what the recipient does with it. They can copy, save or screenshot what you send.',
       ],
     },
     {
-      heading: 'Things worth doing',
+      heading: 'Watch for common warning signs',
       body: [
-        'Do not share your real name, phone number, address, workplace, school, social handles ' +
-          'or anything that identifies where you are. Nobody here needs them.',
-        'Be careful with details that seem harmless on their own. A city, a job and an age ' +
-          'together are often enough to find somebody.',
-        'Nobody legitimate will pressure you to move the conversation to another app, and ' +
-          'nobody legitimate will ask you for money, a gift card, or a photo.',
+        'Be cautious if someone:',
       ],
-    },
-    {
-      heading: 'Common patterns worth recognising',
-      body: [
-        'Someone who wants to leave the platform immediately, before any real conversation has ' +
-          'happened.',
-        'Someone who escalates quickly — unusually intense affection, urgency, or a crisis ' +
-          'that needs your help right now.',
-        'Someone who asks a lot about you and answers almost nothing about themselves.',
-        'Someone who reacts to a boundary by pushing harder. A person who takes "no" badly the ' +
-          'first time will take it worse the second.',
+      bullets: [
+        'Pushes you to move the conversation to another app immediately',
+        'Asks for money, gift cards or financial information',
+        'Tries to get personal information from you while revealing very little about themselves',
+        'Becomes intensely affectionate or threatening very quickly',
+        'Creates a crisis and pressures you to solve it',
+        'Ignores your boundaries or keeps pushing after you say no',
+        'Pressures you to send something you are uncomfortable sharing',
+      ],
+      tail: [
+        'You do not need to prove that someone is dangerous before you leave. Skip or Block them and, if appropriate, Report the conversation.',
       ],
     },
     {
       heading: 'If somebody appears to be a child',
       body: [
-        'Report it. Reports of this kind are treated as the most serious thing this service ' +
-          'receives, and the conversation is preserved before anything else happens to it.',
-        'Do not try to handle it yourself, and do not warn the other person.',
+        'Do not engage with them about sexual or otherwise inappropriate content.',
+        'Report the conversation and leave it. Do not attempt to investigate, identify or confront the person yourself.',
       ],
     },
     {
-      heading: 'If you are struggling',
+      heading: 'If you are in immediate danger',
       body: [
-        'A stranger on a chat site is not a crisis service, and neither are we. If you are in ' +
-          'danger or thinking about harming yourself, please contact your local emergency ' +
-          'number or a crisis line where you live.',
-        'Talking to somebody random can help. It is not a substitute for help that is actually ' +
-          'trained.',
+        'karobakbak is not an emergency or crisis service.',
+        'If you or someone else is in immediate danger, contact the appropriate emergency service where you live.',
+        'If you are struggling or thinking about harming yourself, contact a crisis service or qualified professional in your area. A conversation with a stranger may feel helpful, but it is not a substitute for professional support.',
       ],
     },
     {
-      heading: 'What we cannot do',
+      heading: 'What we do — and what we cannot do',
       body: [
-        'We cannot verify that anybody is who they say they are, including their age. We ' +
-          'cannot see a conversation that was never reported. Anything you send can be copied ' +
-          'or screenshotted by the person receiving it, and nothing here prevents that.',
-        'Assume anything you type could be kept by the other person for ever, because it can.',
+        'We provide tools to help you leave conversations, block people and report behaviour that concerns you.',
+        'We also take reports seriously and use them to help us identify behaviour that violates our rules.',
+        'But there are limits.',
+        'We cannot guarantee that a stranger is who they say they are. We cannot verify everything someone tells you, including their age. We cannot prevent someone from copying or saving something you send them.',
+        'We also cannot see or act on a conversation that is never reported to us.',
+        'So treat every conversation accordingly:',
+        'You are talking to a stranger. Share carefully. Trust your instincts. Leave when you want to.',
       ],
     },
   ],
 };
 
+/*
+ * The Rules, transcribed from `docs/rewrite-wording/rules.md`.
+ *
+ * This page used to be six paraphrased sections. The draft has fourteen, and
+ * `RulesPage.dc.html` lays out all fourteen. The short version was dropping the
+ * specific prohibitions — advertising, de-anonymisation, service misuse — and
+ * the whole enforcement half, which is the part somebody reads when they are
+ * deciding whether to report. `pages.test.ts` checks it against the draft.
+ *
+ * The draft ends section 14 with a `[CONTACT EMAIL]` placeholder, and it is
+ * deliberately not reproduced: the address is configuration
+ * (`VITE_CONTACT_EMAIL`), and `RulesPage` renders that, or a link to Contact
+ * when it is unset. A literal placeholder here would ship an address that
+ * bounces, which is worse than none.
+ */
 const RULES: StaticPage = {
   id: 'rules',
   title: 'Rules',
-  summary: 'Short, and all of it enforced.',
+  summary: 'Short enough to read. Clear enough to enforce.',
+  intro:
+    'karobakbak is a place to talk to strangers, not a place where anything ' +
+    'goes. These rules apply to everyone, including people using the service ' +
+    'anonymously.',
   sections: [
     {
-      heading: 'The one with no second chance',
+      heading: 'No sexual content involving anyone under 18',
       body: [
-        'Nothing sexual involving anyone under 18, in any form, including text. This is ' +
-          'reported to the authorities and the conversation is preserved. There is no warning ' +
-          'and no appeal.',
+        'This is the one rule with no second chance.',
+        'Do not create, request, send, solicit, encourage or facilitate sexual content involving a person under 18, including sexualized text or attempts to sexualize a minor.',
+        'If we become aware of conduct involving suspected child sexual exploitation or abuse, we may preserve relevant information and make reports to the appropriate authorities where required or permitted by law.',
+        'We may also immediately end the session and permanently restrict access.',
+        'There is no warning for this category.',
       ],
     },
     {
-      heading: 'Do not harass anyone',
+      heading: 'Do not harass, threaten or abuse people',
       body: [
-        'No threats, no stalking, no sexual content aimed at somebody who has not welcomed it, ' +
-          'no slurs, no pile-on after somebody has said stop.',
-        'Flirting is fine between adults who are both enjoying it. Continuing after a no is ' +
-          'not flirting.',
+        'Do not:',
+      ],
+      bullets: [
+        'Threaten someone with violence or harm.',
+        'Stalk, intimidate or repeatedly target another person.',
+        'Continue contacting someone after they have clearly asked you to stop.',
+        'Direct unwanted sexual content at someone.',
+        'Use slurs or targeted hateful abuse.',
+        'Deliberately humiliate, degrade or intimidate someone.',
+        'Encourage others to target or harass someone.',
+      ],
+      tail: [
+        'Flirting between consenting adults is allowed.',
+        'Continuing after someone says no, asks you to stop, or clearly indicates they are uncomfortable is not flirting.',
+        'You do not have to justify leaving a conversation, and neither does anyone else.',
       ],
     },
     {
-      heading: 'Do not use this to sell, recruit or scam',
+      heading: 'Do not exploit, scam or deceive people',
       body: [
-        'No advertising, no links to your shop, no crypto, no investment tips, no "I can make ' +
-          'you money". No recruiting for anything, including causes you believe in.',
+        'Do not use karobakbak to:',
+      ],
+      bullets: [
+        'Scam or defraud people.',
+        'Solicit money, gifts or financial assistance through deception.',
+        'Promote fraudulent investments or financial schemes.',
+        'Impersonate someone for the purpose of deceiving another person.',
+        'Phish for passwords, payment information or account credentials.',
+        'Run advance-fee, romance or other scams.',
+        'Distribute malicious links or software.',
+        'Manipulate someone into giving you access to their accounts or property.',
+      ],
+      tail: [
+        'If someone asks you for money, financial credentials or valuable personal information, treat that as a warning sign.',
       ],
     },
     {
-      heading: 'Do not try to identify or track anyone',
+      heading: 'Do not advertise or recruit',
       body: [
-        'Do not attempt to work out who somebody is, find them elsewhere, or share anything ' +
-          'about them outside this service. The whole product rests on the fact that a ' +
-          'conversation here cannot follow you.',
+        'Do not turn random conversations into a marketing channel.',
+        'This includes:',
+      ],
+      bullets: [
+        'Advertising products or services.',
+        'Spam.',
+        'Referral schemes.',
+        'Promotional links.',
+        'Recruiting customers.',
+        'Recruiting employees or participants.',
+        'Recruiting people for financial schemes.',
+        'Recruiting for organizations, campaigns or causes.',
+      ],
+      tail: [
+        'A genuine conversation is fine. Using the service primarily to reach strangers for promotional or recruitment purposes is not.',
       ],
     },
     {
-      heading: 'Do not break the service',
+      heading: 'Do not try to identify, locate or expose another user',
       body: [
-        'No automation, no flooding, no attempts to work around rate limits, blocks or bans.',
+        'Do not use information obtained through karobakbak to identify or locate another person.',
+        'Do not:',
+      ],
+      bullets: [
+        'Try to discover their real name.',
+        'Look for their social-media accounts.',
+        'Track their physical location.',
+        'Investigate their identity outside the service.',
+        'Publish their personal information.',
+        'Share their personal information with someone else.',
+        'Pressure them into revealing identifying information.',
+      ],
+      tail: [
+        'The approximate country or region displayed by the service is not an invitation to determine someone\'s actual location.',
+        'What someone tells you in a conversation belongs to that conversation.',
+        'Do not use it to follow them elsewhere.',
+      ],
+    },
+    {
+      heading: 'Do not misuse the service',
+      body: [
+        'Do not interfere with the operation or security of karobakbak.',
+        'This includes:',
+      ],
+      bullets: [
+        'Flooding or spamming the service.',
+        'Deliberately creating excessive load.',
+        'Using unauthorized automation or bots.',
+        'Scraping users or conversations.',
+        'Circumventing technical restrictions.',
+        'Attempting to bypass rate limits.',
+        'Circumventing blocks or bans.',
+        'Creating methods to evade enforcement.',
+        'Attempting to gain unauthorized access.',
+        'Testing or exploiting vulnerabilities without permission.',
+        'Interfering with another user\'s connection or session.',
+      ],
+      tail: [
+        'If you find a security vulnerability, report it rather than exploiting it.',
+      ],
+    },
+    {
+      heading: 'Do not send prohibited or unlawful content',
+      body: [
+        'Do not use the service to distribute content that is unlawful or that you do not have the right to distribute.',
+        'This includes content used to facilitate:',
+      ],
+      bullets: [
+        'Serious criminal activity;',
+        'Fraud;',
+        'Exploitation;',
+        'Extortion;',
+        'Malware or unauthorized access;',
+        'Non-consensual sexual abuse;',
+        'Child sexual exploitation; or',
+        'Other unlawful conduct.',
+      ],
+      tail: [
+        'We may remove content or restrict access where necessary to comply with law or protect users and the service.',
+      ],
+    },
+    {
+      heading: 'Do not pretend the rules do not apply because the chat is anonymous',
+      body: [
+        'Being anonymous does not make you exempt from the rules.',
+        'We may take action based on conduct even if we do not know your real-world identity.',
+        'We may use technical information reasonably available to us to enforce restrictions and prevent repeated abuse.',
+      ],
+    },
+    {
+      heading: 'Use the controls when you need them',
+      body: [
+        'You have three simple options:',
+      ],
+      bullets: [
+        'Skip — leave the conversation and move on.',
+        'Block — leave the conversation and prevent that person from being matched with you again.',
+        'Report — send the conversation to us for review.',
+      ],
+      tail: [
+        'You do not need to prove that someone broke a rule before reporting them. If something is seriously wrong or you are unsure what to do, report it.',
+        'Do not attempt to punish, expose or investigate the other person yourself.',
       ],
     },
     {
       heading: 'What happens when a rule is broken',
       body: [
-        'Sessions are ended and access is blocked, temporarily or permanently depending on ' +
-          'what happened. The most serious category is reported to the authorities and the ' +
-          'evidence is preserved first.',
-        'You will not usually be told that somebody reported you, and the person who reported ' +
-          'you is never told what happened. That protects them.',
+        'Depending on what happened, we may:',
+      ],
+      bullets: [
+        'End the conversation;',
+        'Remove access temporarily;',
+        'Permanently block access;',
+        'Restrict particular features;',
+        'Preserve relevant information;',
+        'Investigate related activity; or',
+        'Take other action reasonably necessary to protect the service and its users.',
+      ],
+      tail: [
+        'The response depends on the seriousness of the conduct, the available evidence, previous enforcement history and applicable law.',
+        'We do not promise that every violation will be detected. Automated systems, user reports and human review all have limitations.',
+      ],
+    },
+    {
+      heading: 'Serious safety matters',
+      body: [
+        'For particularly serious conduct, including suspected child sexual exploitation or other serious unlawful activity, we may preserve relevant information and report it to appropriate authorities where required or permitted by law.',
+        'We may do this without warning the person involved.',
+        'We may also be unable to tell you exactly what action was taken against another user. Protecting the privacy and safety of the person who reported something may require us to keep that information confidential.',
+      ],
+    },
+    {
+      heading: 'Reports are not a popularity contest',
+      body: [
+        'Do not misuse the reporting system to deliberately target people simply because you dislike them.',
+        'False, malicious or abusive reports may themselves result in enforcement action.',
+        'At the same time, you will not be punished simply because someone reports you. A report is a reason to review something, not automatic proof that a rule was broken.',
+      ],
+    },
+    {
+      heading: 'Enforcement is not a promise of perfect safety',
+      body: [
+        'These rules describe what is prohibited. They are not a guarantee that nobody will break them.',
+        'We cannot screen every person before they enter a conversation, and no moderation system catches everything.',
+        'You should still use your judgment.',
+        'If a conversation feels wrong, you can leave. You do not owe a stranger an explanation.',
+      ],
+    },
+    {
+      heading: 'Appeals',
+      body: [
+        'If you believe we made a mistake in restricting your access, you may contact us to request a review.',
+        'We may not reverse every decision, particularly where doing so could compromise safety, reveal information about another user, undermine an investigation, or create a risk of repeated abuse.',
+        'For serious enforcement decisions, we will review the relevant information available to us and make a decision in accordance with our policies and applicable law.',
       ],
     },
   ],

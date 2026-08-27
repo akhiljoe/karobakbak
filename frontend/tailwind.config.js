@@ -155,6 +155,70 @@ export default {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        /*
+         * The editorial pages (About, How it works, Premium) are built from
+         * these. Every one is ambient and slow, or a single entrance — nothing
+         * is scroll-driven, and the global `prefers-reduced-motion` rule in
+         * index.css flattens all of it to a static page.
+         */
+        // Entrance: content arrives from below, once.
+        rise: {
+          '0%': { opacity: '0', transform: 'translateY(24px)', filter: 'blur(6px)' },
+          '100%': { opacity: '1', transform: 'none', filter: 'blur(0)' },
+        },
+        // A rule drawing itself left to right. Needs `origin-left`.
+        draw: {
+          '0%': { transform: 'scaleX(0)' },
+          '100%': { transform: 'scaleX(1)' },
+        },
+        // The ambient warm/sage blobs behind the page.
+        drift: {
+          '0%, 100%': { transform: 'translate3d(0,0,0) scale(1)' },
+          '50%': { transform: 'translate3d(14px,-22px,0) scale(1.08)' },
+        },
+        // A dot breathing a ring, for "live". Distinct from `pulse-ring`,
+        // which scales an element rather than spreading a shadow.
+        'dot-pulse': {
+          '0%': { boxShadow: '0 0 0 0 rgba(127,176,105,.5)' },
+          '70%': { boxShadow: '0 0 0 8px rgba(127,176,105,0)' },
+          '100%': { boxShadow: '0 0 0 0 rgba(127,176,105,0)' },
+        },
+        'dot-pulse-amber': {
+          '0%': { boxShadow: '0 0 0 0 rgba(255,180,32,.45)' },
+          '70%': { boxShadow: '0 0 0 8px rgba(255,180,32,0)' },
+          '100%': { boxShadow: '0 0 0 0 rgba(255,180,32,0)' },
+        },
+        'glow-pulse': {
+          '0%, 100%': { boxShadow: '0 0 0 4px rgba(255,180,32,.05)' },
+          '50%': { boxShadow: '0 0 0 9px rgba(255,180,32,.09)' },
+        },
+        // The match diagram on "How it works": two dots approach, hold a
+        // dashed thread between them, drift apart. One six-second loop.
+        'approach-l': {
+          '0%': { transform: 'translateX(-46px)', opacity: '.3' },
+          '34%, 66%': { transform: 'translateX(-13px)', opacity: '1' },
+          '100%': { transform: 'translateX(-46px)', opacity: '.3' },
+        },
+        'approach-r': {
+          '0%': { transform: 'translateX(46px)', opacity: '.3' },
+          '34%, 66%': { transform: 'translateX(13px)', opacity: '1' },
+          '100%': { transform: 'translateX(46px)', opacity: '.3' },
+        },
+        thread: {
+          '0%, 22%': { transform: 'scaleX(0)', opacity: '0' },
+          '40%, 62%': { transform: 'scaleX(1)', opacity: '1' },
+          '82%, 100%': { transform: 'scaleX(0)', opacity: '0' },
+        },
+        // The field of unverified dots above the Premium hero.
+        'swap-soft': {
+          '0%, 100%': { opacity: '.2' },
+          '50%': { opacity: '1' },
+        },
+        // The caret after the About wordmark.
+        blink: {
+          '0%, 49%': { opacity: '1' },
+          '50%, 100%': { opacity: '0' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out both',
@@ -164,6 +228,24 @@ export default {
         'float-slow': 'float-slow 5s ease-in-out infinite',
         float: 'float 6s ease-in-out infinite',
         'shimmer': 'shimmer 1.6s linear infinite',
+        /*
+         * `shimmer` at 1.6s reads as a thing loading. The display headlines use
+         * the same sweep at 7s, where it reads as light moving across metal —
+         * same keyframes, an entirely different meaning, so it gets its own
+         * name rather than an override at every call site.
+         */
+        'shimmer-slow': 'shimmer 7s linear infinite',
+        rise: 'rise 0.7s cubic-bezier(0.2,0.8,0.2,1) both',
+        draw: 'draw 1.1s cubic-bezier(0.2,0.8,0.2,1) both',
+        drift: 'drift 26s ease-in-out infinite',
+        'dot-pulse': 'dot-pulse 2.8s ease-out infinite',
+        'dot-pulse-amber': 'dot-pulse-amber 2.8s ease-out infinite',
+        'glow-pulse': 'glow-pulse 4.5s ease-in-out infinite',
+        'approach-l': 'approach-l 6s ease-in-out infinite',
+        'approach-r': 'approach-r 6s ease-in-out infinite',
+        thread: 'thread 6s ease-in-out infinite',
+        'swap-soft': 'swap-soft 5s ease-in-out infinite',
+        blink: 'blink 1.1s steps(1) infinite',
       },
     },
   },

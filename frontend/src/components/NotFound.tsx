@@ -10,6 +10,7 @@
  * front of somebody who is otherwise at a dead end.
  */
 import { LogoMark } from './Logo';
+import { StartChattingLink } from './StartChattingLink';
 import { RouteLink, useDocumentTitle } from '../router';
 import { STATIC_PAGES } from '../content/pages';
 
@@ -27,12 +28,9 @@ export function NotFound(): JSX.Element {
         That page does not exist, or it never did. No harm done.
       </p>
 
-      <RouteLink
-        to="/"
+      <StartChattingLink
         className="mt-7 inline-flex h-12 items-center justify-center rounded-xl bg-amber-400 px-6 font-medium text-ink-950 shadow-[0_6px_24px_-10px_rgba(255,180,32,0.55)] transition-all hover:bg-amber-300 active:scale-[0.98]"
-      >
-        Start chatting
-      </RouteLink>
+      />
 
       <nav
         aria-label="Pages"

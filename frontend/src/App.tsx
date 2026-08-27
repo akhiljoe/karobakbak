@@ -10,7 +10,7 @@
  * Everything this file knows about the session comes from `useChat`. It holds
  * only the state that is genuinely about the interface: which sheet is open.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AgeGate } from './components/AgeGate';
 import { AppHeader } from './components/AppHeader';
@@ -24,6 +24,8 @@ import { AuthModal } from './components/AuthModal';
 import { ChatShell } from './components/ChatShell';
 import { FiltersModal } from './components/FiltersModal';
 import { LandingScreen } from './components/LandingScreen';
+import { SiteFooter } from './components/SiteFooter';
+import { consumeChatRequest } from './intent';
 import { ReportDialog } from './components/ReportDialog';
 import { SafetySheet } from './components/SafetySheet';
 import { SettingsSheet } from './components/SettingsSheet';
@@ -201,6 +203,35 @@ export function App(): JSX.Element {
     saveProfile(next);
   }, []);
 
+  /*
+   * "Start chatting", pressed on a page that has no socket.
+   *
+   * `App` is mounted only on `/`, so a CTA on About or Terms can do no more
+   * than record the request (`intent.ts`) and navigate here. This is where it
+   * is honoured.
+   *
+   * It waits for the connection rather than firing on mount, because
+   * `chat.start` goes through `sendCommand`, which **returns false and drops
+   * the frame** when the socket is not open yet. Mounting and immediately
+   * joining would therefore do nothing at all on a cold navigation — the join
+   * would vanish and the visitor would sit on the landing screen having pressed
+   * a button twice. `connecting` is the same condition the landing button
+   * disables itself on, so the two agree by construction.
+   *
+   * The request is read once, into a ref, so that a re-render cannot re-arm it,
+   * and it is cleared before `startSearch` runs so a failure to connect does
+   * not leave it primed for later.
+   */
+  const pendingStart = useRef(consumeChatRequest());
+  const connecting =
+    state.screen === 'connecting' || state.screen === 'disconnected';
+
+  useEffect(() => {
+    if (!pendingStart.current || connecting) return;
+    pendingStart.current = false;
+    startSearch();
+  }, [connecting, startSearch]);
+
   const acceptAge = useCallback(() => {
     acknowledgeAge();
     // Set regardless of whether the write succeeded. A private window cannot
@@ -282,6 +313,22 @@ export function App(): JSX.Element {
           )}
         </div>
       </main>
+
+      {/*
+        The footer belongs to the landing screen, and to nothing past it.
+        --------------------------------------------------------------------
+        Every link here leaves `/`, which unmounts this component and drops the
+        WebSocket — `Root.tsx` reasons about exactly that and concludes it is
+        acceptable *because the footer only renders where no conversation is in
+        progress*. `showShell` is that condition: it is true while searching and
+        while chatting, and false on the landing and ended screens.
+
+        So this is not a styling choice that could be relaxed later. Rendering
+        this inside `ChatShell` would put a one-click socket-drop beside a live
+        conversation, which is the thing the comment in `Root.tsx` is promising
+        does not exist.
+      */}
+      {!showShell && <SiteFooter />}
 
       <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
 
