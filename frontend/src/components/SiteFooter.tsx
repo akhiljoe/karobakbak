@@ -1,57 +1,50 @@
 /**
- * The footer on the landing screen.
- *
- * Replaces a single row of two links. The safety line above it stays where it
- * was — it is the one piece of footer text somebody actually reads before
- * starting a conversation, and moving it into a column of links would bury it.
+ * The footer: the things somebody looks up once.
  *
  * ---------------------------------------------------------------------------
- * EVERY PAGE IS NOW IN THE PRODUCT, INCLUDING THE LEGAL ONES
+ * WHY IT LISTS THE HEADER'S SECONDARY SET AND NOT "WHATEVER THE HEADER LACKS"
  * ---------------------------------------------------------------------------
- * Terms and Privacy used to be outbound links to a domain that does not exist,
- * so they were hidden — and `docs/policies/README.md` step 5 says a policy
- * nobody can find is not published. They are pages now (`content/legal.ts`),
- * which removes the domain from the critical path entirely: the documents ship
- * with the bundle.
+ * This used to render `STATIC_PAGES` filtered by `navPaths()` — every page the
+ * header could not reach. That was correct exactly until the header grew a menu
+ * containing Rules, Contact, Terms and Privacy, at which point the filter
+ * matched every page and **the footer rendered an empty `<nav>` on every screen
+ * in the product**. Nothing failed; there was simply no footer any more, which
+ * is the worst shape a bug can take in navigation.
  *
- * Contact and the donation link are still configuration, and an unset one is
- * **omitted** rather than rendered as a dead link or a `mailto:` to nothing. An
- * address that bounces is worse than no address, because the Privacy page
- * commits to acknowledging complaints within 24 hours.
+ * A derived list that silently empties when its source grows is the wrong
+ * relationship. The footer now names what it shows: the same secondary set the
+ * header keeps behind its menu button. The two are meant to agree — a reader at
+ * the foot of a long page should not have to find a menu to reach the Rules —
+ * and `secondaryNav()` is the one list they both read.
+ *
+ * ---------------------------------------------------------------------------
+ * TERMS AND PRIVACY ARE PAGES, NOT OUTBOUND LINKS
+ * ---------------------------------------------------------------------------
+ * They used to point at a domain that does not exist, so they were hidden, and
+ * `docs/policies/README.md` step 5 says a policy nobody can find is not
+ * published. They ship with the bundle now (`content/legal.ts`), which takes
+ * the domain off the critical path entirely.
  */
 
-import { STATIC_PAGES } from '../content/pages';
 import { RouteLink } from '../router';
-import { navPaths } from './SiteNav';
+import { secondaryNav } from './SiteNav';
 
-/*
- * Only what the header does not already carry.
- *
- * The header navigates the product; this is for the things somebody looks up
- * once. Listing all nine in both places made the footer four lines tall on a
- * narrow screen and taught nobody anything the header had not already said.
- */
 export function SiteFooter(): JSX.Element {
-  const inHeader = navPaths();
   return (
     <footer className="safe-pb shrink-0 border-t border-ink-800/50 px-6 py-5 short:py-3">
-
       <nav
-        aria-label="Site"
-        className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400 short:mt-2.5"
+        aria-label="More"
+        className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400"
       >
-        {STATIC_PAGES.filter((page) => !inHeader.has(`/${page.id}`)).map((page) => (
+        {secondaryNav().map((item) => (
           <RouteLink
-            key={page.id}
-            to={`/${page.id}`}
+            key={item.to}
+            to={item.to}
             className="rounded py-1 underline underline-offset-4 transition-colors hover:text-ink-100"
           >
-            {page.title}
+            {item.label}
           </RouteLink>
         ))}
-
-
-
       </nav>
     </footer>
   );

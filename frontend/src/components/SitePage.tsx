@@ -17,12 +17,11 @@
  * people open when they are worried about something — legibility beats
  * personality, and a full-width paragraph on a 1440px monitor is neither.
  */
-import { ArrowLeft } from "lucide-react";
-
 import type { StaticPage } from "../content/pages";
 import { RouteLink, useDocumentTitle } from "../router";
 import { Logo } from "./Logo";
 import { SiteFooter } from "./SiteFooter";
+import { StartChattingLink } from "./StartChattingLink";
 import { SiteNav, SiteNavLinks } from "./SiteNav";
 
 interface SitePageProps {
@@ -75,15 +74,18 @@ export function SitePage({ page, children }: SitePageProps): JSX.Element {
               <SiteNavLinks />
             </div>
 
-            <div className="flex items-center gap-2">
-              <RouteLink
-                to="/"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-sm text-ink-200 transition-colors hover:border-ink-600 hover:text-ink-50"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                Start chatting
-              </RouteLink>
-            </div>
+            {/*
+              The same amber pill the editorial pages carry.
+
+              These are documents somebody opens while deciding whether to use
+              the product, so the way back into it is the primary action on the
+              page rather than a quiet return link. It was an outlined button
+              with a back-arrow; the arrow in particular read as "undo", which
+              is not what starting a conversation is.
+            */}
+            <StartChattingLink
+              className="ml-auto flex-none rounded-full bg-amber-400 px-3 py-2 text-sm font-semibold text-ink-950 transition-colors hover:bg-amber-300 sm:px-4"
+            />
           </div>
         </header>
 
@@ -92,6 +94,11 @@ export function SitePage({ page, children }: SitePageProps): JSX.Element {
             {page.title}
           </h1>
           <p className="mt-2 text-base text-ink-400">{page.summary}</p>
+          {page.intro !== undefined && (
+            <p className="mt-4 text-base leading-relaxed text-ink-300">
+              {page.intro}
+            </p>
+          )}
 
           {children !== undefined && <div className="mt-8">{children}</div>}
 
@@ -102,6 +109,38 @@ export function SitePage({ page, children }: SitePageProps): JSX.Element {
                   {section.heading}
                 </h2>
                 {section.body.map((paragraph) => (
+                  <p
+                    key={paragraph}
+                    className="mb-3 text-base leading-relaxed text-ink-300 last:mb-0"
+                  >
+                    {paragraph}
+                  </p>
+                ))}
+
+                {/*
+                  A section's list and its closing paragraphs.
+
+                  No page rendered by this template carries either today — the
+                  two that do (Rules, Contact) have their own layouts. They are
+                  rendered anyway because `PageSection` allows them: a template
+                  that silently drops half a section the first time somebody
+                  adds a list is a worse failure than a plain `<ul>` nobody
+                  currently sees.
+                */}
+                {section.bullets !== undefined && (
+                  <ul className="mb-3 list-disc space-y-1.5 pl-5 last:mb-0">
+                    {section.bullets.map((item) => (
+                      <li
+                        key={item}
+                        className="text-base leading-relaxed text-ink-300"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {section.tail?.map((paragraph) => (
                   <p
                     key={paragraph}
                     className="mb-3 text-base leading-relaxed text-ink-300 last:mb-0"

@@ -27,9 +27,9 @@
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Menu, X } from "lucide-react";
+import { X } from "lucide-react";
 
-import { RouteLink } from "../router";
+import { RouteLink, useRoute } from "../router";
 
 interface NavItem {
   readonly to: string;
@@ -37,11 +37,11 @@ interface NavItem {
 }
 
 const PRIMARY_BASE: readonly NavItem[] = [
-  { to: "/how-it-works", label: "How it works" },
-  { to: "/premium", label: "Premium" },
-  { to: "/safety", label: "Safety" },
-  { to: "/faq", label: "FAQ" },
   { to: "/about", label: "About" },
+  { to: "/how-it-works", label: "How it works" },
+  { to: "/safety", label: "Safety" },
+  { to: "/premium", label: "Premium" },
+  { to: "/faq", label: "FAQ" },
 ];
 
 const SECONDARY: readonly NavItem[] = [
@@ -53,9 +53,13 @@ const SECONDARY: readonly NavItem[] = [
 ];
 
 /*
- * Premium sits second — after the explanation, before the reassurance — which
- * is where the design put it and where somebody looks once they have decided
- * the product is interesting but not yet whether it is worth anything.
+ * The order is the design's: About, How it works, Safety, Premium, FAQ.
+ *
+ * It reads as the order the questions arrive in — what is this, how does it
+ * work, is it safe, what does it cost, and then everything else. Premium sat
+ * second for a while on the argument that it belongs right after the
+ * explanation; the design puts it after Safety instead, which is the more
+ * honest sequence for a product whose main objection is not price.
  *
  * It is not gated. `ACCOUNTS_ENABLED` governs signing in, which is a different
  * question from whether the plan can be read about.
@@ -64,13 +68,40 @@ function primary(): readonly NavItem[] {
   return PRIMARY_BASE;
 }
 
-/** Every path the header can reach, so nothing else has to repeat the list. */
+/**
+ * Every path the header can reach, so nothing else has to repeat the list.
+ *
+ * The secondary set is no longer among them: it moved out of the menu and into
+ * the footer, which is on every page. Two copies of the same five links, one of
+ * them behind a button, was a menu teaching people to look in the wrong place.
+ */
 export function navPaths(): ReadonlySet<string> {
-  return new Set([...primary(), ...SECONDARY].map((item) => item.to));
+  return new Set(primary().map((item) => item.to));
 }
 
+/**
+ * The things somebody looks up once, rather than navigates by.
+ *
+ * Shared with `SiteFooter`, which lists exactly these. The header keeps them
+ * behind the menu button; the footer puts them in the open, because the foot of
+ * a page is where a reader goes looking for the rules and the legal documents
+ * and it is cheaper to show five links than to teach a menu.
+ */
+export function secondaryNav(): readonly NavItem[] {
+  return SECONDARY;
+}
+
+/*
+ * The link for the page you are on is lit; the rest are quiet.
+ *
+ * The design marks the current page rather than leaving five identical links,
+ * which is the difference between a navigation bar and a row of words. Driven
+ * off `useRoute` so it cannot disagree with what is rendered.
+ */
 const INLINE_CLASS =
-  "rounded-lg px-2 py-1.5 text-sm text-ink-300 transition-colors hover:bg-ink-800/60 hover:text-ink-50";
+  "rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-ink-100";
+const INLINE_REST = "text-ink-400";
+const INLINE_CURRENT = "text-ink-100";
 
 const PANEL_CLASS =
   "rounded-lg px-3 py-2.5 text-base text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50";
@@ -84,13 +115,22 @@ const PANEL_CLASS =
  * read before the brand.
  */
 export function SiteNavLinks(): JSX.Element {
+  const path = useRoute();
   return (
-    <nav aria-label="Site" className="hidden items-center gap-0.5 md:flex">
-      {primary().map((item) => (
-        <RouteLink key={item.to} to={item.to} className={INLINE_CLASS}>
-          {item.label}
-        </RouteLink>
-      ))}
+    <nav aria-label="Site" className="ml-2 hidden items-center gap-[22px] md:flex">
+      {primary().map((item) => {
+        const current = path === item.to;
+        return (
+          <RouteLink
+            key={item.to}
+            to={item.to}
+            className={`${INLINE_CLASS} ${current ? INLINE_CURRENT : INLINE_REST}`}
+            {...(current ? { "aria-current": "page" as const } : {})}
+          >
+            {item.label}
+          </RouteLink>
+        );
+      })}
     </nav>
   );
 }
@@ -116,9 +156,19 @@ export function SiteNav(): JSX.Element {
         onClick={() => setOpen(true)}
         aria-label="More"
         aria-expanded={open}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-50"
+        className="group inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-ink-800"
       >
-        <Menu className="h-5 w-5" />
+        {/*
+          Three drawn rules rather than an icon-font glyph, which is what the
+          design uses: 18px wide, 1.5px each, and noticeably lighter than a
+          lucide `Menu` at the same size. The difference is visible next to the
+          wordmark, which is the only place this button ever sits.
+        */}
+        <span aria-hidden="true" className="flex w-[18px] flex-col gap-1">
+          <span className="h-[1.5px] rounded-sm bg-ink-300 transition-colors group-hover:bg-ink-50" />
+          <span className="h-[1.5px] rounded-sm bg-ink-300 transition-colors group-hover:bg-ink-50" />
+          <span className="h-[1.5px] rounded-sm bg-ink-300 transition-colors group-hover:bg-ink-50" />
+        </span>
       </button>
 
       {open &&
@@ -201,20 +251,6 @@ export function SiteNav(): JSX.Element {
                 ))}
               </nav>
 
-              <div className="my-2 border-t border-ink-800 md:mt-0" />
-
-              <nav aria-label="More" className="flex flex-col">
-                {SECONDARY.map((item) => (
-                  <RouteLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={close}
-                    className={PANEL_CLASS}
-                  >
-                    {item.label}
-                  </RouteLink>
-                ))}
-              </nav>
             </div>
           </div>,
           document.body,
