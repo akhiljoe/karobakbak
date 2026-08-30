@@ -27,6 +27,10 @@ ARG VITE_PRIVACY_URL=""
 # bundle — there is no warning for an undeclared arg, it is simply dropped.
 ARG VITE_CONTACT_EMAIL=""
 ARG VITE_SUPPORT_URL=""
+
+# Local testing only; empty in every real build. See the note in `src/config.ts`
+# — a value here is inlined into the bundle and readable by anyone.
+ARG VITE_DEV_ACCOUNT_CREDENTIAL=""
 ENV VITE_WS_URL=$VITE_WS_URL
 ENV VITE_ADS_ENABLED=$VITE_ADS_ENABLED
 ENV VITE_ADS_PROVIDER=$VITE_ADS_PROVIDER
@@ -34,6 +38,7 @@ ENV VITE_TERMS_URL=$VITE_TERMS_URL
 ENV VITE_PRIVACY_URL=$VITE_PRIVACY_URL
 ENV VITE_CONTACT_EMAIL=$VITE_CONTACT_EMAIL
 ENV VITE_SUPPORT_URL=$VITE_SUPPORT_URL
+ENV VITE_DEV_ACCOUNT_CREDENTIAL=$VITE_DEV_ACCOUNT_CREDENTIAL
 
 RUN npm run build
 

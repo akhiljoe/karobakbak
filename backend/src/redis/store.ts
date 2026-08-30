@@ -661,6 +661,36 @@ export class RedisStore {
     };
   }
 
+  /**
+   * Fixed-window limit on order creation from one IP hash.
+   *
+   * Reuses the connection-rate script, which is a plain windowed counter and
+   * carries no assumption about what it is counting. A second script would be
+   * the same eight lines of Lua with a different name, and every Lua script
+   * here is something that has to be race-tested.
+   *
+   * Keyed on the address rather than the account, and that is the point: the
+   * expensive case is an unauthenticated caller making this process talk to the
+   * payment provider in a loop, and an unauthenticated caller has no account to
+   * key on.
+   */
+  async paymentRateLimit(ipHash: string): Promise<ConnRateResult> {
+    const reply = await this.runner.run(
+      'connRateLimit',
+      [this.keys.paymentRate(ipHash)],
+      [
+        this.keys.prefix,
+        this.config.payments.createRateLimit,
+        this.config.payments.createRateWindowSeconds,
+      ],
+    );
+    return {
+      allowed: num(reply, 0) === 1,
+      count: num(reply, 1),
+      resetSeconds: num(reply, 2),
+    };
+  }
+
   /** Claims one concurrency slot for this IP hash (R8). */
   async acquireConnectionSlot(ipHash: string, sessionId: string): Promise<ConnSlotResult> {
     const reply = await this.runner.run(

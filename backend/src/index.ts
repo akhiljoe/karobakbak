@@ -18,6 +18,9 @@ import { RetentionMetricsPublisher } from './metrics/retention';
 import { BackupMonitor } from './storage/backup';
 import { ReportQueueMonitor } from './storage/reportqueue';
 import { createChatServer } from './server';
+import { RazorpayGateway } from './payments/gateway';
+import { PaymentRepository } from './payments/repository';
+import { createPaymentRoutes, type PaymentRoutes } from './payments/routes';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
@@ -120,6 +123,27 @@ async function main(): Promise<void> {
   const metricsTimer = setInterval(() => publisher.publish(), Math.max(1000, config.metrics.cacheMs));
   metricsTimer.unref();
 
+  // Payments. Both halves must agree before a single route exists: the server
+  // flag here, and the frontend's compiled-in `PAYMENTS_ENABLED`. `assertCoherent`
+  // has already refused to start if the flag is on without credentials or
+  // without a database, so reaching this point with `database` null is not
+  // possible — the check is here because a reader should not have to know that.
+  let payments: PaymentRoutes | null = null;
+  if (config.payments.enabled && database !== null) {
+    payments = createPaymentRoutes({
+      config,
+      logger,
+      db: database,
+      store,
+      gateway: new RazorpayGateway(
+        { keyId: config.payments.keyId, keySecret: config.payments.keySecret },
+        logger,
+      ),
+      repository: new PaymentRepository(database, logger),
+    });
+    logger.info('payment routes enabled');
+  }
+
   const server = createChatServer({
     config,
     logger,
@@ -127,6 +151,7 @@ async function main(): Promise<void> {
     clients,
     retention,
     metrics,
+    payments,
     // The backup job reports inward; nothing here reaches out to look.
     onBackupReported: (ok) => {
       if (ok) backup.recordSuccess();

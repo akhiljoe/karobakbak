@@ -26,7 +26,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { Config, RateLimitedCommand } from './config';
 import { moderate } from './moderation';
-import type { Logger } from './logger';
+import { errorFields, type Logger } from './logger';
 import {
   BASE_PROTOCOL,
   CLOSE_CODES,
@@ -40,6 +40,7 @@ import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
+import type { PaymentRoutes } from './payments/routes';
 import type { RetentionSink } from './storage/sink';
 import { hashIp } from './util/ids';
 import { monotonicMs, nowIso, secondsSince } from './util/time';
@@ -75,6 +76,21 @@ export interface ChatServerDeps {
   /** Where retained records go. Never awaited on the chat path (D16). */
   retention: RetentionSink;
   metrics: Metrics;
+  /**
+   * The payment routes, or null when payments are off.
+   *
+   * Null rather than a no-op implementation, so an unconfigured deployment has
+   * no extra surface at all rather than a surface that refuses — the same shape
+   * as the backup report route, which 404s when no token is configured.
+   *
+   * They live on this server rather than in a separate process, unlike the
+   * moderation console (D32). The console is separated because it holds a
+   * credential that can read every retained conversation; these two routes hold
+   * no such authority and add one bounded, rate-limited POST each. The vendor
+   * SDK is still kept out of the general address space — `gateway.ts` requires
+   * it lazily, so a process with payments off never loads it.
+   */
+  payments?: PaymentRoutes | null;
 }
 
 export interface ChatServer {
@@ -105,6 +121,7 @@ const FEATURES: ServerFeatures = {
 
 export function createChatServer(deps: ChatServerDeps): ChatServer {
   const { config, logger, store, clients, retention, metrics } = deps;
+  const payments = deps.payments ?? null;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
   /**
@@ -298,6 +315,39 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     if (req.method === 'POST' && path === '/internal/backup-observed') {
       handleBackupReport(req, res);
       return;
+    }
+
+    // Registered only when payments are configured, so the routes do not exist
+    // at all in the default build.
+    //
+    // The path is still taken from `(req.url ?? '/').split('?')[0]`, deliberately.
+    // The obvious upgrade is `new URL(req.url, \`http://${req.headers.host}\`)`,
+    // which reads better and introduces a crash: `handleHttp` has no try/catch,
+    // the URL constructor throws on a malformed `Host`, and a throw inside a
+    // request handler takes the process — and every WebSocket on it — down. A
+    // header anybody can set must not be able to do that.
+    if (req.method === 'POST' && payments !== null) {
+      if (path === '/api/payments/create-order') {
+        // `void` with a catch that answers, rather than `.catch(() => {})`.
+        // Swallowing silently leaves the socket open with no response until it
+        // times out, and hides the only signal that the route is broken.
+        void payments.createOrder(req, res).catch((err: unknown) => {
+          logger.error('payment order route failed', errorFields(err));
+          if (!res.headersSent) json(res, 500, { error: 'internal_error' });
+          else res.end();
+        });
+        return;
+      }
+      if (path === '/api/webhooks/razorpay') {
+        void payments.webhook(req, res).catch((err: unknown) => {
+          logger.error('payment webhook route failed', errorFields(err));
+          // 500 rather than 204: a webhook that was not recorded must be
+          // retried by the provider, and only a non-2xx asks for that.
+          if (!res.headersSent) json(res, 500, { error: 'internal_error' });
+          else res.end();
+        });
+        return;
+      }
     }
 
     if (req.method !== 'GET') {

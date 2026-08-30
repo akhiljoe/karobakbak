@@ -21,10 +21,37 @@
       the compose topology and the dev proxy both serve. The nginx image in
       phase 11 sends the same policy as a header, which is what a browser
       honours most strictly; this tag is the floor, not the ceiling.
+
+      ---------------------------------------------------------------------
+      THE RAZORPAY SOURCES, AND THE ONE THAT IS NOT HERE
+      ---------------------------------------------------------------------
+      The checkout needs to be fetched, framed and talked to. Each origin below
+      is named for exactly one of those, and `script-src` is the tightest of
+      them: one host, not a wildcard, because that directive is what stops an
+      injected string executing.
+
+      **`'unsafe-inline'` is deliberately absent from `script-src`.** Adding it
+      is what the rejected prototype did, and it disables the strongest control
+      this origin has — on a page that renders text written by a stranger —
+      for a script two pages use. The checkout form runs inside an iframe on
+      Razorpay's own origin under Razorpay's own policy, so nothing they inject
+      is governed by this line. If a live checkout turns out to need an inline
+      script in *this* document, that is a decision to take deliberately and
+      record, not a directive to widen because something did not work.
+
+      These sources are permitted while `PAYMENTS_ENABLED` is false, and nothing
+      loads them: `payment.ts` injects the script only when somebody chooses to
+      pay. A permitted-and-unused origin costs nothing; keeping the policy and
+      the code in one commit is worth more than the day of narrowness.
+
+      Every change here must be mirrored in `security-headers.conf`, which is
+      the policy a browser actually enforces in production. A browser applies
+      the intersection of the two, so widening only this tag — as the prototype
+      did — changes nothing in a deployed build and the checkout stays blocked.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.razorpay.com; connect-src 'self' ws: wss: https://*.razorpay.com; font-src 'self'; frame-src https://*.razorpay.com; object-src 'none'; base-uri 'none'; form-action 'self' https://*.razorpay.com; frame-ancestors 'none'"
     />
     <meta name="referrer" content="no-referrer" />
     <meta name="color-scheme" content="dark" />

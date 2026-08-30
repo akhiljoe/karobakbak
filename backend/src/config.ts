@@ -250,6 +250,57 @@ export interface Config {
     readonly apiKey: string;
   };
 
+  /**
+   * Payments (Razorpay).
+   *
+   * Off by default, and off in a second place too: the frontend's
+   * `PAYMENTS_ENABLED` is a compiled-in constant rather than an environment
+   * variable, because turning payments on makes two published claims false —
+   * the Terms say there is no payment provider, and the Privacy page says the
+   * site makes no third-party requests from the browser. That is a commit with
+   * document changes in it, not a deploy setting.
+   *
+   * This flag is the server half. Both must say yes, the same shape as
+   * `PERSONAS_ENABLED` and the `persona_control` row.
+   */
+  readonly payments: {
+    readonly enabled: boolean;
+    /** Razorpay publishable key id. Sent to the browser; not a secret. */
+    readonly keyId: string;
+    /** Razorpay API secret. Never logged, never in an error message. */
+    readonly keySecret: string;
+    /**
+     * The webhook signing secret. Distinct from the API secret — Razorpay
+     * issues it per endpoint — and mixing them up produces a verifier that
+     * rejects every delivery, which looks like "webhooks are broken" rather
+     * than "the wrong secret is configured".
+     */
+    readonly webhookSecret: string;
+    readonly currency: string;
+    /** Order-creation attempts allowed per IP hash per window. */
+    readonly createRateLimit: number;
+    readonly createRateWindowSeconds: number;
+    /**
+     * Ceiling on a request body on either payment route.
+     *
+     * The webhook is unauthenticated until its signature is checked, and the
+     * signature covers the body — so the whole body has to be buffered before
+     * anything about the sender is known. That is a request to hold arbitrary
+     * bytes from an anonymous caller, and the only thing that makes it safe is
+     * this number.
+     */
+    readonly maxBodyBytes: number;
+    /**
+     * How long a payment record is kept, in days.
+     *
+     * Longer than anything else in the schema, because a financial record has a
+     * statutory retention period rather than a chosen one. The default is seven
+     * years, which is the common Indian bookkeeping figure; it is a placeholder
+     * for a number counsel gives, and nothing sweeps these tables yet.
+     */
+    readonly recordRetentionDays: number;
+  };
+
   readonly enforcement: {
     /**
      * When false, ban keys are neither read nor written and the upgrade path
@@ -696,6 +747,21 @@ export function loadConfig(env: Env = process.env): Config {
       apiKey: str(env, 'PERSONA_API_KEY', ''),
     },
 
+    payments: {
+      enabled: bool(env, 'PAYMENTS_ENABLED', false),
+      keyId: str(env, 'RAZORPAY_KEY_ID', ''),
+      keySecret: str(env, 'RAZORPAY_KEY_SECRET', ''),
+      webhookSecret: str(env, 'RAZORPAY_WEBHOOK_SECRET', ''),
+      currency: str(env, 'PAYMENTS_CURRENCY', 'INR'),
+      // 10 an hour. An order is a round trip to the payment provider and a row
+      // in the database; nobody buying something honestly needs a eleventh
+      // attempt in an hour, and a script does.
+      createRateLimit: int(env, 'PAYMENTS_CREATE_RATE_LIMIT', 10, 1, 100_000),
+      createRateWindowSeconds: int(env, 'PAYMENTS_CREATE_RATE_WINDOW_SECONDS', 3600, 1, 86_400),
+      maxBodyBytes: int(env, 'PAYMENTS_MAX_BODY_BYTES', 65_536, 512, 1_048_576),
+      recordRetentionDays: int(env, 'PAYMENT_RECORD_RETENTION_DAYS', 2555, 1, 10_950),
+    },
+
     enforcement: {
       enabled: bool(env, 'ENFORCEMENT_ENABLED', true),
       defaultBanSeconds: int(env, 'ENFORCEMENT_DEFAULT_BAN_SECONDS', 2_592_000, 60, 31_536_000),
@@ -889,6 +955,56 @@ function assertCoherent(config: Config): void {
             `That provider offers: ${offered.join(', ')}`,
         );
       }
+    }
+  }
+
+  // Payments. Every check here exists because the failure it prevents is
+  // *silent* — a payment integration that is wrong does not throw, it takes
+  // money and grants nothing, or grants something and takes nothing.
+  if (config.payments.enabled) {
+    // No credential has a default. The rejected prototype fell back to
+    // 'dummy_webhook_secret' when the variable was unset, which means a deploy
+    // that forgets it accepts webhooks signed with a string published in this
+    // repository — anybody can then mint a `payment.captured` and grant
+    // themselves premium. There is no development shortcut worth that.
+    const missing = (
+      [
+        ['RAZORPAY_KEY_ID', config.payments.keyId],
+        ['RAZORPAY_KEY_SECRET', config.payments.keySecret],
+        ['RAZORPAY_WEBHOOK_SECRET', config.payments.webhookSecret],
+      ] as const
+    )
+      .filter(([, value]) => value === '')
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new ConfigError(
+        `PAYMENTS_ENABLED is set but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
+          'empty. A payment credential has no safe default: a fallback secret means webhooks ' +
+          'signed with a public string are accepted as genuine',
+      );
+    }
+
+    // Payments write to PostgreSQL synchronously, and `index.ts` only builds a
+    // database when retention is on. With it off, `payments` would be enabled
+    // with nowhere to record an order — and the failure appears at the first
+    // real purchase rather than at boot.
+    if (!config.retention.enabled) {
+      throw new ConfigError(
+        'PAYMENTS_ENABLED requires RETENTION_ENABLED: the payment routes need the ' +
+          'PostgreSQL pool, which is only constructed when retention is on',
+      );
+    }
+
+    // A test key in production is the sharpest quiet failure in this whole
+    // file. Everything works — the checkout opens, the webhook verifies, the
+    // entitlement is granted — and no money moves, because the order was
+    // created in Razorpay's test mode. Nothing surfaces it except a bank
+    // statement, weeks later.
+    if (config.isProduction && config.payments.keyId.startsWith('rzp_test_')) {
+      throw new ConfigError(
+        'RAZORPAY_KEY_ID is a test-mode key (rzp_test_) but NODE_ENV=production. ' +
+          'Test mode grants entitlements and moves no money, and nothing at runtime reports it',
+      );
     }
   }
 

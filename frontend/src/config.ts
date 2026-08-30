@@ -57,6 +57,28 @@ export interface ClientConfig {
     readonly privacyUrl: string;
   };
   /**
+   * A pre-supplied account credential, for local testing only.
+   *
+   * ---------------------------------------------------------------------------
+   * THIS MUST BE EMPTY IN ANY REAL BUILD
+   * ---------------------------------------------------------------------------
+   * There is no accounts system yet, so there is nowhere for the premium page
+   * to get a bearer credential from and the Subscribe button falls through to
+   * the sign-in modal. That makes the paid path untestable in a browser, which
+   * is the only reason this exists.
+   *
+   * Vite inlines build-time variables into the bundle, so whatever is set here
+   * is **readable by anyone who loads the page**. It is a bearer credential:
+   * whoever reads it can buy a subscription for that account. That is
+   * acceptable for a throwaway row in a local database and is a credential leak
+   * anywhere else.
+   *
+   * It goes away entirely when the accounts phase ships and the credential
+   * comes from wherever accounts decide to keep it.
+   */
+  readonly devAccountCredential: string;
+
+  /**
    * Where people write in. Empty until there is a domain to host a role
    * address on.
    *
@@ -125,6 +147,7 @@ export function loadClientConfig(env: Record<string, unknown>): ClientConfig {
     },
     contactEmail: readString(env.VITE_CONTACT_EMAIL, ''),
     supportUrl: readString(env.VITE_SUPPORT_URL, ''),
+    devAccountCredential: readString(env.VITE_DEV_ACCOUNT_CREDENTIAL, ''),
     timings: {
       typingIdleMs: 3000,
       reconnectBackoffMs: [500, 1000, 2000, 5000, 10_000],
@@ -153,3 +176,15 @@ export function hasLegalLinks(config: ClientConfig): boolean {
 export const clientConfig: ClientConfig = loadClientConfig(
   import.meta.env as unknown as Record<string, unknown>,
 );
+
+/*
+ * Said out loud, every page load, because the quiet version of this mistake is
+ * a testing credential shipped in a public bundle and nobody noticing. It is
+ * the one value in this file that is dangerous when set rather than when empty.
+ */
+if (clientConfig.devAccountCredential !== '') {
+  console.warn(
+    'VITE_DEV_ACCOUNT_CREDENTIAL is set: this build carries a testing account ' +
+      'credential that anyone loading the page can read. Local testing only.',
+  );
+}

@@ -21,6 +21,13 @@ build/
 # overrides a load run needs.
 !.env.loadtest
 
+# Local payment testing. Reads RAZORPAY_WEBHOOK_SECRET out of `.env` to sign a
+# simulated `payment.captured`, so it is a script that handles a secret and has
+# no business being tracked. It also only ever posts to localhost — committing
+# it would put a webhook forger in the repository for anyone who later points
+# it somewhere else.
+fake-webhook.sh
+
 # logs
 *.log
 npm-debug.log*

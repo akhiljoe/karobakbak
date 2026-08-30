@@ -71,6 +71,16 @@ export interface RedisKeys {
   rateLimit(command: string, sid: string): string;
   /** STRING — connection attempts from one IP hash in the current window. */
   connRate(ipHash: string): string;
+  /**
+   * STRING — order-creation attempts from one IP hash in the current window.
+   *
+   * A separate window from `connRate` on purpose. Creating an order costs a
+   * round trip to the payment provider and a row in `payment_orders`, so it is
+   * far more expensive per request than opening a socket and wants a far
+   * tighter limit; sharing a bucket would mean one of the two numbers being
+   * wrong for the other.
+   */
+  paymentRate(ipHash: string): string;
   /** SET — session ids currently connected from one IP hash (R8). */
   connSessions(ipHash: string): string;
   /** SET — the block keys that this block key refuses to be matched with (D18). */
@@ -120,6 +130,7 @@ export function createKeys(prefix: string): RedisKeys {
     rateLimit: (command, sid) =>
       `${prefix}:rl:${assertComponent(command, 'command')}:${assertComponent(sid, 'session id')}`,
     connRate: (ipHash) => `${prefix}:rl:conn:${assertComponent(ipHash, 'ip hash')}`,
+    paymentRate: (ipHash) => `${prefix}:rl:pay:${assertComponent(ipHash, 'ip hash')}`,
     connSessions: (ipHash) => `${prefix}:conn:${assertComponent(ipHash, 'ip hash')}`,
     blocks: (blockKey) => `${prefix}:blocks:${assertComponent(blockKey, 'block key')}`,
     ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,

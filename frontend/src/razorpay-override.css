@@ -1,0 +1,27 @@
+/*
+ * The checkout backdrop.
+ *
+ * Razorpay renders its own overlay container in this document (the form itself
+ * is an iframe on their origin, which nothing here can style). Its default
+ * backdrop is close to opaque, which makes the page appear to have navigated
+ * away — and on a site where somebody may have a conversation open behind it,
+ * "did I just lose the page" is the wrong thing to make a person wonder while
+ * they are entering card details.
+ *
+ * This is the whole of the styling, and it is intentionally three properties on
+ * one container. The rejected prototype also forced these values from
+ * JavaScript on a `requestAnimationFrame` after `open()`, walking the vendor's
+ * DOM and setting inline `!important` styles. That is a stylesheet written in
+ * the wrong language: it breaks silently whenever the vendor renames a class,
+ * and it cannot be reviewed as CSS. If the selector below ever stops matching,
+ * the result is the vendor's own backdrop — which is ugly, not broken.
+ *
+ * `!important` is here because the container carries inline styles from the
+ * vendor's script, and inline styles lose to nothing else.
+ */
+
+.razorpay-container {
+  background-color: rgb(0 0 0 / 82%) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}

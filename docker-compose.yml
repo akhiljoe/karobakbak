@@ -61,6 +61,11 @@ services:
         # from the UI when empty rather than rendered pointing nowhere.
         VITE_CONTACT_EMAIL: "${VITE_CONTACT_EMAIL:-}"
         VITE_SUPPORT_URL: "${VITE_SUPPORT_URL:-}"
+
+        # Local testing only. Empty unless `.env` sets it, and `.env` is not
+        # tracked. A value here is inlined into the bundle and readable by
+        # anyone who loads the page — see `frontend/src/config.ts`.
+        VITE_DEV_ACCOUNT_CREDENTIAL: "${VITE_DEV_ACCOUNT_CREDENTIAL:-}"
     ports:
       - "${FRONTEND_PORT:-8081}:80"
     environment:
@@ -140,6 +145,18 @@ services:
       DATABASE_SSL: "false"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       IP_HASH_SALT: "${IP_HASH_SALT:-local-development-salt-change-me}"
+      # Payments. Off unless `.env` says otherwise, and the three credentials
+      # have no defaults — `assertCoherent` refuses to start with the flag on
+      # and any of them empty, which is the whole point: a default webhook
+      # secret means webhooks signed with a public string are accepted.
+      #
+      # Listed here rather than inherited, like everything else in this block.
+      # A var that is only in `.env` is a var the container never sees, and the
+      # failure is quiet: the routes simply do not exist and nothing says why.
+      PAYMENTS_ENABLED: "${PAYMENTS_ENABLED:-false}"
+      RAZORPAY_KEY_ID: "${RAZORPAY_KEY_ID:-}"
+      RAZORPAY_KEY_SECRET: "${RAZORPAY_KEY_SECRET:-}"
+      RAZORPAY_WEBHOOK_SECRET: "${RAZORPAY_WEBHOOK_SECRET:-}"
       SPOOL_DIR: "/var/lib/karobakbak/spool"
       METRICS_ENABLED: "true"
       # Per-IP abuse controls. Tunable because a load generator is a single
