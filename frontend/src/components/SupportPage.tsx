@@ -36,7 +36,7 @@ import { clientConfig } from '../config';
 import { PAYMENTS_ENABLED } from '../features';
 import { openCheckout, preloadCheckout } from '../payment';
 import { RouteLink, useDocumentTitle } from '../router';
-import { secondaryNav } from './SiteNav';
+import { NavItemLink, secondaryNav } from './SiteNav';
 import { LogoMark } from './Logo';
 
 /**
@@ -317,16 +317,20 @@ export function SupportPage(): JSX.Element {
               "Buy me a coffee" is dropped because it points here.
             */}
             {secondaryNav()
-              .filter((item) => item.to !== '/support')
+              /*
+                Dropped by label rather than by path: while payments are off the
+                coffee entry is an absolute URL to somewhere else entirely, so a
+                `to !== '/support'` test would stop matching and this page would
+                link to itself.
+              */
+              .filter((item) => item.label !== 'Buy me a coffee')
               .map((item) => (
-              <RouteLink
-                key={item.to}
-                to={item.to}
-                className="rounded py-1 underline underline-offset-4 transition-colors hover:text-coffee-800"
-              >
-                {item.label}
-              </RouteLink>
-            ))}
+                <NavItemLink
+                  key={item.to}
+                  item={item}
+                  className="rounded py-1 underline underline-offset-4 transition-colors hover:text-coffee-800"
+                />
+              ))}
           </nav>
         </div>
       </main>

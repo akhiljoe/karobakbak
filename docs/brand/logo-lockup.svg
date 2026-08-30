@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" width="640" height="128">
+  <title>karobakbak mark and wordmark</title>
+  <rect width="320" height="64" fill="#13100b"/>
+  <g transform="translate(12 8) scale(1)">
+    <path d="M31 9 A 19 19 0 0 0 31 39" stroke="#ffb420" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+    <path d="M17 9 A 19 19 0 0 1 17 39" stroke="#ffc94a" stroke-opacity="0.5" stroke-width="3.6" stroke-linecap="round" fill="none"/>
+    <circle cx="24" cy="24" r="2.4" fill="#ffb420"/>
+  </g>
+  <!--
+    Fraunces is the display face. Rendered here as a system serif fallback so
+    the file opens anywhere; the real lockup is set in Fraunces 600.
+  -->
+  <text x="62" y="40" font-family="Fraunces, Georgia, serif" font-size="26" font-weight="600" letter-spacing="-0.5" fill="#f7f5f3">karobakbak</text>
+</svg>

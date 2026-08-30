@@ -30,10 +30,23 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import { RouteLink, useRoute } from "../router";
+import { clientConfig } from "../config";
+import { PAYMENTS_ENABLED } from "../features";
 
-interface NavItem {
+export interface NavItem {
   readonly to: string;
   readonly label: string;
+  /**
+   * An absolute URL that leaves the site, rendered as an anchor rather than a
+   * route.
+   *
+   * Only "Buy me a coffee" is ever one, and only while payments are off. It is
+   * a **link and never an embed**: a donation widget is a third-party script,
+   * and the Privacy Policy's claim that the site makes no third-party requests
+   * from the browser is worth more than an inline button. An anchor requests
+   * nothing until somebody clicks it and leaves.
+   */
+  readonly external?: boolean;
 }
 
 const PRIMARY_BASE: readonly NavItem[] = [
@@ -44,10 +57,12 @@ const PRIMARY_BASE: readonly NavItem[] = [
   { to: "/faq", label: "FAQ" },
 ];
 
-const SECONDARY: readonly NavItem[] = [
+const SECONDARY_BEFORE: readonly NavItem[] = [
   { to: "/rules", label: "Rules" },
   { to: "/contact", label: "Contact" },
-  { to: "/support", label: "Buy me a coffee" },
+];
+
+const SECONDARY_AFTER: readonly NavItem[] = [
   { to: "/terms", label: "Terms" },
   { to: "/privacy", label: "Privacy" },
 ];
@@ -65,6 +80,12 @@ const SECONDARY: readonly NavItem[] = [
  * question from whether the plan can be read about.
  */
 function primary(): readonly NavItem[] {
+  // Premium is hidden entirely while payments are off, rather than shown and
+  // disabled. The asymmetry is the one `features.ts` already draws: a filter
+  // says "we know you want this" and teaches something, while a plan nobody can
+  // buy teaches nothing and costs a click to find out. It returns the moment
+  // the flag flips — nothing here is deleted.
+  if (!PAYMENTS_ENABLED) return PRIMARY_BASE.filter((item) => item.to !== "/premium");
   return PRIMARY_BASE;
 }
 
@@ -88,7 +109,57 @@ export function navPaths(): ReadonlySet<string> {
  * and it is cheaper to show five links than to teach a menu.
  */
 export function secondaryNav(): readonly NavItem[] {
-  return SECONDARY;
+  return [...SECONDARY_BEFORE, ...coffee(), ...SECONDARY_AFTER];
+}
+
+/**
+ * Where "buy me a coffee" points, and whether it appears at all.
+ *
+ * Three states, and each one is the honest answer to a different situation:
+ *
+ *  * **Payments on** — `/support`, the page with the amounts on it.
+ *  * **Payments off, a URL configured** — straight out to that page. Nothing
+ *    here can take money, and somebody who wants to give some should not be
+ *    routed through a page that says so before letting them.
+ *  * **Payments off, nothing configured** — no link. A "buy me a coffee" that
+ *    goes nowhere is worse than none, which is the rule `clientConfig.supportUrl`
+ *    already states: empty hides it entirely.
+ */
+function coffee(): readonly NavItem[] {
+  if (PAYMENTS_ENABLED) return [{ to: "/support", label: "Buy me a coffee" }];
+  if (clientConfig.supportUrl === "") return [];
+  return [{ to: clientConfig.supportUrl, label: "Buy me a coffee", external: true }];
+}
+
+/**
+ * One nav item, as a route or as a way off the site.
+ *
+ * Shared so the three places that render this list — the two footers and the
+ * support page — cannot disagree about which items leave the site. An external
+ * item that a caller rendered with `RouteLink` would push a full URL through the
+ * router and land on the 404 page.
+ */
+export function NavItemLink({
+  item,
+  className,
+}: {
+  item: NavItem;
+  className?: string;
+}): JSX.Element {
+  if (item.external === true) {
+    return (
+      // `noreferrer` as well as `noopener`: the destination has no business
+      // learning which page on an anonymous chat service sent somebody.
+      <a href={item.to} target="_blank" rel="noreferrer noopener" className={className}>
+        {item.label}
+      </a>
+    );
+  }
+  return (
+    <RouteLink to={item.to} className={className}>
+      {item.label}
+    </RouteLink>
+  );
 }
 
 /*

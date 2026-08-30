@@ -28,6 +28,7 @@ import { useState } from 'react';
 
 import { App } from './App';
 import { clientConfig } from './config';
+import { PAYMENTS_ENABLED } from './features';
 import { AboutPage } from './components/AboutPage';
 import { AuthModal } from './components/AuthModal';
 import { ContactPage } from './components/ContactPage';
@@ -51,37 +52,6 @@ export function Root(): JSX.Element {
 
   if (path === '/') return <App />;
 
-  // Always reachable, unlike sign-in.
-  //
-  // This used to be gated on `ACCOUNTS_ENABLED` on the grounds that a pricing
-  // page for something nobody can buy is an advertisement for vapourware. That
-  // conflated two things: an account is needed to *hold* a subscription, and
-  // nothing is needed to *read what one would be*. The page states plainly that
-  // it is not open yet, which is the honest version of the same caution, and
-  // hiding it entirely means somebody deciding whether this product is for them
-  // cannot find out what it will cost.
-  if (path === '/premium') {
-    return (
-      <>
-        {/*
-          Empty in every build except a local test one, in which case the
-          Subscribe button opens the checkout instead of the sign-in modal.
-          When accounts ship, this is where the real credential arrives from.
-        */}
-        <PremiumPage
-          onSignIn={() => setSignInOpen(true)}
-          credential={clientConfig.devAccountCredential || null}
-        />
-        <AuthModal open={signInOpen} onClose={() => setSignInOpen(false)} />
-      </>
-    );
-  }
-
-  // Always available, unlike /premium. Asking for help with the bill does not
-  // depend on accounts existing, and the page is honest about payments not
-  // being connected yet.
-  if (path === '/support') return <SupportPage />;
-
   /*
    * The three pages that argue for the product get their own layouts.
    *
@@ -95,6 +65,31 @@ export function Root(): JSX.Element {
   if (path === '/how-it-works') return <HowItWorksPage />;
   if (path === '/rules') return <RulesPage />;
   if (path === '/contact') return <ContactPage />;
+
+  /*
+   * Premium and the support page exist only when something can actually be
+   * bought. While `PAYMENTS_ENABLED` is false neither route is registered, so
+   * both fall through to the 404 rather than rendering a page that explains it
+   * cannot sell anything.
+   *
+   * Nothing is deleted: flipping the flag brings both back, along with the
+   * Premium entry in the nav and the footer's "Buy me a coffee" pointing back
+   * at `/support` instead of off-site.
+   */
+  if (PAYMENTS_ENABLED) {
+    if (path === '/premium') {
+      return (
+        <>
+          <PremiumPage
+            onSignIn={() => setSignInOpen(true)}
+            credential={clientConfig.devAccountCredential || null}
+          />
+          <AuthModal open={signInOpen} onClose={() => setSignInOpen(false)} />
+        </>
+      );
+    }
+    if (path === '/support') return <SupportPage />;
+  }
   // Its own layout, like About, How it works, Rules and Contact: twenty
   // questions as a grouped accordion rather than twenty stacked sections.
   if (path === '/faq') return <FaqPage />;

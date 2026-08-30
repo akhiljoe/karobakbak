@@ -26,8 +26,7 @@
  * the domain off the critical path entirely.
  */
 
-import { RouteLink } from '../router';
-import { secondaryNav } from './SiteNav';
+import { NavItemLink, secondaryNav } from './SiteNav';
 
 export function SiteFooter(): JSX.Element {
   return (
@@ -46,13 +45,11 @@ export function SiteFooter(): JSX.Element {
         className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400"
       >
         {secondaryNav().map((item) => (
-          <RouteLink
+          <NavItemLink
             key={item.to}
-            to={item.to}
+            item={item}
             className="rounded py-1 underline underline-offset-4 transition-colors hover:text-ink-100"
-          >
-            {item.label}
-          </RouteLink>
+          />
         ))}
       </nav>
     </footer>

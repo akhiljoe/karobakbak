@@ -33,7 +33,7 @@ import type { ReactNode } from 'react';
 
 import { RouteLink, useDocumentTitle } from '../router';
 import { LogoMark } from './Logo';
-import { SiteNav, SiteNavLinks, secondaryNav } from './SiteNav';
+import { NavItemLink, SiteNav, SiteNavLinks, secondaryNav } from './SiteNav';
 import { StartChattingLink } from './StartChattingLink';
 
 interface EditorialShellProps {
@@ -106,13 +106,11 @@ function EditorialFooter(): JSX.Element {
         style={{ gap: '8px 20px' }}
       >
         {secondaryNav().map((item) => (
-          <RouteLink
+          <NavItemLink
             key={item.to}
-            to={item.to}
+            item={item}
             className="rounded text-ink-400 transition-colors hover:text-ink-100"
-          >
-            {item.label}
-          </RouteLink>
+          />
         ))}
       </nav>
     </footer>
