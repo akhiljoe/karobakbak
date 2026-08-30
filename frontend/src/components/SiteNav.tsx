@@ -219,15 +219,57 @@ export function SiteNav(): JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  /*
+   * Close if the window grows past the breakpoint while the panel is open.
+   *
+   * CSS alone cannot: hiding the button does not close what it opened, so a
+   * phone-width panel dragged to desktop width would sit there showing links
+   * the header is now displaying anyway. `768px` is Tailwind's `md`, which is
+   * the same width the button's `md:hidden` uses — the one place this number
+   * has to be repeated, because a media query is not reachable from a class.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const wide = window.matchMedia("(min-width: 768px)");
+    if (wide.matches) {
+      setOpen(false);
+      return;
+    }
+    const onChange = (event: MediaQueryListEvent): void => {
+      if (event.matches) setOpen(false);
+    };
+    wide.addEventListener("change", onChange);
+    return () => wide.removeEventListener("change", onChange);
+  }, [open]);
+
   const close = (): void => setOpen(false);
 
   return (
     <>
+      {/*
+        `md:hidden` is the whole of the desktop behaviour, and it is the
+        complement of `SiteNavLinks`' `md:flex` — above that width the links are
+        already in the header, so the menu has nothing left to hold.
+        ---------------------------------------------------------------------
+        IT USED TO OPEN AN EMPTY BOX, AND THE CAUSE IS WORTH KEEPING WRITTEN DOWN
+        ---------------------------------------------------------------------
+        The panel once held the secondary links too. When those moved to the
+        footer its only remaining content was the primary set, already marked
+        `md:hidden` because the header shows them inline — but nothing hid the
+        *button*. So on a desktop the panel still opened, containing a close
+        control and nothing else.
+        Two places knew the breakpoint and only one was updated. There is now
+        one: the button is not rendered above `md`, so the panel cannot be
+        reached there and its contents need no breakpoint of their own.
+        Removed rather than disabled. A button that is present and does nothing
+        still takes focus and still announces itself as "More", which is a
+        worse answer than not being there.
+      */}
       <button
         onClick={() => setOpen(true)}
         aria-label="More"
         aria-expanded={open}
-        className="group inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-ink-800"
+        className="group inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-ink-800 md:hidden"
       >
         {/*
           Three drawn rules rather than an icon-font glyph, which is what the
@@ -308,8 +350,12 @@ export function SiteNav(): JSX.Element {
                 </button>
               </div>
 
-              {/* Already inline on desktop; only the small header needs these. */}
-              <nav aria-label="Product" className="flex flex-col md:hidden">
+              {/*
+                No breakpoint of its own: the button that opens this panel does
+                not exist above `md`, so this is only ever rendered on a narrow
+                header. One place knows the width, which is the point.
+              */}
+              <nav aria-label="Product" className="flex flex-col">
                 {links.map((item) => (
                   <RouteLink
                     key={item.to}
