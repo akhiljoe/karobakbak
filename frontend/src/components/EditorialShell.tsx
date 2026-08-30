@@ -72,15 +72,28 @@ function AmbientField(): JSX.Element {
 /**
  * The footer these three pages use, which is not `SiteFooter`.
  *
- * Same five links, set the way the design sets them: aligned to the left edge
- * of the 680px measure rather than centred, 13px, and unadorned — no
- * underlines. It reads as the end of a column of prose, which is what it is.
+ * Same five links, 13px and unadorned — no underlines.
  *
- * `SiteFooter` stays centred and underlined for the landing screen and the
- * document pages, where there is no column to align to and the links are the
- * only thing in the region. Two treatments because the two contexts genuinely
- * differ; the *list* is shared through `secondaryNav()`, which is the half that
- * must never fall out of step.
+ * ---------------------------------------------------------------------------
+ * ALIGNED TO THE HEADER'S GUTTER, NOT TO THE PROSE COLUMN
+ * ---------------------------------------------------------------------------
+ * The design set these to the left edge of the 680px measure, on the reasoning
+ * that the footer reads as the end of a column of prose. That was right while
+ * the footer sat at the end of the prose.
+ *
+ * It is pinned now, so it is no longer the end of anything — it is persistent
+ * chrome, on screen the whole time, the same as the header. And a full-width
+ * bar containing a 344px huddle of links two thirds of the way in reads as
+ * broken rather than as considered: at 1920 the links ended at x=958 with 950px
+ * of empty bar to their right.
+ *
+ * So it takes the header's inline padding, the same `clamp()`, and the links
+ * start where the logo starts. Chrome lines up with chrome.
+ *
+ * `SiteFooter` makes the same move against its own header, which is a centred
+ * `max-w-4xl` rather than full-bleed — so the two files reach different numbers
+ * from one rule. The *list* is shared through `secondaryNav()`, which is the
+ * half that must never fall out of step.
  */
 function EditorialFooter(): JSX.Element {
   return (
@@ -97,12 +110,13 @@ function EditorialFooter(): JSX.Element {
        * because nothing passes behind it; pinned, prose scrolls underneath, and
        * without a surface the links sit on top of moving text.
        */
-      className="safe-pb sticky bottom-0 z-30 flex flex-none justify-center border-t border-ink-800 bg-ink-950/85 backdrop-blur-md"
-      style={{ padding: '24px clamp(22px, 4cqw, 40px) 32px' }}
+      className="safe-pb sticky bottom-0 z-30 flex flex-none border-t border-ink-800 bg-ink-950/85 backdrop-blur-md"
+      /* The header's `paddingInline`, so the first link sits under the logo. */
+      style={{ padding: '14px clamp(14px, 3cqw, 32px) 16px' }}
     >
       <nav
         aria-label="More"
-        className="flex w-full max-w-[680px] flex-wrap text-[13px]"
+        className="flex w-full flex-wrap text-[13px]"
         style={{ gap: '8px 20px' }}
       >
         {secondaryNav().map((item) => (

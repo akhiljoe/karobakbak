@@ -39,10 +39,19 @@ export function SiteFooter(): JSX.Element {
      * A background is required now that prose can pass behind it — see the note
      * on `EditorialFooter`, which makes the same trade for the same reason.
      */
-    <footer className="safe-pb sticky bottom-0 z-30 shrink-0 border-t border-ink-800/50 bg-ink-950/85 px-6 py-5 backdrop-blur-md short:py-3">
+    <footer className="safe-pb sticky bottom-0 z-30 shrink-0 border-t border-ink-800/50 bg-ink-950/85 py-3.5 backdrop-blur-md short:py-2.5">
+      {/*
+        `mx-auto w-full max-w-4xl px-5 sm:px-6` is copied from `SitePage`'s
+        header row on purpose: the first link then sits directly under the logo
+        above it.
+        It used to be a centred `max-w-lg` cluster, which was fine while the
+        footer scrolled past at the end of a document. Pinned, it became a
+        full-width bar with a small clump of links floating in the middle — the
+        same defect `EditorialFooter` had, reached from the same cause.
+      */}
       <nav
         aria-label="More"
-        className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400"
+        className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-5 gap-y-1 px-5 text-sm text-ink-400 sm:px-6"
       >
         {secondaryNav().map((item) => (
           <NavItemLink
