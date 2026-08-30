@@ -32,7 +32,7 @@ import { SettingsSheet } from './components/SettingsSheet';
 import { Toast } from './components/Toast';
 import { acknowledgeAge, hasAcknowledgedAge } from './agegate';
 import { clientConfig } from './config';
-import { ACCOUNTS_ENABLED } from './features';
+import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
 import type { ReportCategory } from './protocol/types';
@@ -330,7 +330,10 @@ export function App(): JSX.Element {
       */}
       {!showShell && <SiteFooter />}
 
-      <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
+      {/* Unmounted with its button: nothing can open it, so nothing renders it. */}
+      {FILTERS_AVAILABLE && (
+        <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
+      )}
 
       <SettingsSheet
         open={settingsOpen}

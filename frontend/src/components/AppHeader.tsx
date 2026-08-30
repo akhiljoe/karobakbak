@@ -7,12 +7,17 @@
  *
  * The sign-in control is absent rather than disabled: `ACCOUNTS_ENABLED` is
  * false and a button that opens a screen explaining it does nothing is worse
- * than no button. The filters control is the opposite case, and the reasoning
- * for the asymmetry is in `features.ts`.
+ * than no button.
+ *
+ * The filter control is now the same case. It used to render always and open a
+ * modal whose contents were a "Part of Premium" lock — a control on the chat
+ * surface whose only function was to say no. `FILTERS_AVAILABLE` hides it until
+ * filters both exist and can be paid for; Premium is described on its own page,
+ * which is where somebody goes to find out what it costs.
  */
 import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
-import { ACCOUNTS_ENABLED } from '../features';
+import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from '../features';
 import { LogoMark } from './Logo';
 import { SiteNav, SiteNavLinks } from './SiteNav';
 import type { ChatState } from '../state/machine';
@@ -85,6 +90,7 @@ export function AppHeader({
           </div>
         )}
 
+        {FILTERS_AVAILABLE && (
         <button
           onClick={onOpenFilters}
           aria-label="Matching filters"
@@ -104,6 +110,7 @@ export function AppHeader({
               />
             </span>
         </button>
+        )}
 
         <button
           onClick={onOpenSettings}
