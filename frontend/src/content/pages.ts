@@ -33,6 +33,7 @@
  */
 
 import { CONTACT } from './contact';
+import { FAQ } from './faq';
 import { HOW_IT_WORKS } from './how-it-works';
 import { LEGAL_PAGES } from './legal';
 
@@ -178,117 +179,17 @@ const ABOUT: StaticPage = {
   ],
 };
 
-const FAQ: StaticPage = {
-  id: 'faq',
-  title: 'FAQ',
-  summary: 'The questions people actually ask.',
-  sections: [
-    {
-      heading: 'Do I need an account?',
-      body: ['No. There is nothing to sign up for and nothing to sign in to. Press start and talk.'],
-    },
-    {
-      heading: 'Is it free?',
-      body: [
-        'Yes, entirely. Nothing is paywalled and there is no subscription. If a donation link ' +
-          'is shown anywhere it is optional and changes nothing about the service.',
-      ],
-    },
-    {
-      heading: 'Is it really anonymous?',
-      body: [
-        'To the person you are talking to, yes — they are told nothing about you that you did ' +
-          'not type yourself, and they cannot find you again afterwards.',
-        'To us, not entirely. We hold your conversation for a limited period so that abuse can ' +
-          'be investigated, and we keep a one-way fingerprint of your network address so that ' +
-          'blocks and bans work. Neither of those is a name, and neither can be turned back ' +
-          'into one.',
-      ],
-    },
-    {
-      heading: 'How long are my messages kept?',
-      body: [
-        'Thirty days, then deleted automatically. If somebody reports a conversation, that one ' +
-          'is kept for ninety days instead so there is time to review it.',
-        'Deletion is a scheduled job rather than a promise — and if it fails, an alert fires.',
-      ],
-    },
-    {
-      heading: 'Who can read my conversation?',
-      body: [
-        'Nobody, unless it is reported — with one exception, which is a conversation with one ' +
-          'of our automated accounts.',
-        'Every read is written to an audit record before the content is fetched. The system is ' +
-          'built so that a read which was not recorded does not happen at all.',
-      ],
-    },
-    {
-      heading: 'Can I send photos or video?',
-      body: [
-        'No. Text only, and the server rejects anything else outright. There is no upload ' +
-          'button because there is nothing behind it.',
-      ],
-    },
-    {
-      heading: 'How do I get rid of someone?',
-      body: [
-        'Skip moves you on immediately. Block does that and makes sure you are never matched ' +
-          'with them again. Report sends the conversation to be reviewed.',
-        'The other person is never told which you chose — a block looks exactly like a skip ' +
-          'from their side.',
-      ],
-    },
-    {
-      heading: 'Can I get back to a conversation I left?',
-      body: [
-        'No, and that is deliberate. There is no history, no way to search for somebody you ' +
-          'talked to, and no way for them to find you. Once a conversation ends it is over.',
-      ],
-    },
-    {
-      heading: 'Am I talking to a bot?',
-      body: [
-        'Sometimes. Our automated accounts never claim to be human, and if you ask directly ' +
-          'they will not tell you they are a person.',
-      ],
-    },
-    {
-      heading: 'Why did nobody reply?',
-      body: [
-        'Usually because the other person skipped, closed the tab, or lost their connection. ' +
-          'It is not personal — most conversations here end quickly and that is normal.',
-      ],
-    },
-    {
-      heading: 'Do you use cookies?',
-      body: [
-        'One, and only so that blocking works. No analytics, no advertising identifiers, and ' +
-          'nothing loaded into your browser from any other company — not even fonts.',
-      ],
-    },
-    {
-      heading: 'Why can I not use it from Europe or the UK?',
-      body: [
-        'We do not serve the EEA or the UK. That is a deliberate choice about which rules a ' +
-          'one-person service can properly meet, not a technical limitation.',
-      ],
-    },
-    {
-      heading: 'Is there a minimum age?',
-      body: [
-        'Eighteen. We ask and we do not check, which we say plainly rather than implying ' +
-          'otherwise.',
-      ],
-    },
-    {
-      heading: 'Something went wrong. Who do I tell?',
-      body: [
-        'Use Report inside the conversation — that is the fastest route and it preserves the ' +
-          'conversation for review. For anything else, the contact address is in the footer.',
-      ],
-    },
-  ],
-};
+/*
+ * FAQ now lives in `content/faq.ts`.
+ *
+ * Moved out when it gained its own layout: the page renders as a grouped
+ * accordion (`FaqPage.tsx`) and needs grouping, default-open and verdict
+ * metadata that no other page has. Keeping that beside the copy is the same
+ * arrangement `how-it-works.ts` already uses.
+ *
+ * It stays in `STATIC_PAGES` below, so the footer, the nav and the page tests
+ * still see it as one of the documents.
+ */
 
 /*
  * Safety, transcribed from `docs/rewrite-wording/safety.md`.

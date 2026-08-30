@@ -219,6 +219,19 @@ export default {
           '0%, 49%': { opacity: '1' },
           '50%, 100%': { opacity: '0' },
         },
+        /*
+         * The 300ms reveal on an FAQ answer.
+         *
+         * Opacity and a short lift only — no height animation. `<details>` has
+         * no animatable height between closed and open, and faking one means
+         * measuring the content and driving it from JavaScript, which is how a
+         * native disclosure widget turns into a component that breaks
+         * find-in-page. The content appears instantly and fades in place.
+         */
+        'answer-in': {
+          from: { opacity: '0', transform: 'translateY(-4px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out both',
@@ -246,6 +259,7 @@ export default {
         thread: 'thread 6s ease-in-out infinite',
         'swap-soft': 'swap-soft 5s ease-in-out infinite',
         blink: 'blink 1.1s steps(1) infinite',
+        'answer-in': 'answer-in 0.3s cubic-bezier(0.22,1,0.36,1) both',
       },
     },
   },

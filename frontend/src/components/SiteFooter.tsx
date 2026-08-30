@@ -31,7 +31,16 @@ import { secondaryNav } from './SiteNav';
 
 export function SiteFooter(): JSX.Element {
   return (
-    <footer className="safe-pb shrink-0 border-t border-ink-800/50 px-6 py-5 short:py-3">
+    /*
+     * Sticky to the bottom of whatever scrolls it, matching the header at the
+     * top. On `SitePage` that is the document scroller; on the landing screen
+     * the column does not scroll at all, where `sticky` costs nothing and lays
+     * out exactly as it did before.
+     *
+     * A background is required now that prose can pass behind it — see the note
+     * on `EditorialFooter`, which makes the same trade for the same reason.
+     */
+    <footer className="safe-pb sticky bottom-0 z-30 shrink-0 border-t border-ink-800/50 bg-ink-950/85 px-6 py-5 backdrop-blur-md short:py-3">
       <nav
         aria-label="More"
         className="mx-auto flex max-w-lg flex-wrap items-center justify-center gap-x-5 gap-y-1 text-sm text-ink-400"

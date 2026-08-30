@@ -31,6 +31,8 @@ import { clientConfig } from './config';
 import { AboutPage } from './components/AboutPage';
 import { AuthModal } from './components/AuthModal';
 import { ContactPage } from './components/ContactPage';
+import { FaqPage } from './components/FaqPage';
+import { SafetyPage } from './components/SafetyPage';
 import { HowItWorksPage } from './components/HowItWorksPage';
 import { PremiumPage } from './components/PremiumPage';
 import { RulesPage } from './components/RulesPage';
@@ -93,6 +95,13 @@ export function Root(): JSX.Element {
   if (path === '/how-it-works') return <HowItWorksPage />;
   if (path === '/rules') return <RulesPage />;
   if (path === '/contact') return <ContactPage />;
+  // Its own layout, like About, How it works, Rules and Contact: twenty
+  // questions as a grouped accordion rather than twenty stacked sections.
+  if (path === '/faq') return <FaqPage />;
+  // Controls first, then the advice: somebody who opens this mid-incident
+  // needs Skip, Block and Report above the essay, which `SitePage` could not
+  // express.
+  if (path === '/safety') return <SafetyPage />;
 
   const page = PAGES.get(path);
   if (page !== undefined) {
@@ -101,8 +110,8 @@ export function Root(): JSX.Element {
     // About, How it works, Rules and Contact each used to take one — a donation
     // card, a sample conversation, an address block. All four now have their
     // own layouts, which is where a thing that only ever appeared on one page
-    // belonged. What remains on `SitePage` is FAQ, Safety, Terms and Privacy:
-    // four documents that genuinely are the same shape.
+    // belonged. What remains on `SitePage` is Terms and Privacy: two long
+    // documents that genuinely are the same shape.
     return <SitePage page={page} />;
   }
 

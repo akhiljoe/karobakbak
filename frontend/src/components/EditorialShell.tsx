@@ -85,7 +85,19 @@ function AmbientField(): JSX.Element {
 function EditorialFooter(): JSX.Element {
   return (
     <footer
-      className="safe-pb relative z-[1] flex flex-none justify-center border-t border-ink-800"
+      /*
+       * Pinned to the bottom of the scrollport the way the header is pinned to
+       * the top. Sticky rather than fixed: fixed would take it out of flow and
+       * the last paragraph of a page would sit permanently underneath it, which
+       * on a document page means a sentence nobody can finish reading. Sticky
+       * keeps the reserved space, so scrolling to the end reveals the content
+       * above it exactly as before.
+       *
+       * The background is not optional. It is transparent in normal flow
+       * because nothing passes behind it; pinned, prose scrolls underneath, and
+       * without a surface the links sit on top of moving text.
+       */
+      className="safe-pb sticky bottom-0 z-30 flex flex-none justify-center border-t border-ink-800 bg-ink-950/85 backdrop-blur-md"
       style={{ padding: '24px clamp(22px, 4cqw, 40px) 32px' }}
     >
       <nav
@@ -120,9 +132,26 @@ export function EditorialShell({
    * rest.
    */
   return (
-    <div className="h-full overflow-y-auto bg-ink-950">
+    /*
+     * `overflow-x-hidden` belongs on **this** element, not on the flex column
+     * inside it, and the difference is the whole reason the header used to
+     * scroll away.
+     *
+     * `position: sticky` resolves against the nearest ancestor with a scrolling
+     * box. `overflow-x: hidden` creates one — and when the other axis is
+     * `visible` it computes to `auto`, so a bare `overflow-x-hidden` silently
+     * turns that element into the scrollport. The header then stuck to a box
+     * that is `min-h-full` and never scrolls itself, so it tracked the content
+     * exactly and left the top of the screen. Nothing errors; the header simply
+     * behaves as though `sticky` were never written.
+     *
+     * Putting the clip on the element that already scrolls keeps the horizontal
+     * containment the ambient blobs need and leaves this scroller as the
+     * scrollport the header resolves against.
+     */
+    <div className="h-full overflow-y-auto overflow-x-hidden bg-ink-950">
       <div
-        className="relative flex min-h-full flex-col overflow-x-hidden"
+        className="relative flex min-h-full flex-col"
         style={{ containerType: 'inline-size' }}
       >
         <AmbientField />
