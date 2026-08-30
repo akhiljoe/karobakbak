@@ -116,7 +116,7 @@ function EditorialFooter(): JSX.Element {
     >
       <nav
         aria-label="More"
-        className="flex w-full flex-wrap text-[13px]"
+        className="flex w-full flex-wrap items-center text-[13px]"
         style={{ gap: '8px 20px' }}
       >
         {secondaryNav().map((item) => (
