@@ -47,6 +47,19 @@ export interface NavItem {
    * nothing until somebody clicks it and leaves.
    */
   readonly external?: boolean;
+  /**
+   * Render as an image rather than as text.
+   *
+   * Only the external "Buy me a coffee" entry has one, and only the vendor's
+   * own button. `label` becomes its `alt`, so a screen reader hears the link
+   * rather than "image", and the dimensions are given so the footer row does
+   * not reflow while it decodes.
+   *
+   * Deliberately **not** used for the internal `/support` variant: once
+   * payments are on we take the money ourselves, and a third party's branding
+   * on a link to our own checkout would be a lie about who is being paid.
+   */
+  readonly image?: { readonly src: string; readonly width: number; readonly height: number };
 }
 
 const PRIMARY_BASE: readonly NavItem[] = [
@@ -128,7 +141,26 @@ export function secondaryNav(): readonly NavItem[] {
 function coffee(): readonly NavItem[] {
   if (PAYMENTS_ENABLED) return [{ to: "/support", label: "Buy me a coffee" }];
   if (clientConfig.supportUrl === "") return [];
-  return [{ to: clientConfig.supportUrl, label: "Buy me a coffee", external: true }];
+  return [
+    {
+      to: clientConfig.supportUrl,
+      label: "Buy me a coffee",
+      external: true,
+      /*
+       * 30px rather than the vendor's 50. The footer is pinned, so its height
+       * is spent on every page rather than once at the bottom of one — and at
+       * full size a bright yellow button is the loudest thing on a dark site
+       * whose other four links are 13px muted text. Scaled, it still reads as
+       * the button people recognise.
+       *
+       * Served from our own origin. The vendor's `<img src="img.buymeacoffee.com/...">`
+       * snippet is blocked by `img-src` and, if that were widened, would hand
+       * them every visitor's IP and referring page on every render without a
+       * click. See `docs/brand/README.md`.
+       */
+      image: { src: "/buymeacoffee-button.svg", width: 141, height: 30 },
+    },
+  ];
 }
 
 /**
@@ -150,8 +182,25 @@ export function NavItemLink({
     return (
       // `noreferrer` as well as `noopener`: the destination has no business
       // learning which page on an anonymous chat service sent somebody.
-      <a href={item.to} target="_blank" rel="noreferrer noopener" className={className}>
-        {item.label}
+      <a
+        href={item.to}
+        target="_blank"
+        rel="noreferrer noopener"
+        // An image link carries its own shape, so it does not take the text
+        // link's underline and colour classes.
+        className={item.image === undefined ? className : "inline-block align-middle"}
+      >
+        {item.image === undefined ? (
+          item.label
+        ) : (
+          <img
+            src={item.image.src}
+            width={item.image.width}
+            height={item.image.height}
+            alt={item.label}
+            className="block transition-transform duration-200 hover:-translate-y-px"
+          />
+        )}
       </a>
     );
   }

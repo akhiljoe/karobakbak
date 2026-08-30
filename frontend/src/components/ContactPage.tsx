@@ -391,6 +391,57 @@ export function ContactPage(): JSX.Element {
             </RouteLink>
           )}
         </div>
+
+        {/*
+          ---------------------------------------------------------------------
+          THE BUTTON IS SELF-HOSTED, AND THAT IS THE WHOLE POINT
+          ---------------------------------------------------------------------
+          Buy Me a Coffee publishes this as an `<img>` pointing at
+          `img.buymeacoffee.com/button-api/...`. Used that way it would be
+          blocked outright — `img-src` is `'self' data:` plus the payment
+          provider — and widening the policy to admit it would make a published
+          claim false: the Privacy Policy says the site makes *no requests to
+          any third party* from the browser.
+
+          It would also be a real leak rather than a technicality. Every render
+          hands Buy Me a Coffee the visitor's IP address and the page they were
+          on, without them clicking anything, on a service whose entire premise
+          is anonymity.
+
+          So the rendered SVG is fetched once and served from this origin. It is
+          self-contained — the Cookie face is a `data:font/woff2` inside the
+          file and the cup is an internal reference — so nothing leaves the
+          page. Identical artwork, no request, no policy change.
+
+          Re-fetch it from the button-api URL if the branding ever changes;
+          `docs/brand/README.md` records where it came from.
+        */}
+        {clientConfig.supportUrl !== '' && (
+          <div className="flex flex-col items-start gap-3">
+            <p className={BODY_CLASS} style={BODY_STYLE}>
+              None of this is paid for by anybody. If it has been useful to you and
+              you feel like helping with the bill, there is a page for that.
+            </p>
+            <a
+              href={clientConfig.supportUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-block rounded-xl transition-transform duration-200 hover:-translate-y-0.5"
+            >
+              {/*
+                Width and height are set so the row does not reflow as the image
+                decodes, and the alt text is the button's own words — a screen
+                reader should hear the link, not "image".
+              */}
+              <img
+                src="/buymeacoffee-button.svg"
+                width={235}
+                height={50}
+                alt="Buy me a coffee"
+              />
+            </a>
+          </div>
+        )}
       </div>
     </EditorialShell>
   );
