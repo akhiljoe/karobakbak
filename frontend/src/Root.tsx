@@ -27,6 +27,7 @@
 import { useState } from 'react';
 
 import { App } from './App';
+import { clientConfig } from './config';
 import { AboutPage } from './components/AboutPage';
 import { AuthModal } from './components/AuthModal';
 import { ContactPage } from './components/ContactPage';
@@ -60,7 +61,15 @@ export function Root(): JSX.Element {
   if (path === '/premium') {
     return (
       <>
-        <PremiumPage onSignIn={() => setSignInOpen(true)} />
+        {/*
+          Empty in every build except a local test one, in which case the
+          Subscribe button opens the checkout instead of the sign-in modal.
+          When accounts ship, this is where the real credential arrives from.
+        */}
+        <PremiumPage
+          onSignIn={() => setSignInOpen(true)}
+          credential={clientConfig.devAccountCredential || null}
+        />
         <AuthModal open={signInOpen} onClose={() => setSignInOpen(false)} />
       </>
     );

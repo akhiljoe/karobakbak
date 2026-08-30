@@ -29,11 +29,12 @@
  * on screen. A button that opened nothing would be worse than an honest one
  * that is disabled.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, Check, Heart } from 'lucide-react';
 
 import { clientConfig } from '../config';
 import { PAYMENTS_ENABLED } from '../features';
+import { openCheckout, preloadCheckout } from '../payment';
 import { RouteLink, useDocumentTitle } from '../router';
 import { secondaryNav } from './SiteNav';
 import { LogoMark } from './Logo';
@@ -68,6 +69,51 @@ export function SupportPage(): JSX.Element {
   const chosen = custom.trim() !== '' ? Number(custom) : amount;
   const valid = Number.isFinite(chosen) && chosen > 0;
   const external = clientConfig.supportUrl;
+
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (PAYMENTS_ENABLED) preloadCheckout();
+  }, []);
+
+  /*
+   * A donation needs no account and grants nothing, so there is no credential
+   * and no entitlement to wait for. The amount is the one client-supplied
+   * figure anywhere in the payment path, and the server bounds it at both ends
+   * rather than trusting this conversion.
+   *
+   * The note the person typed is deliberately not sent. This page promises "We
+   * do not store it", and the honest way to keep that promise is to have no
+   * path that could: the field is a courtesy in the UI, and there is no column
+   * for it and no request carrying it.
+   */
+  const send = (): void => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setNotice(null);
+
+    void openCheckout({
+      product: 'donation',
+      amountPaise: Math.round(chosen * 100),
+      description: 'Support karobakbak',
+      themeColor: '#94634b',
+    })
+      .then((outcome) => {
+        switch (outcome.status) {
+          case 'paid':
+            setNotice('Thank you — that genuinely helps.');
+            break;
+          case 'dismissed':
+            break;
+          case 'failed':
+          case 'unavailable':
+            setNotice(outcome.message);
+            break;
+        }
+      })
+      .finally(() => setBusy(false));
+  };
 
   return (
     <div className="h-full overflow-y-auto bg-coffee-50 text-coffee-900">
@@ -204,14 +250,22 @@ export function SupportPage(): JSX.Element {
 
             <div className="mt-6">
               {PAYMENTS_ENABLED ? (
-                <button
-                  type="button"
-                  disabled={!valid}
-                  className="inline-flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-coffee-500 to-coffee-700 px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-coffee-900/20 transition-all hover:brightness-110 active:scale-[0.99] disabled:opacity-50"
-                >
-                  <Heart className="h-4 w-4" aria-hidden="true" />
-                  Send ₹{valid ? chosen : 0}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={!valid || busy}
+                    onClick={send}
+                    className="inline-flex h-13 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-coffee-500 to-coffee-700 px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-coffee-900/20 transition-all hover:brightness-110 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    <Heart className="h-4 w-4" aria-hidden="true" />
+                    {busy ? 'Opening…' : `Send ₹${valid ? chosen : 0}`}
+                  </button>
+                  {notice !== null && (
+                    <p role="status" className="mt-3 text-sm leading-relaxed text-coffee-600">
+                      {notice}
+                    </p>
+                  )}
+                </>
               ) : (
                 <>
                   <div className="rounded-2xl border-2 border-dashed border-coffee-300 bg-coffee-50 px-4 py-4 text-center">

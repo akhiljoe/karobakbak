@@ -549,3 +549,74 @@ describe('persona fill policy coherence (A3)', () => {
     expect(loadConfig(baseEnv()).personas.enabled).toBe(false);
   });
 });
+
+describe('payments configuration', () => {
+  const live = {
+    PAYMENTS_ENABLED: 'true',
+    RAZORPAY_KEY_ID: 'rzp_live_abc',
+    RAZORPAY_KEY_SECRET: 'shh',
+    RAZORPAY_WEBHOOK_SECRET: 'whsec',
+  };
+
+  it('ships disabled, and turning it on is a commit rather than a deploy', () => {
+    const config = loadConfig(baseEnv());
+    expect(config.payments.enabled).toBe(false);
+    // No credential has a default, so an unconfigured process has nothing to
+    // accidentally authenticate with.
+    expect(config.payments.keyId).toBe('');
+    expect(config.payments.keySecret).toBe('');
+    expect(config.payments.webhookSecret).toBe('');
+  });
+
+  it('starts with credentials present', () => {
+    expect(() => loadConfig(baseEnv(live))).not.toThrow();
+  });
+
+  /**
+   * The check that matters most. A fallback webhook secret means a deployment
+   * that forgot the variable accepts webhooks signed with a string published in
+   * this repository, and the symptom is not an error — it is a stranger
+   * granting themselves premium.
+   */
+  it('refuses to start with payments on and any credential missing', () => {
+    for (const missing of [
+      'RAZORPAY_KEY_ID',
+      'RAZORPAY_KEY_SECRET',
+      'RAZORPAY_WEBHOOK_SECRET',
+    ] as const) {
+      expect(() => loadConfig(baseEnv({ ...live, [missing]: '' }))).toThrow(ConfigError);
+      expect(() => loadConfig(baseEnv({ ...live, [missing]: '' }))).toThrow(missing);
+    }
+  });
+
+  it('refuses payments without the database they write to', () => {
+    expect(() => loadConfig(baseEnv({ ...live, RETENTION_ENABLED: 'false' }))).toThrow(
+      /RETENTION_ENABLED/,
+    );
+  });
+
+  /**
+   * Test mode grants entitlements and moves no money, and nothing at runtime
+   * reports it. The bank statement is the first signal, weeks later.
+   */
+  it('refuses a test-mode key in production', () => {
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          ...live,
+          NODE_ENV: 'production',
+          RAZORPAY_KEY_ID: 'rzp_test_abc',
+          IP_HASH_SALT: 'a-real-salt-value',
+        }),
+      ),
+    ).toThrow(/test-mode/);
+  });
+
+  it('allows a test key outside production, which is where it belongs', () => {
+    expect(() => loadConfig(baseEnv({ ...live, RAZORPAY_KEY_ID: 'rzp_test_abc' }))).not.toThrow();
+  });
+
+  it('does not police credentials while payments are off', () => {
+    expect(() => loadConfig(baseEnv({ PAYMENTS_ENABLED: 'false' }))).not.toThrow();
+  });
+});

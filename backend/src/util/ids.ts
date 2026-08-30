@@ -91,6 +91,20 @@ export function newAdminAccountId(): string {
 }
 
 /**
+ * The receipt string sent to the payment provider with an order.
+ *
+ * Random, and carrying nothing. The obvious version composes it from the
+ * account id and a timestamp — which is readable, and which publishes our
+ * internal identifier into a third party's dashboard, exports and support
+ * tooling for every order ever placed. The receipt exists so a human can match
+ * one record to another; a random string does that, and the join lives in
+ * `payment_orders` where it belongs.
+ */
+export function newPaymentReceipt(): string {
+  return `rcpt_${randomToken()}`;
+}
+
+/**
  * A console session cookie.
  *
  * 256 bits rather than the 128 used elsewhere. This value alone authorises

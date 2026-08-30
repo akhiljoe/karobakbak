@@ -29,14 +29,30 @@
  * worse than no filter — it is the one place this page could mislead somebody
  * into lowering their guard.
  */
+import { useEffect, useState } from 'react';
 import { Check, Globe, Languages, Users, X } from 'lucide-react';
 
 import { PAYMENTS_ENABLED } from '../features';
+import { openCheckout, preloadCheckout } from '../payment';
 import { Button } from './Button';
 import { EditorialShell } from './EditorialShell';
 
 interface PremiumPageProps {
   readonly onSignIn: () => void;
+  /**
+   * The account bearer credential, when there is one.
+   *
+   * Supplied by whatever ships accounts; there is no store for it yet, so it is
+   * absent today and the Subscribe button sends people to sign in. That is the
+   * flow this page already described before payments existed, and it is the
+   * correct one: a subscription belongs to an account, so there is nothing to
+   * buy until there is an account to buy it for.
+   *
+   * Deliberately a prop rather than something this component reaches for. A
+   * component that fetches its own credential is one that has an opinion about
+   * where credentials live, which is a decision for the accounts phase.
+   */
+  readonly credential?: string | null;
 }
 
 const H2_STYLE = { fontSize: 'clamp(24px, 3.2cqw, 30px)' };
@@ -152,7 +168,64 @@ function SectionHead({
   );
 }
 
-export function PremiumPage({ onSignIn }: PremiumPageProps): JSX.Element {
+export function PremiumPage({ onSignIn, credential = null }: PremiumPageProps): JSX.Element {
+  /**
+   * Null, or the message under the button.
+   *
+   * One string covers refusal, failure and success, because all three are the
+   * same thing to a reader: a sentence saying what happened next. Separate
+   * states for each would be three ways to render one line.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Guards the button against a second click while a checkout is open. */
+  const [busy, setBusy] = useState(false);
+
+  /*
+   * Fetch the checkout script when this page is shown, so the click does not
+   * wait on a download. It creates no order and touches no database — unlike
+   * the prototype, which pre-generated an order per tier for every visitor who
+   * merely looked at the price.
+   */
+  useEffect(() => {
+    if (PAYMENTS_ENABLED) preloadCheckout();
+  }, []);
+
+  const subscribe = (): void => {
+    // Without a credential there is nothing to attach a subscription to, so the
+    // button does what it did before payments existed.
+    if (credential === null || credential === '') {
+      onSignIn();
+      return;
+    }
+    if (busy) return;
+    setBusy(true);
+    setNotice(null);
+
+    void openCheckout({
+      product: 'premium_1_month',
+      credential,
+      description: 'Premium — 1 month',
+      themeColor: '#f59e0b',
+    })
+      .then((outcome) => {
+        switch (outcome.status) {
+          case 'paid':
+            // Not "you are premium". The entitlement is granted by the webhook,
+            // server to server, and that can land after this resolves — the
+            // browser handler is the one part of the flow the payer controls.
+            setNotice('Payment received. Premium can take a moment to appear.');
+            break;
+          case 'dismissed':
+            break;
+          case 'failed':
+          case 'unavailable':
+            setNotice(outcome.message);
+            break;
+        }
+      })
+      .finally(() => setBusy(false));
+  };
+
   return (
     <EditorialShell title="Premium">
       {/* ---------------------------------------------------------------- hero */}
@@ -256,8 +329,8 @@ export function PremiumPage({ onSignIn }: PremiumPageProps): JSX.Element {
 
           <div className="mt-1 flex flex-wrap items-center gap-3.5">
             {PAYMENTS_ENABLED ? (
-              <Button size="lg" className="basis-[180px]" onClick={onSignIn}>
-                Subscribe
+              <Button size="lg" className="basis-[180px]" onClick={subscribe} disabled={busy}>
+                {busy ? 'Opening…' : 'Subscribe'}
               </Button>
             ) : (
               <button
@@ -286,6 +359,18 @@ export function PremiumPage({ onSignIn }: PremiumPageProps): JSX.Element {
               </button>
             </span>
           </div>
+
+          {notice !== null && (
+            /*
+             * `role="status"` and not `alert`: none of these is an emergency,
+             * and a polite live region does not interrupt a screen reader
+             * mid-sentence. It is announced because somebody who cannot see the
+             * button change still needs to know the checkout closed.
+             */
+            <p role="status" className="text-[15px] leading-[1.7] text-ink-300">
+              {notice}
+            </p>
+          )}
         </div>
       </div>
 
