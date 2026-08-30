@@ -46,6 +46,7 @@ export const ACCOUNTS_ENABLED = false;
  */
 export const FILTERS_ENABLED = false;
 
+
 /**
  * Whether subscriptions can actually be bought.
  *
@@ -61,3 +62,26 @@ export const FILTERS_ENABLED = false;
  * third-party script, and the Content Security Policy blocks it until widened.
  */
 export const PAYMENTS_ENABLED = false;
+
+/**
+ * Whether the filter surface appears at all.
+ *
+ * Both halves, and each one refuses for its own reason:
+ *
+ *  * `FILTERS_ENABLED` — the backend has the `chat:queue:{segment}` seam and
+ *    only `default` exists (R6, D23). With this false there is nothing for a
+ *    filter to act on, so a control that set one would be decoration.
+ *  * `PAYMENTS_ENABLED` — filtering is the paid tier. Shipping it while nothing
+ *    can be bought gives the premium feature away, and then takes it back when
+ *    payments arrive, which is the worst order to do those two things in.
+ *
+ * Derived rather than a third flag anyone can set, so the two can never
+ * disagree about whether a control should exist.
+ *
+ * It governs the chat header's filter button and the modal behind it. While it
+ * is false neither is rendered — the read-only "Part of Premium" state inside
+ * `FiltersModal` is kept but unreachable, because the decision was that the
+ * chat surface should not carry a locked control at all. Premium is described
+ * on its own page, which is where somebody goes to find out what it costs.
+ */
+export const FILTERS_AVAILABLE = FILTERS_ENABLED && PAYMENTS_ENABLED;

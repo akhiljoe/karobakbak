@@ -8,10 +8,16 @@
  * deliberately **not** a speech bubble, because every chat product already is
  * one and a generic mark is worth less than no mark.
  *
- * The arcs are asymmetric on purpose: one solid, one half-opacity. Two
- * identical arcs read as a decorative shape; one leading and one answering
- * reads as a conversation, and the imbalance is what stops it looking like a
- * loading spinner.
+ * The arcs are asymmetric on purpose, and in **two** ways: the answering arc is
+ * both shorter and half-opacity. Two identical arcs read as a decorative shape
+ * — or worse, as a loading spinner. One leading and one answering reads as a
+ * conversation, and the size difference carries that even in greyscale, where
+ * the opacity difference alone very nearly disappears.
+ *
+ * Geometry is rebuilt from `docs/brand/new-logo.png`, which is the source the
+ * mark was designed against. If it changes there, it changes here and in
+ * `public/favicon.svg` — a favicon that has drifted from the logo is the kind
+ * of thing nobody notices and everybody feels.
  *
  * ---------------------------------------------------------------------------
  * WHY THE COLOURS ARE LITERAL AND NOT `currentColor`
@@ -59,23 +65,23 @@ export function LogoMark({
         ? { 'aria-hidden': true as const }
         : { role: 'img' as const, 'aria-label': label })}
     >
-      {/* The one that speaks first. */}
+      {/* The one that speaks first: taller, and at full strength. */}
       <path
-        d="M31 9 A 19 19 0 0 0 31 39"
+        d="M16.1 13.5 A 13.5 13.5 0 0 1 16.1 34.5"
         stroke={lead}
-        strokeWidth="3.6"
+        strokeWidth="2.7"
         strokeLinecap="round"
       />
-      {/* The one answering — quieter, so the pair reads as a exchange. */}
+      {/* The one answering — shorter and quieter, so the pair reads as exchange. */}
       <path
-        d="M17 9 A 19 19 0 0 1 17 39"
+        d="M31.9 17 A 9.7 9.7 0 0 0 31.9 31"
         stroke={answer}
         strokeOpacity={mono ? 0.45 : 0.5}
-        strokeWidth="3.6"
+        strokeWidth="2.7"
         strokeLinecap="round"
       />
       {/* What passes between them. */}
-      <circle cx="24" cy="24" r="2.4" fill={lead} />
+      <circle cx="25.1" cy="24" r="1.4" fill={lead} />
     </svg>
   );
 }

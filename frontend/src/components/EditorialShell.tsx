@@ -33,7 +33,7 @@ import type { ReactNode } from 'react';
 
 import { RouteLink, useDocumentTitle } from '../router';
 import { LogoMark } from './Logo';
-import { SiteNav, SiteNavLinks, secondaryNav } from './SiteNav';
+import { NavItemLink, SiteNav, SiteNavLinks, secondaryNav } from './SiteNav';
 import { StartChattingLink } from './StartChattingLink';
 
 interface EditorialShellProps {
@@ -72,35 +72,59 @@ function AmbientField(): JSX.Element {
 /**
  * The footer these three pages use, which is not `SiteFooter`.
  *
- * Same five links, set the way the design sets them: aligned to the left edge
- * of the 680px measure rather than centred, 13px, and unadorned — no
- * underlines. It reads as the end of a column of prose, which is what it is.
+ * Same five links, 13px and unadorned — no underlines.
  *
- * `SiteFooter` stays centred and underlined for the landing screen and the
- * document pages, where there is no column to align to and the links are the
- * only thing in the region. Two treatments because the two contexts genuinely
- * differ; the *list* is shared through `secondaryNav()`, which is the half that
- * must never fall out of step.
+ * ---------------------------------------------------------------------------
+ * ALIGNED TO THE HEADER'S GUTTER, NOT TO THE PROSE COLUMN
+ * ---------------------------------------------------------------------------
+ * The design set these to the left edge of the 680px measure, on the reasoning
+ * that the footer reads as the end of a column of prose. That was right while
+ * the footer sat at the end of the prose.
+ *
+ * It is pinned now, so it is no longer the end of anything — it is persistent
+ * chrome, on screen the whole time, the same as the header. And a full-width
+ * bar containing a 344px huddle of links two thirds of the way in reads as
+ * broken rather than as considered: at 1920 the links ended at x=958 with 950px
+ * of empty bar to their right.
+ *
+ * So it takes the header's inline padding, the same `clamp()`, and the links
+ * start where the logo starts. Chrome lines up with chrome.
+ *
+ * `SiteFooter` makes the same move against its own header, which is a centred
+ * `max-w-4xl` rather than full-bleed — so the two files reach different numbers
+ * from one rule. The *list* is shared through `secondaryNav()`, which is the
+ * half that must never fall out of step.
  */
 function EditorialFooter(): JSX.Element {
   return (
     <footer
-      className="safe-pb relative z-[1] flex flex-none justify-center border-t border-ink-800"
-      style={{ padding: '24px clamp(22px, 4cqw, 40px) 32px' }}
+      /*
+       * Pinned to the bottom of the scrollport the way the header is pinned to
+       * the top. Sticky rather than fixed: fixed would take it out of flow and
+       * the last paragraph of a page would sit permanently underneath it, which
+       * on a document page means a sentence nobody can finish reading. Sticky
+       * keeps the reserved space, so scrolling to the end reveals the content
+       * above it exactly as before.
+       *
+       * The background is not optional. It is transparent in normal flow
+       * because nothing passes behind it; pinned, prose scrolls underneath, and
+       * without a surface the links sit on top of moving text.
+       */
+      className="safe-pb sticky bottom-0 z-30 flex flex-none border-t border-ink-800 bg-ink-950/85 backdrop-blur-md"
+      /* The header's `paddingInline`, so the first link sits under the logo. */
+      style={{ padding: '14px clamp(14px, 3cqw, 32px) 16px' }}
     >
       <nav
         aria-label="More"
-        className="flex w-full max-w-[680px] flex-wrap text-[13px]"
+        className="flex w-full flex-wrap text-[13px]"
         style={{ gap: '8px 20px' }}
       >
         {secondaryNav().map((item) => (
-          <RouteLink
+          <NavItemLink
             key={item.to}
-            to={item.to}
+            item={item}
             className="rounded text-ink-400 transition-colors hover:text-ink-100"
-          >
-            {item.label}
-          </RouteLink>
+          />
         ))}
       </nav>
     </footer>
@@ -120,9 +144,26 @@ export function EditorialShell({
    * rest.
    */
   return (
-    <div className="h-full overflow-y-auto bg-ink-950">
+    /*
+     * `overflow-x-hidden` belongs on **this** element, not on the flex column
+     * inside it, and the difference is the whole reason the header used to
+     * scroll away.
+     *
+     * `position: sticky` resolves against the nearest ancestor with a scrolling
+     * box. `overflow-x: hidden` creates one — and when the other axis is
+     * `visible` it computes to `auto`, so a bare `overflow-x-hidden` silently
+     * turns that element into the scrollport. The header then stuck to a box
+     * that is `min-h-full` and never scrolls itself, so it tracked the content
+     * exactly and left the top of the screen. Nothing errors; the header simply
+     * behaves as though `sticky` were never written.
+     *
+     * Putting the clip on the element that already scrolls keeps the horizontal
+     * containment the ambient blobs need and leaves this scroller as the
+     * scrollport the header resolves against.
+     */
+    <div className="h-full overflow-y-auto overflow-x-hidden bg-ink-950">
       <div
-        className="relative flex min-h-full flex-col overflow-x-hidden"
+        className="relative flex min-h-full flex-col"
         style={{ containerType: 'inline-size' }}
       >
         <AmbientField />

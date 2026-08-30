@@ -30,10 +30,23 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import { RouteLink, useRoute } from "../router";
+import { clientConfig } from "../config";
+import { PAYMENTS_ENABLED } from "../features";
 
-interface NavItem {
+export interface NavItem {
   readonly to: string;
   readonly label: string;
+  /**
+   * An absolute URL that leaves the site, rendered as an anchor rather than a
+   * route.
+   *
+   * Only "Buy me a coffee" is ever one, and only while payments are off. It is
+   * a **link and never an embed**: a donation widget is a third-party script,
+   * and the Privacy Policy's claim that the site makes no third-party requests
+   * from the browser is worth more than an inline button. An anchor requests
+   * nothing until somebody clicks it and leaves.
+   */
+  readonly external?: boolean;
 }
 
 const PRIMARY_BASE: readonly NavItem[] = [
@@ -44,10 +57,12 @@ const PRIMARY_BASE: readonly NavItem[] = [
   { to: "/faq", label: "FAQ" },
 ];
 
-const SECONDARY: readonly NavItem[] = [
+const SECONDARY_BEFORE: readonly NavItem[] = [
   { to: "/rules", label: "Rules" },
   { to: "/contact", label: "Contact" },
-  { to: "/support", label: "Buy me a coffee" },
+];
+
+const SECONDARY_AFTER: readonly NavItem[] = [
   { to: "/terms", label: "Terms" },
   { to: "/privacy", label: "Privacy" },
 ];
@@ -65,6 +80,12 @@ const SECONDARY: readonly NavItem[] = [
  * question from whether the plan can be read about.
  */
 function primary(): readonly NavItem[] {
+  // Premium is hidden entirely while payments are off, rather than shown and
+  // disabled. The asymmetry is the one `features.ts` already draws: a filter
+  // says "we know you want this" and teaches something, while a plan nobody can
+  // buy teaches nothing and costs a click to find out. It returns the moment
+  // the flag flips — nothing here is deleted.
+  if (!PAYMENTS_ENABLED) return PRIMARY_BASE.filter((item) => item.to !== "/premium");
   return PRIMARY_BASE;
 }
 
@@ -88,7 +109,57 @@ export function navPaths(): ReadonlySet<string> {
  * and it is cheaper to show five links than to teach a menu.
  */
 export function secondaryNav(): readonly NavItem[] {
-  return SECONDARY;
+  return [...SECONDARY_BEFORE, ...coffee(), ...SECONDARY_AFTER];
+}
+
+/**
+ * Where "buy me a coffee" points, and whether it appears at all.
+ *
+ * Three states, and each one is the honest answer to a different situation:
+ *
+ *  * **Payments on** — `/support`, the page with the amounts on it.
+ *  * **Payments off, a URL configured** — straight out to that page. Nothing
+ *    here can take money, and somebody who wants to give some should not be
+ *    routed through a page that says so before letting them.
+ *  * **Payments off, nothing configured** — no link. A "buy me a coffee" that
+ *    goes nowhere is worse than none, which is the rule `clientConfig.supportUrl`
+ *    already states: empty hides it entirely.
+ */
+function coffee(): readonly NavItem[] {
+  if (PAYMENTS_ENABLED) return [{ to: "/support", label: "Buy me a coffee" }];
+  if (clientConfig.supportUrl === "") return [];
+  return [{ to: clientConfig.supportUrl, label: "Buy me a coffee", external: true }];
+}
+
+/**
+ * One nav item, as a route or as a way off the site.
+ *
+ * Shared so the three places that render this list — the two footers and the
+ * support page — cannot disagree about which items leave the site. An external
+ * item that a caller rendered with `RouteLink` would push a full URL through the
+ * router and land on the 404 page.
+ */
+export function NavItemLink({
+  item,
+  className,
+}: {
+  item: NavItem;
+  className?: string;
+}): JSX.Element {
+  if (item.external === true) {
+    return (
+      // `noreferrer` as well as `noopener`: the destination has no business
+      // learning which page on an anonymous chat service sent somebody.
+      <a href={item.to} target="_blank" rel="noreferrer noopener" className={className}>
+        {item.label}
+      </a>
+    );
+  }
+  return (
+    <RouteLink to={item.to} className={className}>
+      {item.label}
+    </RouteLink>
+  );
 }
 
 /*
@@ -148,15 +219,57 @@ export function SiteNav(): JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  /*
+   * Close if the window grows past the breakpoint while the panel is open.
+   *
+   * CSS alone cannot: hiding the button does not close what it opened, so a
+   * phone-width panel dragged to desktop width would sit there showing links
+   * the header is now displaying anyway. `768px` is Tailwind's `md`, which is
+   * the same width the button's `md:hidden` uses — the one place this number
+   * has to be repeated, because a media query is not reachable from a class.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const wide = window.matchMedia("(min-width: 768px)");
+    if (wide.matches) {
+      setOpen(false);
+      return;
+    }
+    const onChange = (event: MediaQueryListEvent): void => {
+      if (event.matches) setOpen(false);
+    };
+    wide.addEventListener("change", onChange);
+    return () => wide.removeEventListener("change", onChange);
+  }, [open]);
+
   const close = (): void => setOpen(false);
 
   return (
     <>
+      {/*
+        `md:hidden` is the whole of the desktop behaviour, and it is the
+        complement of `SiteNavLinks`' `md:flex` — above that width the links are
+        already in the header, so the menu has nothing left to hold.
+        ---------------------------------------------------------------------
+        IT USED TO OPEN AN EMPTY BOX, AND THE CAUSE IS WORTH KEEPING WRITTEN DOWN
+        ---------------------------------------------------------------------
+        The panel once held the secondary links too. When those moved to the
+        footer its only remaining content was the primary set, already marked
+        `md:hidden` because the header shows them inline — but nothing hid the
+        *button*. So on a desktop the panel still opened, containing a close
+        control and nothing else.
+        Two places knew the breakpoint and only one was updated. There is now
+        one: the button is not rendered above `md`, so the panel cannot be
+        reached there and its contents need no breakpoint of their own.
+        Removed rather than disabled. A button that is present and does nothing
+        still takes focus and still announces itself as "More", which is a
+        worse answer than not being there.
+      */}
       <button
         onClick={() => setOpen(true)}
         aria-label="More"
         aria-expanded={open}
-        className="group inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-ink-800"
+        className="group inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-ink-800 md:hidden"
       >
         {/*
           Three drawn rules rather than an icon-font glyph, which is what the
@@ -237,8 +350,12 @@ export function SiteNav(): JSX.Element {
                 </button>
               </div>
 
-              {/* Already inline on desktop; only the small header needs these. */}
-              <nav aria-label="Product" className="flex flex-col md:hidden">
+              {/*
+                No breakpoint of its own: the button that opens this panel does
+                not exist above `md`, so this is only ever rendered on a narrow
+                header. One place knows the width, which is the point.
+              */}
+              <nav aria-label="Product" className="flex flex-col">
                 {links.map((item) => (
                   <RouteLink
                     key={item.to}
