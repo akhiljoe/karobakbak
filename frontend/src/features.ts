@@ -52,9 +52,12 @@ export const ACCOUNTS_ENABLED = false;
  * anywhere may suggest a preference has checked anything, because none of them
  * has, and nothing may promise a match rather than a higher chance of one.
  *
- * `flirty` is in the vibe list and preferring on it is a separate decision from
- * this flag (§29.9). It declares an intent rather than a tone, and the server
- * would be pairing people on that intent with no age assurance anywhere.
+ * `flirty` no longer has anything to do with this flag. It moved to `INTENTS`
+ * (D45, §30.4), which is symmetric, free and always on — so preferring on it is
+ * not a thing that can be done at all: an intent says what *you* are here for
+ * and scores only against somebody who said the same. That is what answered
+ * §29.9, and it means this flag now gates exactly two dimensions, gender and
+ * country, both of them paid and both of them asymmetric.
  */
 export const FILTERS_ENABLED = false;
 

@@ -124,8 +124,7 @@ export function ProfileFields({
 
 
       <p className="text-xs leading-relaxed text-ink-500">
-        Every stranger you match with sees this. Nothing here is checked by us, so treat what other
-        people declare the same way. You must be {MIN_DECLARED_AGE} or over to use karobakbak.
+        Everyone you match with sees this. None of it is checked.
         {appliesToNextMatch && (
           <>
             {' '}
