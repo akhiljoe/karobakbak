@@ -144,10 +144,14 @@ describe('the declared intent', () => {
   });
 
   it('drops a value the server would refuse', () => {
-    // Same failure mode as the preference: `flirty` was in the list this
-    // replaces, so a browser that stored it is a real case rather than a
-    // hypothetical one, and sending it would refuse the whole join.
-    for (const stale of ['flirty', 'chill', 'spicy', '']) {
+    // Same failure mode as the preference: sending a stale value refuses the
+    // whole join. `chill` is the real case — it was in the vibe list this
+    // replaces and did not survive into `INTENTS`, so a browser that stored it
+    // is a returning user rather than a hypothetical one.
+    //
+    // `flirty` is deliberately NOT in this list: it did survive (§30.4), so
+    // asserting it is dropped would be asserting the opposite of the decision.
+    for (const stale of ['chill', 'spicy', 'FLIRTY', '']) {
       expect(loadMatchIntent(fakeStorage({ [INTENT_KEY]: stale }))).toBeNull();
     }
   });

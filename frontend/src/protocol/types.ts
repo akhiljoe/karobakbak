@@ -380,26 +380,59 @@ export const MAX_PREFERENCE_VALUES = 8;
  * Intent is scored in whatever sample is drawn and never asks for a bigger one.
  *
  * ---------------------------------------------------------------------------
- * `flirty` IS DELIBERATELY ABSENT
+ * `flirty` IS IN THE LIST, AND SYMMETRY IS WHY IT CAN BE
  * ---------------------------------------------------------------------------
- * It was in the vibe list this replaces, where it was a declaration nothing
- * read while `FILTERS_ENABLED` stayed false. Carrying it across would have made
- * it something else entirely: intent is matched on, for free, for everyone, by
- * default. That is the server pairing people on sexual intent with **no age
- * assurance anywhere in the system** — a strictly larger step than the one
- * §29.9 already refused to take without its own record, and it reaches the
- * minor-safety policy, the s.79 argument, and the payment processor's and ad
- * networks' terms on dating and adult content.
+ * §29.9 refused to make `flirty` a matching signal without its own decision.
+ * This is that decision, and the reasoning that unlocks it is the shape change
+ * rather than a change of appetite.
  *
- * Adding it back is a decision, not a list edit. The record §29.9 asks for is
- * the prerequisite, and it now has to clear a higher bar than when §29.9 was
- * written.
+ * §29.9 was written against D44, where the third dimension was a preference
+ * *list*: a user said which values they wanted in a **stranger**, so `flirty`
+ * meant "find me somebody flirty" and pointed outward at people who had not
+ * asked for it. That is a targeting tool, and it is what the section objected
+ * to.
+ *
+ * Intent is symmetric. `flirty` here means "I am here to flirt" and scores only
+ * against a candidate who said the same thing. It cannot be pointed at anybody:
+ *
+ *     old (D44)   flirty-seeker -> anyone            targeting
+ *     now (D45)   flirty        <-> flirty only      routing
+ *
+ * Routing also works in the direction nobody asks for. Pairing flirty with
+ * flirty is what keeps it away from somebody who chose `venting`, and an
+ * unwanted opener is the most common complaint about this category of product.
+ * The pool has no mechanism for that today, and this is it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS DOES NOT FIX, STATED PLAINLY
+ * ---------------------------------------------------------------------------
+ * There is **no age assurance anywhere in this system**. The age gate is the
+ * whole of the minor-safety enforcement (`minor-safety-policy.md` §3), `age` is
+ * a claim anyone can type (§26.4, D36), and symmetry does nothing about either.
+ * A minor who passed the gate by lying can select this value and be paired with
+ * an adult who selected it.
+ *
+ * That is the residual risk and it is not mitigated here. It is unchanged by
+ * this decision in the sense that the gate is the control either way — but it
+ * is the reason this value stays reviewable rather than settled, and the reason
+ * personas are excluded from it below.
+ *
+ * It also reaches the s.79 safe-harbour argument and the payment processor's
+ * and ad networks' terms on dating and adult content. Those are documents to
+ * update, not reasons the code cannot carry the value.
  *
  * ---------------------------------------------------------------------------
  * The list is closed for the reason `GENDERS` is: a free-text mood field is
  * somewhere to write a sentence, a slur or a contact handle, and it would then
  * need moderating like a message body. Declining *is* "no intent", so there is
  * no option for it.
+ *
+ * `flirty` is never declared by a persona (`SAFE_INTENTS` in
+ * `personas/surface.ts`). Everything a persona says is the operator's own
+ * speech (D-AI-11), already outside the s.79 safe harbour, and declaring sexual
+ * intent on the operator's behalf to a stranger of unverified age is the one
+ * piece of realism not worth having. That exclusion is not softened by
+ * symmetry: the objection there was never targeting, it was authorship.
  *
  * `venting` is the one value that is not obviously symmetric — two people who
  * both want to be heard is not two people listening. It ships because the
@@ -408,7 +441,7 @@ export const MAX_PREFERENCE_VALUES = 8;
  * partner it replaces. Worth revisiting against §30.4's numbers rather than
  * assuming either way.
  */
-export const INTENTS = ['chat', 'deep', 'funny', 'venting'] as const;
+export const INTENTS = ['chat', 'deep', 'funny', 'venting', 'flirty'] as const;
 export type Intent = (typeof INTENTS)[number];
 
 export function isIntent(value: unknown): value is Intent {

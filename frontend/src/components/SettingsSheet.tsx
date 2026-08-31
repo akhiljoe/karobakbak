@@ -128,9 +128,7 @@ export function SettingsSheet({
         />
 
         <p className="mt-4 px-1 text-xs leading-relaxed text-ink-500">
-          Settings are kept in this browser. Your preferences never leave it; what you declare above
-          is sent to the person you match with, and to nobody else. Clearing your site data resets
-          both.
+          Kept in this browser. Clearing your site data resets everything.
         </p>
 
         <Button variant="secondary" className="mt-4 w-full" onClick={onClose}>

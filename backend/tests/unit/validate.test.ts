@@ -845,14 +845,16 @@ describe('validateIntent', () => {
     }
   });
 
-  it('refuses flirty, which was in the list this replaces', () => {
-    // Not an arbitrary example. A browser that stored it under the old vibe
-    // selector is a real case, and the value is absent deliberately: intent is
-    // matched on, free, and on by default, so carrying it across would have the
-    // server pairing people on sexual intent with no age assurance anywhere in
-    // the system. Adding it back is a decision, and this test is one of the
-    // places that decision has to visit.
-    expect(validateIntent('flirty').ok).toBe(false);
+  it('accepts flirty, which symmetry makes routing rather than targeting', () => {
+    // §29.9 refused this value as a D44 preference, where it meant "find me
+    // somebody flirty" and pointed outward at people who had not asked for it.
+    // As an intent it means "I am here to flirt" and scores only against
+    // somebody who said the same, so it cannot be aimed at anyone (§30.4).
+    //
+    // The residual risk is unchanged and is not this validator's to carry:
+    // there is no age assurance anywhere in the system, and the age gate is the
+    // control either way.
+    expect(validateIntent('flirty')).toEqual({ ok: true, intent: 'flirty' });
   });
 
   it('rides along on a join_queue frame, beside the profile', () => {

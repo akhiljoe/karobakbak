@@ -149,6 +149,7 @@ const INTENT_LABELS: Record<string, string> = {
   deep: 'Something deeper',
   funny: 'Something funny',
   venting: 'I need to vent',
+  flirty: 'Flirting',
 };
 
 export const INTENT_OPTIONS = INTENTS.map((value) => ({

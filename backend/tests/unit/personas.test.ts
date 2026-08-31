@@ -278,6 +278,30 @@ describe('surface generation', () => {
     expect(surfaces.size).toBeGreaterThan(50);
   });
 
+  it('never declares flirty, across every character and 300 seeds', () => {
+    // The exclusion that symmetry does NOT answer. Users may declare it — as an
+    // intent it routes rather than targets (§30.4) — but everything a persona
+    // says is the operator's own speech (D-AI-11), already outside the s.79
+    // safe harbour, so declaring sexual intent on the operator's behalf to a
+    // stranger of unverified age is the operator doing it.
+    //
+    // Asserted across the whole population rather than one character, because
+    // `SAFE_INTENTS` is derived by exclusion and a sixth intent added later
+    // reaches personas automatically. This is what catches a value that should
+    // not have.
+    const seen = new Set<string>();
+    for (const character of CHARACTERS) {
+      for (let seed = 0; seed < 300; seed += 1) {
+        const { intent } = generateSurface(character, { seed });
+        if (intent !== null) seen.add(intent);
+      }
+    }
+    expect(seen.has('flirty')).toBe(false);
+    // And the exclusion is narrow: everything else is still reachable, so this
+    // does not pass by personas having stopped declaring an intent at all.
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
   it('never generates an age outside the declarable range', () => {
     for (const character of CHARACTERS) {
       for (let seed = 0; seed < 300; seed += 1) {

@@ -69,6 +69,22 @@ export interface SurfaceOptions {
  * produce the same surface, which is what makes the distribution assertions in
  * the tests meaningful rather than flaky.
  */
+/**
+ * The intents a persona may declare — every value except `flirty`.
+ *
+ * Derived by exclusion rather than written out, so a sixth intent added later
+ * is available to personas automatically and only a deliberate addition to this
+ * list can keep one from them.
+ *
+ * `flirty` is excluded on a different ground from the one §29.9 raised about
+ * users, and symmetry does not answer it. The objection there was targeting,
+ * which intent removes. The objection here is **authorship**: everything a
+ * persona says is the operator's own speech (D-AI-11), already outside the s.79
+ * safe harbour, so declaring sexual intent on the operator's behalf to a
+ * stranger of unverified age is the operator doing it, not a user.
+ */
+const SAFE_INTENTS = INTENTS.filter((intent) => intent !== 'flirty');
+
 export function generateSurface(
   character: PersonaCharacter,
   options: SurfaceOptions = {},
@@ -99,13 +115,9 @@ export function generateSurface(
   // other field, and — unlike them — never shown to the stranger (D45, §30.1),
   // so it only ever affects who the persona is put in front of.
   //
-  // The whole of `INTENTS` is available, which needs no exclusion list now that
-  // `flirty` is not in it. If it is ever added back, this line is one of the
-  // places that decision has to visit: everything a persona says is the
-  // operator's own speech (D-AI-11), already outside the s.79 safe harbour, and
-  // declaring sexual intent on the operator's behalf to a stranger of
-  // unverified age is not worth the realism.
-  const intent = rng.chance(DECLINE_CHANCE) ? null : rng.pick([...INTENTS]);
+  // Never `flirty`, and that is a decision rather than an omission — see
+  // `SAFE_INTENTS` above for why symmetry does not answer it here.
+  const intent = rng.chance(DECLINE_CHANCE) ? null : rng.pick([...SAFE_INTENTS]);
 
   // A generated age must satisfy the same rule a user's declaration does. The
   // character validator already enforces the range, so this is a second line
