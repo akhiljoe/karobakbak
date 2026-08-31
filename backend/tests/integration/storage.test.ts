@@ -114,6 +114,29 @@ describe('migrations', () => {
     ]);
   });
 
+  it('indexes the columns the console and the ban reload read by', async () => {
+    // Three queries used to scan a whole table each (F-035): the triage queue
+    // aggregating flags per report, `openReport` resolving a report's blocks,
+    // and the five-minute `reapplyActiveBans` pass. Nothing fails without
+    // these — the answers stay correct and only the cost moves — so a later
+    // schema change could drop one and no test would notice until a moderator
+    // was waiting on a screen that used to be quick.
+    const indexes = await ctx.rows<{ indexname: string; indexdef: string }>(
+      `select indexname, indexdef from pg_indexes where schemaname = $1`,
+      [ctx.schema],
+    );
+    const byName = new Map(indexes.map((row) => [row.indexname, row.indexdef]));
+
+    expect(byName.has('blocks_conversation_idx')).toBe(true);
+    expect(byName.has('moderation_events_conversation_idx')).toBe(true);
+
+    // Partial, and that is the half worth asserting. Without the predicate the
+    // index still answers the query and grows with every sanction ever issued,
+    // including the revoked ones the pass exists to skip — which is the same
+    // slow creep the index was added to remove.
+    expect(byName.get('enforcement_active_idx')).toMatch(/where \(revoked_at is null\)/i);
+  });
+
   it('keeps operator credentials out of the chat role', async () => {
     // The chat backend has no reason to read a password hash or a TOTP secret,
     // and a grant here would let a compromised chat process mint itself an
