@@ -342,7 +342,7 @@ export function App(): JSX.Element {
         conversation, which is the thing the comment in `Root.tsx` is promising
         does not exist.
       */}
-      {!showShell && <SiteFooter />}
+      {!showShell && <SiteFooter width="full" />}
 
       {/* Unmounted with its button: nothing can open it, so nothing renders it. */}
       {FILTERS_AVAILABLE && (

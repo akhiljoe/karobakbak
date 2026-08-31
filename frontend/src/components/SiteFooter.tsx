@@ -28,7 +28,7 @@
 
 import { NavItemLink, secondaryNav } from './SiteNav';
 
-export function SiteFooter(): JSX.Element {
+export function SiteFooter({ width = 'column' }: { width?: 'column' | 'full' }): JSX.Element {
   return (
     /*
      * Sticky to the bottom of whatever scrolls it, matching the header at the
@@ -41,17 +41,27 @@ export function SiteFooter(): JSX.Element {
      */
     <footer className="safe-pb sticky bottom-0 z-30 shrink-0 border-t border-ink-800/50 bg-ink-950/85 py-3.5 backdrop-blur-md short:py-2.5">
       {/*
-        `mx-auto w-full max-w-4xl px-5 sm:px-6` is copied from `SitePage`'s
-        header row on purpose: the first link then sits directly under the logo
-        above it.
+        The footer takes its **own shell's** gutter, because the two shells that
+        render it do not share one.
+        `SitePage` puts its header in a centred `max-w-4xl px-5` column, so the
+        column footer's first link sits directly under the logo. The landing and
+        chat shell puts its header edge to edge at `px-3 sm:px-6`, and the same
+        column there left the links starting a third of the way across from a
+        logo pinned to the left margin — a small clump adrift in a full-width
+        bar, which is the defect this footer already had once before and fixed
+        for the other shell.
         It used to be a centred `max-w-lg` cluster, which was fine while the
-        footer scrolled past at the end of a document. Pinned, it became a
-        full-width bar with a small clump of links floating in the middle — the
-        same defect `EditorialFooter` had, reached from the same cause.
+        footer scrolled past at the end of a document rather than being pinned.
+        Spreading the links edge to edge with `justify-between` was the other
+        option and is worse: five short words strung across a wide screen stop
+        reading as one set, and the last of them lands under the settings
+        control in the header's corner.
       */}
       <nav
         aria-label="More"
-        className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-5 gap-y-1 px-5 text-sm text-ink-400 sm:px-6"
+        className={`flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink-400 ${
+          width === 'full' ? 'px-3 sm:px-6' : 'mx-auto w-full max-w-4xl px-5 sm:px-6'
+        }`}
       >
         {secondaryNav().map((item) => (
           <NavItemLink
