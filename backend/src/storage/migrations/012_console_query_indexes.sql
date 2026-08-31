@@ -1,0 +1,124 @@
+-- Indexes for the three console and enforcement queries that scan a whole
+-- table (F-035).
+--
+-- No new tables, no new columns, no behaviour change. Three indexes that the
+-- queries in `admin/review.ts` and `admin/enforce.ts` have always needed and
+-- have never had.
+--
+-- ---------------------------------------------------------------------------
+-- WHY 012 AND NOT 010
+-- ---------------------------------------------------------------------------
+-- `migrations-pending/` reserves `010_accounts.sql` and `011_payments.sql`.
+-- They are staged rather than applied, they are named in
+-- `docs/policies/PENDING-PAYMENTS.md`, and `scripts/verify-pending-policy.mjs`
+-- asserts that patch still matches the documents it edits — so renumbering them
+-- to make room here would break a guard for no gain.
+--
+-- The ledger is keyed on filename, not on order, so the gap costs nothing. A
+-- database that gets payments later applies 010 and 011 after this one, and a
+-- fresh database applies all three in name order. Neither ordering matters:
+-- nothing below touches a table those two create.
+--
+-- ---------------------------------------------------------------------------
+-- WHY NOT `CREATE INDEX CONCURRENTLY`
+-- ---------------------------------------------------------------------------
+-- Because the runner cannot. `migrate.ts` applies each file inside a
+-- transaction, deliberately — the schema change and its ledger row are written
+-- together so the two can never disagree — and `CONCURRENTLY` is refused inside
+-- a transaction block.
+--
+-- That is the right trade at this size. A plain `create index` takes an ACCESS
+-- EXCLUSIVE lock for the duration of the build, which on the row counts this
+-- schema currently holds is milliseconds. If these tables are ever large enough
+-- for that lock to matter, build the index by hand with `CONCURRENTLY` outside
+-- the runner first; `if not exists` then makes this migration a no-op rather
+-- than a second build.
+--
+-- ---------------------------------------------------------------------------
+-- 1. blocks (conversation_id)
+-- ---------------------------------------------------------------------------
+-- `blocks` is indexed on the pair it is read by during matchmaking
+-- (`blocker_key, blocked_key`) and on its expiry. Nothing indexes the column
+-- the console reads it by.
+--
+-- Two paths need it, and both are moderator-facing:
+--
+--   * `enforce.ts` `issueBanForReport` joins blocks to the report to resolve the
+--     subject on the server — the join that exists precisely so no console route
+--     may name its own ban target (§25.3).
+--   * `review.ts` `openReport` selects the dimensions and keys for the report
+--     being opened.
+--
+-- So every report opened and every ban issued sequentially scans this table.
+create index if not exists blocks_conversation_idx on blocks (conversation_id);
+
+-- ---------------------------------------------------------------------------
+-- 2. moderation_events (conversation_id)
+-- ---------------------------------------------------------------------------
+-- `moderation_events` is indexed by `message_id` and by expiry. The triage
+-- queue reads it by conversation, in a correlated subquery — one aggregate per
+-- report returned, each one a full scan of every moderation event ever
+-- recorded.
+--
+-- This is the worst of the three in shape: the cost is (reports listed ×
+-- events retained), so it degrades on two axes at once, and it degrades on the
+-- screen a moderator opens first.
+create index if not exists moderation_events_conversation_idx
+  on moderation_events (conversation_id);
+
+-- ---------------------------------------------------------------------------
+-- 3. enforcement, the live sanctions
+-- ---------------------------------------------------------------------------
+-- `reapplyActiveBans` runs every `ENFORCEMENT_RELOAD_INTERVAL_MS` — five
+-- minutes by default — for the life of the process, because Redis holds no
+-- persistence (D12) and every ban key dies with a restart. It is the pass that
+-- keeps a sanction from being quietly temporary (D31).
+--
+-- It reads the live ones: `revoked_at is null` and an `expires_at` still in the
+-- future. `enforcement` is indexed on `subject_key` and on `retention_expires_at`,
+-- neither of which helps, so the pass scans the table.
+--
+-- The table only grows — revoked and long-expired rows stay until retention
+-- collects them — so this is a scan whose cost rises forever, on a timer, in
+-- the chat process.
+--
+-- Partial rather than plain, on both counts that matter:
+--
+--   * `where revoked_at is null` keeps revoked history out of the index
+--     entirely, so the index stays proportional to live sanctions rather than
+--     to every sanction ever issued.
+--   * `expires_at` as the key gives the range scan that excludes the expired
+--     ones.
+--
+-- `action` is deliberately not in it. The predicate is `action = any(...)` over
+-- `{ban, suspend}`, which is both actions this build can actually carry out —
+-- so it selects essentially every row and would earn nothing as a leading
+-- column.
+--
+-- The second query in that same pass — the one counting live sanctions this
+-- build cannot enforce — shares the `revoked_at is null` predicate and uses
+-- this index too. Its `expires_at is null or expires_at > $2` does not stop it:
+-- the planner splits the disjunction into a BitmapOr over two scans of this
+-- index, one per branch. Checked rather than assumed, because the `is null`
+-- branch looked like the reason it would fall back to a scan.
+create index if not exists enforcement_active_idx on enforcement (expires_at)
+  where revoked_at is null;
+
+-- ---------------------------------------------------------------------------
+-- MEASURED, NOT ASSUMED
+-- ---------------------------------------------------------------------------
+-- `explain (analyze)` against PostgreSQL 16 with 20k conversations, 60k
+-- moderation events, 40k blocks and 30k enforcement rows of which 40 are live —
+-- the shape this schema reaches after a few months, not a stress test:
+--
+--   triage queue        167.963 ms -> 3.284 ms   seq scan per report -> bitmap
+--   openReport blocks     3.273 ms -> 0.119 ms   39,998 rows filtered -> 2 read
+--   reapplyActiveBans     3.501 ms -> 0.066 ms   30,000 rows filtered -> 0
+--
+-- The first is the one that matters and it is superlinear in the wrong way: the
+-- subquery scanned every moderation event once per report listed, so the cost
+-- rose with reports × events. It is now a bitmap lookup per report.
+--
+-- Cost of carrying them, at those row counts: 984 kB, 1152 kB and 152 kB. The
+-- enforcement index stays small because it is partial — revoked history is not
+-- in it at all, which is the point.
