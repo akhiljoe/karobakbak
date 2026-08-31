@@ -23,7 +23,7 @@
  */
 import type { Config } from '../config';
 import type { Logger } from '../logger';
-import type { Identity, MatchedPayload, Profile } from '../protocol/types';
+import type { Identity, MatchedPayload, MatchPreferences, Profile } from '../protocol/types';
 import type {
   ResumeSessionResult,
   BlockPartnerResult,
@@ -64,6 +64,7 @@ export interface LifecycleStore {
   closeSession(sessionId: string, ipHash: string, holdSeat?: boolean): Promise<CloseSessionResult>;
   joinQueue(sessionId: string, segment: string): Promise<JoinQueueResult>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
+  setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void>;
   resumeSession(
     presentedHash: string,
     replacementHash: string,
@@ -354,14 +355,23 @@ export class SessionLifecycle {
   }
 
   /** Preserves I3 and D4: the caller is queued before anything scans. */
-  async joinQueue(sessionId: string, profile?: Profile): Promise<SearchOutcome> {
+  async joinQueue(
+    sessionId: string,
+    profile?: Profile,
+    preferences?: MatchPreferences,
+  ): Promise<SearchOutcome> {
     // Written before the queue is joined, so a session can never be matched in
     // the window between entering the queue and its profile landing — the
     // partner would be shown a stale declaration or none at all.
+    //
+    // The preference has the same ordering requirement for a different reason:
+    // queued first and it could be matched by its own ordinary rules before the
+    // thing it is paying for has landed.
     if (profile !== undefined) {
       await this.store.setProfile(sessionId, profile);
       this.observer?.profileDeclared(profile.gender ?? 'none');
     }
+    if (preferences !== undefined) await this.store.setPreferences(sessionId, preferences);
     const joined = await this.store.joinQueue(sessionId, this.segment);
     switch (joined.status) {
       case 'session_gone':

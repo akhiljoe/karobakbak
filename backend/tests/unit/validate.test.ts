@@ -2,6 +2,7 @@ import {
   parseClientFrame,
   validateMessageText,
   validateProfile,
+  validatePreferences,
   validateReportNote,
 } from '../../src/protocol/validate';
 import {
@@ -51,6 +52,7 @@ describe('parseClientFrame — envelope', () => {
         clientId: null,
         // Absent, null and every-field-declined all normalise to one shape.
         profile: { name: null, country: null, age: null, gender: null, vibe: null },
+        preferences: { genders: [], countries: [], vibes: [] },
       },
     });
   });
@@ -767,6 +769,7 @@ describe('validateProfile', () => {
         type: 'join_queue',
         clientId: null,
         profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'deep' },
+        preferences: { genders: [], countries: [], vibes: [] },
       },
     });
   });
@@ -782,5 +785,89 @@ describe('validateProfile', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('AGE_BELOW_MINIMUM');
+  });
+});
+
+/**
+ * The preference is client-supplied and reaches a Redis script's membership
+ * test, so it is validated like every other thing a stranger types (D44, §29).
+ */
+describe('validatePreferences', () => {
+  it('treats absent and null as no preference at all', () => {
+    expect(validatePreferences(undefined)).toEqual({
+      ok: true,
+      preferences: { genders: [], countries: [], vibes: [] },
+    });
+    expect(validatePreferences(null)).toEqual({
+      ok: true,
+      preferences: { genders: [], countries: [], vibes: [] },
+    });
+  });
+
+  it('accepts values from the closed lists, in every dimension', () => {
+    expect(
+      validatePreferences({ genders: ['female'], countries: ['IN'], vibes: ['chill', 'deep'] }),
+    ).toEqual({
+      ok: true,
+      preferences: { genders: ['female'], countries: ['IN'], vibes: ['chill', 'deep'] },
+    });
+  });
+
+  it('refuses an unknown value rather than dropping it', () => {
+    // Dropping half of what somebody asked for produces a search that does not
+    // do what they set, with nothing anywhere saying so — and they may have
+    // paid for it.
+    for (const bad of [
+      { genders: ['woman'] },
+      { countries: ['ZZ'] },
+      { vibes: ['spicy'] },
+      { genders: [42] },
+    ]) {
+      const result = validatePreferences(bad);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('refuses a dimension that is not an array, and one that is too long', () => {
+    expect(validatePreferences({ genders: 'female' }).ok).toBe(false);
+    expect(validatePreferences({ countries: Array(9).fill('IN') }).ok).toBe(false);
+  });
+
+  it('collapses duplicates', () => {
+    // They lengthen the string the script substring-searches once per candidate
+    // per attempt, and change nothing about what was asked for.
+    const result = validatePreferences({ genders: ['female', 'female', 'male'] });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.preferences.genders).toEqual(['female', 'male']);
+  });
+
+  it('rides along on a join_queue frame', () => {
+    const result = parseClientFrame(
+      frame({
+        type: 'join_queue',
+        payload: { preference: { genders: ['female'], vibes: ['chill'] } },
+      }),
+      false,
+      limits,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      command: {
+        type: 'join_queue',
+        preferences: { genders: ['female'], countries: [], vibes: ['chill'] },
+      },
+    });
+  });
+
+  it('fails the whole join when the preference is bad', () => {
+    // Not a partial accept: a join that silently ignored the preference would
+    // look identical to one that honoured it and found nobody.
+    const result = parseClientFrame(
+      frame({ type: 'join_queue', payload: { preference: { genders: ['woman'] } } }),
+      false,
+      limits,
+    );
+    expect(result.ok).toBe(false);
   });
 });

@@ -306,6 +306,45 @@ export const GENDERS = ['female', 'male', 'nonbinary', 'other'] as const;
 export type Gender = (typeof GENDERS)[number];
 
 /**
+ * What a searcher would like their next partner to be (D44, §29).
+ *
+ * A **preference**, never a filter: if nobody in view matches, the search takes
+ * an ordinary partner on the same pass rather than waiting. Every field is
+ * optional and an absent one is simply not scored.
+ *
+ * Carried on `join_queue` and stored on the session, exactly like the profile
+ * and for the same reason (D34): a preference the server kept against a durable
+ * identifier would be a cross-session record of what somebody looks for, which
+ * §24.3 forbids as firmly as it forbids keeping the profile. It dies with the
+ * session and the browser re-sends it.
+ *
+ * A join carries the **whole** preference. A field the client stops sending is
+ * cleared, because there is no partial update — the same rule the profile
+ * follows.
+ */
+export interface MatchPreferences {
+  /** Values from `GENDERS`. */
+  genders: string[];
+  /** Codes from `COUNTRY_CODES`. */
+  countries: string[];
+  /** Values from `VIBES`. */
+  vibes: string[];
+}
+
+/** No preference at all, which is what every free session sends. */
+export const EMPTY_PREFERENCES: MatchPreferences = { genders: [], countries: [], vibes: [] };
+
+/**
+ * How many values one dimension may carry.
+ *
+ * Bounded because the list becomes a comma-joined string on a Redis hash and is
+ * substring-searched once per candidate per attempt. Four is already every
+ * gender and every vibe, so this only binds on country — where asking for
+ * fifty is not a preference, it is an absence of one expressed at length.
+ */
+export const MAX_PREFERENCE_VALUES = 8;
+
+/**
  * The vibes a user may declare.
  *
  * A closed list for the same reason `GENDERS` is one: a free-text mood field is

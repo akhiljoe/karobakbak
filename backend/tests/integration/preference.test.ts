@@ -15,7 +15,9 @@
  */
 import { createTestContext, enqueue, fakeHash, type TestContext } from '../helpers/redis';
 import { newMatchId } from '../../src/util/ids';
-import { EMPTY_PROFILE } from '../../src/protocol/types';
+import { EMPTY_PREFERENCES, EMPTY_PROFILE } from '../../src/protocol/types';
+import type { MatchPreferences } from '../../src/protocol/types';
+import type { TryMatchResult } from '../../src/redis/store';
 
 let ctx: TestContext;
 
@@ -35,6 +37,22 @@ afterAll(async () => {
   await ctx.close();
 });
 
+/**
+ * Set the preference, then search — the order production uses.
+ *
+ * The preference is not an argument to the search: it lives on the session
+ * hash, written at join, and `tryMatch` reads it from the caller's own row.
+ * Passing it per attempt would let a test exercise a path no client can reach.
+ */
+async function matchWith(
+  c: TestContext,
+  searcher: string,
+  prefer: Partial<MatchPreferences>,
+): Promise<TryMatchResult> {
+  await c.store.setPreferences(searcher, { ...EMPTY_PREFERENCES, ...prefer });
+  return c.store.tryMatch(searcher, c.segment, newMatchId());
+}
+
 /** A queued session that has declared a gender, or declared nothing. */
 async function waiting(gender: string | null): Promise<string> {
   const sid = await ctx.session();
@@ -53,7 +71,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
 
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: preferred });
     expect(result).toMatchObject({ preference: { preferred: true } });
@@ -70,7 +88,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: first });
   });
 
@@ -79,7 +97,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       genders: ['female', 'nonbinary'],
     });
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: nb });
@@ -93,7 +111,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['male'] });
+    const result = await matchWith(ctx, searcher, { genders: ['male'] });
 
     // Matched — because a preference falls back — but explicitly NOT as a
     // preferred match.
@@ -114,7 +132,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
 
     expect(result).toMatchObject({
       status: 'matched',
@@ -129,7 +147,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
     expect(result).toMatchObject({
       status: 'matched',
       partnerSessionId: undeclared,
@@ -141,7 +159,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
     expect(result).toMatchObject({
       status: 'waiting',
       queueDepth: 1,
@@ -173,7 +191,7 @@ describe('a block outranks a preference', () => {
     await enqueue(ctx, blocked);
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
     // One, not two. Nothing preferred is findable, so the wider pass runs and
     // draws an overlapping sample -- the script tracks what it has already
     // considered so this candidate is counted once. Without that the counters
@@ -210,7 +228,7 @@ describe('escalating the sample', () => {
       const searcher = await narrow.session();
       await enqueue(narrow, searcher);
 
-      const result = await narrow.store.tryMatch(searcher, narrow.segment, newMatchId(), { genders: ['female'] });
+      const result = await matchWith(narrow, searcher, { genders: ['female'] });
 
       expect(result).toMatchObject({
         status: 'matched',
@@ -228,7 +246,7 @@ describe('escalating the sample', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
+    const result = await matchWith(ctx, searcher, { genders: ['female'] });
     // The second look costs a round trip through the pool and is only worth
     // paying for when the first one missed.
     expect(result).toMatchObject({ preference: { preferred: true, widened: false } });
@@ -254,7 +272,7 @@ describe('the feature flag', () => {
       const searcher = await off.session();
       await enqueue(off, searcher);
 
-      const result = await off.store.tryMatch(searcher, off.segment, newMatchId(), { genders: ['female'] });
+      const result = await matchWith(off, searcher, { genders: ['female'] });
 
       expect(result).toMatchObject({
         status: 'matched',
@@ -327,7 +345,7 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       genders: ['female'],
       countries: ['IN'],
       vibes: ['chill'],
@@ -350,7 +368,7 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       genders: ['female'],
       countries: ['IN'],
       vibes: ['chill'],
@@ -371,7 +389,7 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       genders: ['female'],
       countries: ['IN'],
       vibes: ['chill'],
@@ -393,7 +411,7 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       countries: ['IN'],
     });
     expect(result).toMatchObject({
@@ -409,7 +427,7 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       vibes: ['chill'],
     });
     expect(result).toMatchObject({
@@ -428,11 +446,72 @@ describe('scoring across gender, country and vibe', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+    const result = await matchWith(ctx, searcher, {
       genders: ['female'],
       countries: ['IN'],
       vibes: ['chill'],
     });
     expect(result).toMatchObject({ preference: { score: 4, widened: false } });
+  });
+});
+
+describe('the preference the client sent', () => {
+  it('survives a skip and an auto-search, because it lives on the session', async () => {
+    // A skip re-enters the queue carrying no profile and no preference: nothing
+    // the user asked for changed. If the preference were an argument to the
+    // search rather than session state, it would silently stop applying the
+    // moment somebody pressed next — which is the first thing they do.
+    const preferred = await waiting('female');
+    const searcher = await ctx.session();
+    await ctx.store.setPreferences(searcher, { ...EMPTY_PREFERENCES, genders: ['female'] });
+
+    await enqueue(ctx, searcher);
+    const first = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId());
+    expect(first).toMatchObject({ partnerSessionId: preferred, preference: { score: 4 } });
+
+    // End it the way a skip does, then re-enter the queue with no new join
+    // frame — which is exactly what auto-search sends.
+    if (first.status !== 'matched') throw new Error('expected a match');
+    await ctx.store.endMatch(first.matchId);
+
+    const second = await waiting('female');
+    await enqueue(ctx, searcher);
+    const again = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId());
+    expect(again).toMatchObject({ partnerSessionId: second, preference: { score: 4 } });
+  });
+
+  it('is cleared by a join that stops asking for it', async () => {
+    // A join carries the whole preference, so a dimension the client stopped
+    // sending has to disappear. Left behind, it would keep steering matches the
+    // user believed they had turned off.
+    const searcher = await ctx.session();
+    await ctx.store.setPreferences(searcher, { ...EMPTY_PREFERENCES, genders: ['female'] });
+    await ctx.store.setPreferences(searcher, EMPTY_PREFERENCES);
+
+    const older = await waiting('male');
+    await waiting('female');
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId());
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: older,
+      preference: { score: 0, preferred: false },
+    });
+  });
+
+  it('is never written at all while the feature is off', async () => {
+    const off = await createTestContext({ FILTERS_ENABLED: 'false' });
+    try {
+      const searcher = await off.session();
+      await off.store.setPreferences(searcher, { ...EMPTY_PREFERENCES, genders: ['female'] });
+      const row = await off.store.readSession(searcher);
+      // Two guards, and this is the one about where the data comes from: the
+      // script's flag check is the other.
+      expect(row?.prefG).toBeUndefined();
+    } finally {
+      await off.flush();
+      await off.close();
+    }
   });
 });

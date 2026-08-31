@@ -421,8 +421,9 @@ return { 'OK' }
  * Attempt to pair the caller with someone already waiting.
  * KEYS: queue, session, user_match, matches, match(mid).
  * ARGV: prefix, sid, segment, mid, sampleK, matchTtl, sessionTtl,
- *       ipDimension, clientDimension, prefGender, wideSample, prefCountry,
- *       prefVibe.
+ *       ipDimension, clientDimension, preferenceEnabled, wideSample.
+ *
+ * The preference itself is read from the caller's session row, not passed in.
  *
  * Preserves I2, I3, I4, I5 and I12. Every branch that decides the caller is not
  * matchable removes it from the queue first, so an ABORT never leaves a stale
@@ -441,7 +442,7 @@ return { 'OK' }
 const tryMatch = define(
   'tryMatch',
   5,
-  13,
+  11,
   `
 local sid = ARGV[2]
 local seg = ARGV[3]
@@ -462,7 +463,12 @@ if redis.call('GET', KEYS[3]) then
   redis.call('SREM', KEYS[1], sid)
   return { 'ABORT', 'ALREADY_MATCHED' }
 end
-local mine = redis.call('HMGET', KEYS[2], 'state', 'ipHash', 'clientHash')
+-- The caller's own row, read once. The preference rides on it exactly as the
+-- profile does (D34): it is session-scoped, it dies with the session, and the
+-- browser re-sends it on every join. Reading it here rather than passing it in
+-- ARGV costs nothing, because this HMGET was already being issued.
+local mine = redis.call('HMGET', KEYS[2],
+  'state', 'ipHash', 'clientHash', 'prefG', 'prefC', 'prefV')
 if mine[1] ~= 'SEARCHING' then
   redis.call('SREM', KEYS[1], sid)
   return { 'ABORT', 'NOT_SEARCHING' }
@@ -491,12 +497,17 @@ local best = nil
 local bestAt = nil
 local bestScore = -1
 
--- Comma-wrapped by the caller, so a plain substring test cannot match a partial
+-- Comma-wrapped when written, so a plain substring test cannot match a partial
 -- value. An unwrapped 'male' would match inside 'female'.
-local prefGender  = ARGV[10]
+--
+-- Read through the flag rather than merely refused at write time. Off has to
+-- mean off for a session that was queued while it was on, which is what an
+-- operator toggling the flag actually produces.
+local prefOn      = ARGV[10] == '1'
 local wide        = tonumber(ARGV[11]) or 0
-local prefCountry = ARGV[12]
-local prefVibe    = ARGV[13]
+local prefGender  = prefOn and (mine[4] or '') or ''
+local prefCountry = prefOn and (mine[5] or '') or ''
+local prefVibe    = prefOn and (mine[6] or '') or ''
 
 local function listed(pref, v)
   if pref == '' or not v or v == '' then return false end

@@ -10,7 +10,7 @@
 import type { Redis } from 'ioredis';
 
 import type { Config, RateLimitedCommand } from '../config';
-import type { Profile, SessionState } from '../protocol/types';
+import type { MatchPreferences, Profile, SessionState } from '../protocol/types';
 import type { RedisKeys } from './keys';
 import { ScriptRunner, type ScriptReply } from './scripts';
 
@@ -65,19 +65,6 @@ export interface PreferenceOutcome {
   preferred: boolean;
   /** The ordinary sample held nothing at all, so the wider look was taken. */
   widened: boolean;
-}
-
-/**
- * What a searcher would like, in as many dimensions as they set.
- *
- * Every field is optional and an omitted one is simply not scored — this is a
- * preference, so "no country preference" and "no country matched" both end in
- * an ordinary match rather than in a wait (D44).
- */
-export interface MatchPreference {
-  readonly genders?: readonly string[];
-  readonly countries?: readonly string[];
-  readonly vibes?: readonly string[];
 }
 
 function preferenceOutcome(score: number, widened: number): PreferenceOutcome {
@@ -566,19 +553,7 @@ export class RedisStore {
    * be a plain substring find with no pattern semantics: `,male,` must not be
    * found inside `,female,`.
    */
-  async tryMatch(
-    sessionId: string,
-    segment: string,
-    matchId: string,
-    prefer: MatchPreference = {},
-  ): Promise<TryMatchResult> {
-    // Wrapped here rather than in Lua so the script's membership test can be a
-    // plain substring find with no pattern semantics: `,male,` must not be
-    // found inside `,female,`.
-    const wrap = (values: readonly string[] | undefined): string =>
-      this.config.preference.enabled && values !== undefined && values.length > 0
-        ? `,${values.join(',')},`
-        : '';
+  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
 
     const reply = await this.runner.run(
       'tryMatch',
@@ -599,10 +574,8 @@ export class RedisStore {
         this.sessionTtl,
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
-        wrap(prefer.genders),
+        this.config.preference.enabled ? '1' : '0',
         this.config.preference.wideSample,
-        wrap(prefer.countries),
-        wrap(prefer.vibes),
       ],
     );
     const status = str(reply, 0);
@@ -883,6 +856,44 @@ export class RedisStore {
     else clear.push('pGender');
     if (profile.vibe !== null) set.push('pVibe', profile.vibe);
     else clear.push('pVibe');
+
+    const pipeline = this.client.pipeline();
+    if (set.length > 0) pipeline.hset(key, ...set);
+    if (clear.length > 0) pipeline.hdel(key, ...clear);
+    await pipeline.exec();
+  }
+
+  /**
+   * Store what a session is looking for, on the session hash beside its profile.
+   *
+   * Comma-wrapped here rather than in Lua so the script's membership test can be
+   * a plain substring find with no pattern semantics: `,male,` must not be found
+   * inside `,female,`.
+   *
+   * Written whole and cleared field by field, the same rule the profile follows:
+   * a join carries the entire preference, so a dimension the client stopped
+   * sending has to disappear rather than linger and keep steering matches the
+   * user thought they had stopped asking for.
+   *
+   * Refused entirely while the feature is off, so a session queued before an
+   * operator switched it on carries nothing. The script checks the flag too —
+   * one guard is where the data comes from, the other is what reads it.
+   */
+  async setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void> {
+    const key = this.keys.session(sessionId);
+    const set: string[] = [];
+    const clear: string[] = [];
+
+    const put = (field: string, values: readonly string[]): void => {
+      if (this.config.preference.enabled && values.length > 0) {
+        set.push(field, `,${values.join(',')},`);
+      } else {
+        clear.push(field);
+      }
+    };
+    put('prefG', preferences.genders);
+    put('prefC', preferences.countries);
+    put('prefV', preferences.vibes);
 
     const pipeline = this.client.pipeline();
     if (set.length > 0) pipeline.hset(key, ...set);

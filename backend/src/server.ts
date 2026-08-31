@@ -921,10 +921,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // Null when there is no CDN in front, which is every laptop. The field
         // is simply absent then, exactly as it was when somebody declined to
         // pick one.
-        const outcome = await lifecycle.joinQueue(connection.sessionId, {
-          ...command.profile,
-          country: connection.country,
-        });
+        const outcome = await lifecycle.joinQueue(
+          connection.sessionId,
+          { ...command.profile, country: connection.country },
+          // Validated against the same closed lists the profile fields use, and
+          // refused rather than trimmed when it names something unknown.
+          command.preferences,
+        );
         replyToSearch(connection, outcome);
         return;
       }
