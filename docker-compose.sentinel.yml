@@ -1,0 +1,172 @@
+# A real Redis failover topology, for proving a promotion actually happens
+# (F-033, D13).
+#
+#   docker compose -f docker-compose.sentinel.yml up -d
+#   docker compose -f docker-compose.sentinel.yml down -v
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS IS FOR, AND WHAT IT IS NOT
+# ---------------------------------------------------------------------------
+# It is a drill rig. `docs/OPERATIONS.md` §14 walks through stopping the primary
+# and watching a replica take over, which is the only way to find out whether
+# the failover you are paying for works before the night it has to.
+#
+# It is **not** the production topology and must never be pointed at as one:
+# every node here is a container on one host, so the machine dying takes the
+# primary, the replica and all three Sentinels with it. That buys protection
+# against a Redis process crashing and nothing else, and the failure that
+# actually takes this service down is the host. A replica earns its cost only on
+# a second machine.
+#
+# ---------------------------------------------------------------------------
+# STATIC ADDRESSES, AND THE FAILED DRILL THAT PUT THEM HERE
+# ---------------------------------------------------------------------------
+# The first version of this file monitored the primary by container name, with
+# `sentinel resolve-hostnames yes`. It formed a quorum correctly and looked
+# right. Then the drill stopped the primary and **no failover happened at all**
+# -- forty seconds, three Sentinels, quorum satisfied, replica still a replica.
+#
+# The logs said why:
+#
+#   # Failed to resolve hostname 'redis-primary'
+#   # +tilt #tilt mode entered
+#
+# Stopping a container removes it from Docker's embedded DNS, so the name stops
+# resolving entirely. Sentinel's lookup blocks, the resulting latency spike
+# looks to Sentinel like its own clock jumped, and it enters TILT -- a safety
+# mode where it deliberately stops acting because it no longer trusts its own
+# timing. It never votes, so nothing is ever promoted, and the visible symptom
+# is not an error but *silence*.
+#
+# The same trap is reachable in production wherever Sentinel is given a name
+# that disappears with the thing it names. Static addresses take DNS out of the
+# failure path, which is why the monitor line below is an address.
+#
+# ---------------------------------------------------------------------------
+# WHY THE INTEGRATION SUITE DOES NOT DRIVE THIS
+# ---------------------------------------------------------------------------
+# Sentinel does not hand a client an address to connect to -- it hands out the
+# address the primary is known by on this network. Jest runs on the host, which
+# is not on this network, so a host-side test would be exercising a NAT
+# workaround rather than the failover. The workarounds differ per platform and
+# would quietly stop reflecting the deployment.
+#
+# So the split is deliberate: the unit tests assert the thing that was actually
+# broken -- which constructor shape the client is built with, in
+# `tests/unit/redis-client.test.ts` -- and the promotion itself is a documented
+# drill run against this file.
+#
+# Its own project name, so `docker compose down` on any other stack cannot take
+# these with it.
+name: karobakbak-sentinel
+
+# The flags below are production's (D12): no RDB, no AOF. Live state is
+# reconstructible, and keeping persistence off is what guarantees no Redis
+# structure -- a Pub/Sub payload carrying message text included -- reaches disk.
+#
+# Replication does not weaken that, and this is where the question comes up: a
+# replica holds the same keys in *memory*, streamed over the network, and writes
+# nothing down. The reason D12 exists survives a replica intact. It is also why
+# a failover is gentler than a restart -- the promoted node already has the
+# sessions, where a restarted one comes back empty.
+#
+# Written out twice rather than shared through an anchor: a YAML anchor cannot
+# be spliced into a list, and nesting one inside the other is rejected with a
+# message that does not say so.
+
+networks:
+  sentinel:
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24
+
+services:
+  redis-primary:
+    image: redis:7-alpine
+    container_name: karobakbak-redis-primary
+    command:
+      ["redis-server", "--save", "", "--appendonly", "no",
+       "--maxmemory-policy", "noeviction", "--protected-mode", "no"]
+    networks:
+      sentinel:
+        ipv4_address: 172.31.240.11
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    ports:
+      # Loopback only, on ports no other stack in this repository uses, so a
+      # drill cannot be run against the development Redis by accident.
+      - "127.0.0.1:6390:6379"
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: karobakbak-redis-replica
+    command:
+      ["redis-server", "--save", "", "--appendonly", "no",
+       "--maxmemory-policy", "noeviction", "--protected-mode", "no",
+       "--replicaof", "172.31.240.11", "6379"]
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    networks:
+      sentinel:
+        ipv4_address: 172.31.240.12
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    ports:
+      - "127.0.0.1:6391:6379"
+
+  # Three, because a quorum has to survive losing one of its members. Two is the
+  # worst possible number: losing either leaves the other short of a majority,
+  # so nothing is ever promoted and the topology is strictly worse than the
+  # single node it replaced. `configWarnings` says so at startup.
+  #
+  # Sentinel rewrites its own configuration as it learns the topology, so the
+  # file cannot be a read-only mount. Writing it at startup keeps this to one
+  # file with no sidecar config to drift out of step.
+  sentinel-1: &sentinel
+    image: redis:7-alpine
+    container_name: karobakbak-sentinel-1
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        cat > /tmp/sentinel.conf <<'CONF'
+        port 26379
+        sentinel monitor karobakbak 172.31.240.11 6379 2
+        sentinel down-after-milliseconds karobakbak 2000
+        sentinel failover-timeout karobakbak 10000
+        sentinel parallel-syncs karobakbak 1
+        CONF
+        exec redis-sentinel /tmp/sentinel.conf
+    networks:
+      sentinel:
+        ipv4_address: 172.31.240.21
+    ports:
+      - "127.0.0.1:26379:26379"
+
+  sentinel-2:
+    <<: *sentinel
+    container_name: karobakbak-sentinel-2
+    networks:
+      sentinel:
+        ipv4_address: 172.31.240.22
+    ports:
+      - "127.0.0.1:26380:26379"
+
+  sentinel-3:
+    <<: *sentinel
+    container_name: karobakbak-sentinel-3
+    networks:
+      sentinel:
+        ipv4_address: 172.31.240.23
+    ports:
+      - "127.0.0.1:26381:26379"
