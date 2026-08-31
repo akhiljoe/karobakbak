@@ -21,7 +21,6 @@
  * package — the message came from a stranger and is treated as data.
  */
 import { useEffect, useRef, useState } from 'react';
-import { SmilePlus } from 'lucide-react';
 
 import { REACTIONS } from '../protocol/types';
 
@@ -299,6 +298,23 @@ function Bubble({
           // double-tap as dblclick, so one handler serves the gesture people
           // already expect from every other chat app.
           onDoubleClick={offer ? () => send(DEFAULT_REACTION) : undefined}
+          // The keyboard path, with no control of its own: the bubble takes
+          // focus and Enter opens the same picker hover and long-press open.
+          // A visible button sitting under every message was clutter for a
+          // feature most people reach by gesture.
+          tabIndex={offer ? 0 : undefined}
+          role={offer ? 'button' : undefined}
+          aria-label={offer ? 'Message — press Enter to react' : undefined}
+          onKeyDown={
+            offer
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setPicking((open) => !open);
+                  }
+                }
+              : undefined
+          }
           onTouchStart={startHold}
           onTouchEnd={cancelHold}
           onTouchMove={moveHold}
@@ -351,26 +367,6 @@ function Bubble({
         <span className="mt-1 flex items-center gap-1.5 px-1 text-[0.65rem] text-ink-500">
           <time dateTime={message.at}>{formatTime(message.at)}</time>
           {mine ? <MessageStatus status={message.status} /> : null}
-          {/*
-            The keyboard path to the same picker. Hover opens it for a pointer
-            and a long press opens it on touch; neither is reachable from a
-            keyboard, and a feature only some people can use is worse than one
-            nobody can.
-          */}
-          {offer && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setPicking((open) => !open);
-              }}
-              aria-label="React to this message"
-              aria-expanded={picking}
-              className="-m-2 touch-manipulation rounded p-2 text-ink-600 opacity-0 transition-opacity focus-visible:opacity-100"
-            >
-              <SmilePlus className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          )}
         </span>
       </div>
     </li>
