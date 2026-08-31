@@ -116,7 +116,26 @@ services:
       # The public origin, exactly: scheme, host and port. An empty allowlist
       # is a startup failure in production (R9).
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin, e.g. https://karobakbak.com}"
-      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      # How this process reaches Redis (D13). One of two shapes, never both --
+      # the backend refuses to start if REDIS_URL and REDIS_SENTINELS are set
+      # together, because the file would then claim one topology while the
+      # process used the other.
+      #
+      # `${REDIS_URL-...}` is a single dash on purpose: it substitutes the
+      # default only when the variable is *unset*, so an operator moving to
+      # Sentinel blanks it with a bare `REDIS_URL=` in the environment rather
+      # than having the default reappear and fail startup.
+      REDIS_URL: "${REDIS_URL-redis://redis:6379}"
+      # Empty means the single node above. Set both together, or neither: a
+      # half-specified topology is refused rather than quietly degraded, which
+      # is the whole point of the feature. Three sentinels minimum -- two cannot
+      # form a majority after losing one. See `docs/OPERATIONS.md` §17.
+      REDIS_SENTINELS: "${REDIS_SENTINELS-}"
+      REDIS_SENTINEL_NAME: "${REDIS_SENTINEL_NAME-}"
+      # Only if the nodes require AUTH. Separate credentials for separate
+      # processes; they are not interchangeable.
+      REDIS_PASSWORD: "${REDIS_PASSWORD-}"
+      REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
       DATABASE_URL: "${DATABASE_URL:?postgres connection string, from secret management}"
       DATABASE_SSL: "true"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
@@ -149,7 +168,26 @@ services:
       DATABASE_URL: "${MIGRATION_DATABASE_URL:?a migration credential, not the application's}"
       DATABASE_SSL: "true"
       DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
-      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      # How this process reaches Redis (D13). One of two shapes, never both --
+      # the backend refuses to start if REDIS_URL and REDIS_SENTINELS are set
+      # together, because the file would then claim one topology while the
+      # process used the other.
+      #
+      # `${REDIS_URL-...}` is a single dash on purpose: it substitutes the
+      # default only when the variable is *unset*, so an operator moving to
+      # Sentinel blanks it with a bare `REDIS_URL=` in the environment rather
+      # than having the default reappear and fail startup.
+      REDIS_URL: "${REDIS_URL-redis://redis:6379}"
+      # Empty means the single node above. Set both together, or neither: a
+      # half-specified topology is refused rather than quietly degraded, which
+      # is the whole point of the feature. Three sentinels minimum -- two cannot
+      # form a majority after losing one. See `docs/OPERATIONS.md` §17.
+      REDIS_SENTINELS: "${REDIS_SENTINELS-}"
+      REDIS_SENTINEL_NAME: "${REDIS_SENTINEL_NAME-}"
+      # Only if the nodes require AUTH. Separate credentials for separate
+      # processes; they are not interchangeable.
+      REDIS_PASSWORD: "${REDIS_PASSWORD-}"
+      REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
     logging: *logging
 
   redis:
