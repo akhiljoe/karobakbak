@@ -282,13 +282,17 @@ export const EMPTY_PROFILE: Profile = { name: null, country: null, age: null, ge
  * the field *is* "prefer not to say", so there is no option for it — an
  * explicit "prefer not to say" would be a fourth way of saying nothing.
  *
- * **Declared, not filterable.** No matchmaking path reads this today, and that
- * is deliberate rather than unfinished. A filter would make the value worth
- * lying about — the incentive is created by the filter, not the field — and a
- * paid "match me with X" control is a targeting tool aimed at whichever group
- * is filtered for. If filtering is ever built, it belongs behind the queue
- * segment seam (D23) and needs its own decision recorded, not a quiet change
- * here.
+ * **Declared, and now read by matchmaking as a preference** (D44, §29) — this
+ * paragraph used to say the opposite and was true until phase 18.
+ *
+ * It is a *preference* and never a filter: `tryMatch` takes a candidate who
+ * matches if one is in view and an ordinary candidate on the same pass if none
+ * is, so no seat is ever held. What that does not change is what the value is.
+ * It is still a claim typed by an anonymous stranger and verified by nothing,
+ * exactly as `age` is not age assurance (§26.4, D36), and D37's warning stands
+ * unmitigated: the day a preference can be bought, declaring a scarce value
+ * acquires cash value. Nothing here may be described to a user as more than
+ * "a higher chance".
  */
 export const GENDERS = ['female', 'male', 'nonbinary', 'other'] as const;
 export type Gender = (typeof GENDERS)[number];
