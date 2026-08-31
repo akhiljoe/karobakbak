@@ -268,6 +268,158 @@ describe('loadConfig — Redis layer settings', () => {
   });
 });
 
+/**
+ * The topology the process will use to reach Redis (F-033, D13).
+ *
+ * Every case here is about the same hazard, and it is not a crash: it is a
+ * configuration that *looks* like failover and silently is not. Redis holds all
+ * live matchmaking state and `/ready` is derived from its health alone, so the
+ * cost of getting this wrong is only ever paid on the day the primary dies —
+ * long after anyone could connect the outage to the setting that caused it.
+ *
+ * So the rule is that every half-specified topology throws at startup. None of
+ * them may fall back to a single node.
+ */
+describe('loadConfig — how Redis is reached (D13)', () => {
+  it('defaults to one node at a fixed address', () => {
+    const config = loadConfig(baseEnv());
+    expect(config.redis.sentinels).toEqual([]);
+    expect(config.redis.sentinelName).toBe('');
+    expect(config.redis.url).toBe('redis://localhost:6379');
+  });
+
+  it('parses a sentinel set into hosts and ports', () => {
+    const config = loadConfig(
+      baseEnv({
+        REDIS_URL: '',
+        REDIS_SENTINELS: 'sentinel-a:26379, sentinel-b:26379 ,sentinel-c:26380',
+        REDIS_SENTINEL_NAME: 'karobakbak',
+      }),
+    );
+    expect(config.redis.sentinels).toEqual([
+      { host: 'sentinel-a', port: 26379 },
+      { host: 'sentinel-b', port: 26379 },
+      { host: 'sentinel-c', port: 26380 },
+    ]);
+    expect(config.redis.sentinelName).toBe('karobakbak');
+  });
+
+  it('refuses sentinels without the primary name', () => {
+    // The one that would be most tempting to default. Sentinel is asked for a
+    // primary *by name*; without it there is nothing to ask, and quietly using
+    // REDIS_URL instead hands back the single node the operator was trying to
+    // stop depending on.
+    expect(() =>
+      loadConfig(baseEnv({ REDIS_URL: '', REDIS_SENTINELS: 'sentinel-a:26379' })),
+    ).toThrow(ConfigError);
+    expect(() =>
+      loadConfig(baseEnv({ REDIS_URL: '', REDIS_SENTINELS: 'sentinel-a:26379' })),
+    ).toThrow(/REDIS_SENTINEL_NAME/);
+  });
+
+  it('refuses a primary name with no sentinels to ask', () => {
+    expect(() =>
+      loadConfig(baseEnv({ REDIS_URL: '', REDIS_SENTINEL_NAME: 'karobakbak' })),
+    ).toThrow(/REDIS_SENTINELS/);
+  });
+
+  it('refuses a fixed address and a sentinel set together', () => {
+    // Not pedantry: this is the shape a half-finished migration leaves behind,
+    // and the file would then claim one topology while the process used the
+    // other.
+    expect(() =>
+      loadConfig(
+        baseEnv({
+          REDIS_URL: 'redis://localhost:6379',
+          REDIS_SENTINELS: 'sentinel-a:26379',
+          REDIS_SENTINEL_NAME: 'karobakbak',
+        }),
+      ),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('refuses a sentinel address that is not host:port', () => {
+    const bad = (value: string): (() => unknown) => () =>
+      loadConfig(
+        baseEnv({ REDIS_URL: '', REDIS_SENTINELS: value, REDIS_SENTINEL_NAME: 'karobakbak' }),
+      );
+
+    // A missing port is the interesting one. Defaulting it to 26379 would make
+    // a typo reachable-looking, and a Sentinel on the wrong port is
+    // indistinguishable from one that is down: the set still forms a quorum
+    // without it, still fails over, and hides the mistake until the day that
+    // Sentinel's vote was the one needed.
+    expect(bad('sentinel-a')).toThrow(/host:port/);
+    expect(bad('sentinel-a:')).toThrow(/host:port/);
+    expect(bad(':26379')).toThrow(/host:port/);
+    expect(bad('sentinel-a:notaport')).toThrow(/invalid port/);
+    expect(bad('sentinel-a:0')).toThrow(/invalid port/);
+    expect(bad('sentinel-a:70000')).toThrow(/invalid port/);
+  });
+
+  it('keeps the node and sentinel passwords apart', () => {
+    // Different processes, routinely different credentials. Conflating them
+    // authenticates against nothing and then fails at the first command, having
+    // connected successfully.
+    const config = loadConfig(
+      baseEnv({
+        REDIS_URL: '',
+        REDIS_SENTINELS: 'sentinel-a:26379',
+        REDIS_SENTINEL_NAME: 'karobakbak',
+        REDIS_PASSWORD: 'node-secret',
+        REDIS_SENTINEL_PASSWORD: 'sentinel-secret',
+      }),
+    );
+    expect(config.redis.password).toBe('node-secret');
+    expect(config.redis.sentinelPassword).toBe('sentinel-secret');
+  });
+
+  it('warns that a production single node is the one total failure', () => {
+    const warnings = configWarnings(
+      loadConfig(
+        baseEnv({
+          NODE_ENV: 'production',
+          IP_HASH_SALT: 'a-long-enough-production-salt-value',
+          ALLOWED_ORIGINS: 'https://karobakbak.example',
+        }),
+      ),
+    );
+    // A warning and not a startup failure: one Redis is the documented
+    // deployment (D13), so refusing to start would refuse the configuration the
+    // service actually runs today.
+    expect(warnings.join(' ')).toMatch(/REDIS_SENTINELS is empty/);
+  });
+
+  it('warns about a sentinel set too small to lose a member', () => {
+    const warnings = configWarnings(
+      loadConfig(
+        baseEnv({
+          REDIS_URL: '',
+          REDIS_SENTINELS: 'sentinel-a:26379,sentinel-b:26379',
+          REDIS_SENTINEL_NAME: 'karobakbak',
+        }),
+      ),
+    );
+    // Two is the worst case: losing either leaves the other short of a
+    // majority, so nothing is promoted and the topology is worse than the
+    // single node it replaced.
+    expect(warnings.join(' ')).toMatch(/fewer than three/);
+  });
+
+  it('does not warn about a three-sentinel set', () => {
+    const warnings = configWarnings(
+      loadConfig(
+        baseEnv({
+          REDIS_URL: '',
+          REDIS_SENTINELS: 'sentinel-a:26379,sentinel-b:26379,sentinel-c:26379',
+          REDIS_SENTINEL_NAME: 'karobakbak',
+        }),
+      ),
+    );
+    expect(warnings.join(' ')).not.toMatch(/REDIS_SENTINELS/);
+  });
+});
+
 describe('loadConfig — moderation', () => {
   it('applies the documented defaults', () => {
     const config = loadConfig(baseEnv());
