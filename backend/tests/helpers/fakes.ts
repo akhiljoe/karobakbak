@@ -42,7 +42,7 @@ export interface FakeSession {
 export class FakeStore implements LifecycleStore {
   readonly sessions = new Map<string, FakeSession>();
   readonly queue = new Set<string>();
-  readonly matches = new Map<string, { a: string; b: string; segment: string }>();
+  readonly matches = new Map<string, { a: string; b: string; segment: string; createdAtMs: number }>();
   readonly blocks = new Map<string, Set<string>>();
   readonly connSlots = new Map<string, Set<string>>();
 
@@ -77,7 +77,7 @@ export class FakeStore implements LifecycleStore {
   }
 
   seedMatch(matchId: string, a: string, b: string, segment = 'default'): void {
-    this.matches.set(matchId, { a, b, segment });
+    this.matches.set(matchId, { a, b, segment, createdAtMs: (this.clock += 1) });
     // The real `tryMatch` writes the match hash as part of creating the match,
     // so a match always has a record to write identities onto. The fake kept
     // the two apart, which was invisible while the identity write recreated
@@ -209,7 +209,12 @@ export class FakeStore implements LifecycleStore {
     return { status: 'ok' };
   }
 
-  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
+  async tryMatch(
+    sessionId: string,
+    segment: string,
+    matchId: string,
+    preferGenders: readonly string[] = [],
+  ): Promise<TryMatchResult> {
     this.tryMatchCalls.push(matchId);
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -233,13 +238,28 @@ export class FakeStore implements LifecycleStore {
       .filter((candidate) => !this.isBlocked(session, candidate))
       .sort((left, right) => left.enqueuedAt - right.enqueuedAt);
 
-    const best = candidates[0];
+    // Mirrors the script (D44, §29.2): the preferred pool and the ordinary one
+    // are tracked together, longest-waiting wins inside each, and a preference
+    // that finds nobody falls through on the same pass rather than waiting.
+    // The fake models no sample size, so it never has cause to widen.
+    const preferredPool =
+      preferGenders.length > 0
+        ? candidates.filter((candidate) => {
+            const gender = this.profiles.get(candidate.sessionId)?.gender ?? null;
+            return gender !== null && preferGenders.includes(gender);
+          })
+        : [];
+
+    const best = preferredPool[0] ?? candidates[0];
+    const preference = { preferred: preferredPool.length > 0, widened: false };
+
     if (!best) {
       return {
         status: 'waiting',
         cleaned: this.nextWaitingCleaned,
         blockedSkipped: this.nextWaitingBlockedSkipped,
         queueDepth: this.queue.size,
+        preference,
       };
     }
 
@@ -250,6 +270,7 @@ export class FakeStore implements LifecycleStore {
       partnerSessionId: best.sessionId,
       cleaned: 0,
       blockedSkipped: 0,
+      preference,
     };
   }
 
@@ -269,7 +290,13 @@ export class FakeStore implements LifecycleStore {
       }
       this.queue.delete(sid);
     }
-    return { status: 'ended', a: match.a, b: match.b, segment: match.segment };
+    return {
+      status: 'ended',
+      a: match.a,
+      b: match.b,
+      segment: match.segment,
+      createdAtMs: match.createdAtMs,
+    };
   }
 
   async blockPartner(sessionId: string): Promise<BlockPartnerResult> {

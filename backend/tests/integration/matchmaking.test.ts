@@ -119,7 +119,15 @@ describe('tryMatch', () => {
     const sid = await ctx.session();
     await enqueue(ctx, sid);
     const result = await ctx.store.tryMatch(sid, ctx.segment, newMatchId());
-    expect(result).toEqual({ status: 'waiting', cleaned: 0, blockedSkipped: 0, queueDepth: 1 });
+    expect(result).toEqual({
+      status: 'waiting',
+      cleaned: 0,
+      blockedSkipped: 0,
+      queueDepth: 1,
+      // No preference was asked for, so nothing was preferred and the wider
+      // sample was never reached (D44, §29.2).
+      preference: { preferred: false, widened: false },
+    });
     // Still queued: waiting is not a reason to leave.
     expect(await ctx.client.sismember(ctx.keys.queue(ctx.segment), sid)).toBe(1);
   });

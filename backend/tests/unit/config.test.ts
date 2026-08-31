@@ -420,6 +420,38 @@ describe('loadConfig — how Redis is reached (D13)', () => {
   });
 });
 
+/**
+ * Preference matching (D44, §29). Off by default, and the wider look has to be
+ * wider — a value below the ordinary sample reads as configured and silently
+ * does the opposite of its name.
+ */
+describe('loadConfig — preference matching (D44)', () => {
+  it('ships disabled, with the documented sample and limits', () => {
+    const config = loadConfig(baseEnv());
+    expect(config.preference).toEqual({
+      enabled: false,
+      wideSample: 32,
+      cooldownMs: 10_000,
+      hourlyBudget: 120,
+    });
+  });
+
+  it('refuses a wide sample that is not wider than the ordinary one', () => {
+    // Equal is refused too: an escalation that considers the same number of
+    // candidates is a second pass through the pool for nothing.
+    expect(() =>
+      loadConfig(baseEnv({ MATCH_CANDIDATE_SAMPLE: '32', PREFERENCE_WIDE_SAMPLE: '32' })),
+    ).toThrow(/PREFERENCE_WIDE_SAMPLE/);
+    expect(() =>
+      loadConfig(baseEnv({ MATCH_CANDIDATE_SAMPLE: '40', PREFERENCE_WIDE_SAMPLE: '32' })),
+    ).toThrow(ConfigError);
+    expect(
+      loadConfig(baseEnv({ MATCH_CANDIDATE_SAMPLE: '8', PREFERENCE_WIDE_SAMPLE: '9' })).preference
+        .wideSample,
+    ).toBe(9);
+  });
+});
+
 describe('loadConfig — moderation', () => {
   it('applies the documented defaults', () => {
     const config = loadConfig(baseEnv());

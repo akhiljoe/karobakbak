@@ -42,6 +42,21 @@ export type LeaveQueueResult =
 
 export type TryMatchAbortReason = 'session_gone' | 'already_matched' | 'not_searching';
 
+/**
+ * What the preference did on one attempt (D44, §29.6).
+ *
+ * Reported on both outcomes because the interesting question is not only "did
+ * the buyer get their preference" but "how hard did we have to look" — the
+ * number that decides whether the sample size is right, and the one nobody has
+ * because this service has never recorded what its pool is made of.
+ */
+export interface PreferenceOutcome {
+  /** A preferred candidate was found and taken. False means an ordinary match. */
+  preferred: boolean;
+  /** The ordinary sample held nobody preferred, so the wider look was taken. */
+  widened: boolean;
+}
+
 export type TryMatchResult =
   | {
       status: 'matched';
@@ -51,8 +66,15 @@ export type TryMatchResult =
       cleaned: number;
       /** Candidates left in the queue because a block applies to this searcher. */
       blockedSkipped: number;
+      preference: PreferenceOutcome;
     }
-  | { status: 'waiting'; cleaned: number; blockedSkipped: number; queueDepth: number }
+  | {
+      status: 'waiting';
+      cleaned: number;
+      blockedSkipped: number;
+      queueDepth: number;
+      preference: PreferenceOutcome;
+    }
   | { status: 'abort'; reason: TryMatchAbortReason };
 
 /**
@@ -65,7 +87,19 @@ export type TryMatchResult =
 export type SaveIdentitiesResult = { status: 'ok' } | { status: 'match_gone' };
 
 export type EndMatchResult =
-  | { status: 'ended'; a: string; b: string; segment: string }
+  | {
+      status: 'ended';
+      a: string;
+      b: string;
+      segment: string;
+      /**
+       * When the conversation started, so the caller can measure how long it
+       * lasted. Zero when the match row predates this field or carried no
+       * timestamp — the caller must treat zero as "unknown" and record nothing,
+       * rather than reporting a duration measured from the epoch.
+       */
+      createdAtMs: number;
+    }
   | { status: 'already_ended' };
 
 export type ResumeSessionResult =
@@ -492,8 +526,29 @@ export class RedisStore {
     }
   }
 
-  /** Preserves I2, I3, I4, I5 and I12. */
-  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
+  /**
+   * Preserves I2, I3, I4, I5 and I12.
+   *
+   * `preferGenders` is a **preference and never a filter** (D44): if nobody in
+   * view matches it, this returns an ordinary match on the same pass. An empty
+   * list is the ordinary path and costs nothing — the script skips both the
+   * membership test and the wider sample.
+   *
+   * The list is comma-wrapped here rather than in Lua so the script's test can
+   * be a plain substring find with no pattern semantics: `,male,` must not be
+   * found inside `,female,`.
+   */
+  async tryMatch(
+    sessionId: string,
+    segment: string,
+    matchId: string,
+    preferGenders: readonly string[] = [],
+  ): Promise<TryMatchResult> {
+    const wanted =
+      this.config.preference.enabled && preferGenders.length > 0
+        ? `,${preferGenders.join(',')},`
+        : '';
+
     const reply = await this.runner.run(
       'tryMatch',
       [
@@ -513,6 +568,8 @@ export class RedisStore {
         this.sessionTtl,
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
+        wanted,
+        this.config.preference.wideSample,
       ],
     );
     const status = str(reply, 0);
@@ -524,6 +581,7 @@ export class RedisStore {
           partnerSessionId: str(reply, 2),
           cleaned: num(reply, 3),
           blockedSkipped: num(reply, 4),
+          preference: { preferred: num(reply, 5) === 1, widened: num(reply, 6) === 1 },
         };
       case 'WAITING':
         return {
@@ -531,6 +589,7 @@ export class RedisStore {
           cleaned: num(reply, 1),
           blockedSkipped: num(reply, 2),
           queueDepth: num(reply, 3),
+          preference: { preferred: num(reply, 4) === 1, widened: num(reply, 5) === 1 },
         };
       case 'ABORT':
         return { status: 'abort', reason: abortReason(str(reply, 1)) };
@@ -547,7 +606,13 @@ export class RedisStore {
       [this.keys.prefix, matchId, this.sessionTtl, this.lateBlockTtl],
     );
     if (str(reply, 0) === 'ALREADY_ENDED') return { status: 'already_ended' };
-    return { status: 'ended', a: str(reply, 1), b: str(reply, 2), segment: str(reply, 3) };
+    return {
+      status: 'ended',
+      a: str(reply, 1),
+      b: str(reply, 2),
+      segment: str(reply, 3),
+      createdAtMs: num(reply, 4),
+    };
   }
 
   /* --- message routing ---------------------------------------------------- */
@@ -965,6 +1030,44 @@ export class RedisStore {
   }
 
   /* --- reads -------------------------------------------------------------- */
+
+  /**
+   * What the waiting pool is made of, by declared gender (§29.6).
+   *
+   * The denominator for every preference number. A fallback rate is unreadable
+   * without it: "the preference missed 40% of the time" means something very
+   * different in a pool that is 5% preferred than in one that is 40%.
+   *
+   * Bounded by `cap` and sampled above it, because this runs on a timer and the
+   * cost is one read per waiting session. At launch volumes the cap is never
+   * reached, so the answer is exact; past it this becomes a sample of the pool,
+   * which is what the caller must label it as rather than reporting an estimate
+   * as a census (D21 is the same rule about a different number).
+   *
+   * Sessions that declared nothing are counted under `none` rather than
+   * dropped. They are part of the pool and a preference can never match them,
+   * so leaving them out would make the preferred share look larger than it is.
+   */
+  async queueComposition(segment: string, cap = 500): Promise<Record<string, number>> {
+    const members: string[] = await this.client.srandmember(this.keys.queue(segment), cap);
+    const counts: Record<string, number> = {};
+    if (members.length === 0) return counts;
+
+    const pipeline = this.client.pipeline();
+    for (const sid of members) pipeline.hget(this.keys.session(sid), 'pGender');
+    const replies = await pipeline.exec();
+
+    for (const entry of replies ?? []) {
+      const [err, value] = entry as [Error | null, string | null];
+      // A session that vanished between the sample and the read is not an
+      // error and is not a gender: it is simply no longer in the pool.
+      if (err) continue;
+      const gender = value === null || value === '' ? 'none' : value;
+      counts[gender] = (counts[gender] ?? 0) + 1;
+    }
+    return counts;
+  }
+
 
   /**
    * Real cardinalities for the `presence` frame (D21).

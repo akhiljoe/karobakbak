@@ -10,6 +10,7 @@ import { loadConfig, type Config, type Env } from '../../src/config';
 import { EventDispatcher } from '../../src/ws/dispatch';
 import { SessionLifecycle } from '../../src/ws/lifecycle';
 import { NullRetentionSink } from '../../src/storage/sink';
+import { EMPTY_PROFILE } from '../../src/protocol/types';
 import { ConnectionRegistry } from '../../src/ws/registry';
 
 function buildConfig(overrides: Env = {}): Config {
@@ -455,5 +456,70 @@ describe('heartbeat', () => {
     const ctx = build();
     expect(await ctx.lifecycle.heartbeat('s_missing')).toEqual({ kind: 'session_gone' });
     expect(ctx.store.sessions.size).toBe(0);
+  });
+});
+
+/**
+ * Who declares a gender, measured where it is not distorted (§29.6).
+ *
+ * `chat_queue_composition` answers "who is waiting", which is biased by how long
+ * each group waits — a group that matches quickly is under-represented in any
+ * snapshot, because they are not in the queue for long. This counter answers
+ * "who arrives", and the gap between the two is the harm signal: arrivals at 15%
+ * and a pool at 5% means that group is matching three times faster, which is
+ * exactly what a gender preference would cause.
+ */
+describe('counting declared genders', () => {
+  function buildObserved() {
+    const logger = silentLogger();
+    const config = buildConfig();
+    const store = new FakeStore();
+    const registry = new ConnectionRegistry(logger);
+    const dispatcher = new EventDispatcher(registry, new FakePublisher(), logger);
+    const declared: string[] = [];
+    const lifecycle = new SessionLifecycle(
+      store,
+      dispatcher,
+      registry,
+      config,
+      logger,
+      new NullRetentionSink(),
+      {
+        attempt: () => {},
+        aborted: () => {},
+        conversationEnded: () => {},
+        profileDeclared: (gender) => declared.push(gender),
+      },
+    );
+    return { store, lifecycle, declared };
+  }
+
+  it('records the declared gender, and "none" for declining it', async () => {
+    const ctx = buildObserved();
+    ctx.store.seedSession({ sessionId: 's_a' });
+    ctx.store.seedSession({ sessionId: 's_b' });
+
+    await ctx.lifecycle.joinQueue('s_a', { ...EMPTY_PROFILE, gender: 'female' });
+    await ctx.lifecycle.joinQueue('s_b', { ...EMPTY_PROFILE, name: 'sam' });
+
+    // Declining is a data point, not a gap: it is the share of the pool no
+    // preference can ever match, and the number that decides whether preference
+    // matching is worth enabling at all.
+    expect(ctx.declared).toEqual(['female', 'none']);
+  });
+
+  it('does not count an internal re-search as a fresh declaration', async () => {
+    // A skip re-enters the queue carrying no profile, because nothing about the
+    // declaration changed. Counting those would measure how often people skip —
+    // weighting the heaviest skippers highest — rather than how often people
+    // declare.
+    const ctx = buildObserved();
+    ctx.store.seedSession({ sessionId: 's_a' });
+
+    await ctx.lifecycle.joinQueue('s_a', { ...EMPTY_PROFILE, gender: 'male' });
+    await ctx.lifecycle.joinQueue('s_a');
+    await ctx.lifecycle.joinQueue('s_a');
+
+    expect(ctx.declared).toEqual(['male']);
   });
 });
