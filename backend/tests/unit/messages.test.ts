@@ -15,6 +15,7 @@ import type {
   RateLimitResult,
   ResolvePartnerResult,
   ResolveRouteResult,
+  SaveConnectionResult,
 } from '../../src/redis/store';
 
 /** Records the order in which the pipeline touched the store. */
@@ -34,6 +35,16 @@ class ScriptedStore implements MessageStore {
     partnerInstanceId: 'i_one',
   };
   readonly dedupeIds: string[] = [];
+  saveResult: SaveConnectionResult = { status: 'pending', matchId: 'm_1' };
+
+  async saveConnection(
+    _sessionId: string,
+    accountId: string,
+    active: boolean,
+  ): Promise<SaveConnectionResult> {
+    this.calls.push(`saveConnection:${accountId}:${active ? 'on' : 'off'}`);
+    return this.saveResult;
+  }
 
   async rateLimit(command: RateLimitedCommand): Promise<RateLimitResult> {
     this.calls.push(`rateLimit:${command}`);

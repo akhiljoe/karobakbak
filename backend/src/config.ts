@@ -870,6 +870,13 @@ export function loadConfig(env: Env = process.env): Config {
         // by anything if a client re-reacts to the same one — so it is limited
         // like a command rather than trusted like a consequence.
         react: rateLimit(env, 'REACT', 1, 5), //                  60/min
+        // Toggled at most a few times in one conversation, and there is
+        // exactly one conversation to toggle it in. Burst 4 covers a mis-tap
+        // and an undo with room to spare; the slow refill is what stops the
+        // command becoming a covert channel — a save is one of the very few
+        // things one side can do that the other side can *sometimes* observe
+        // (through `connection_made`), so a fast toggle is a way to signal.
+        save_connection: rateLimit(env, 'SAVE_CONNECTION', 0.1, 4), // 6/min
         skip: rateLimit(env, 'SKIP', 0.333, 6), //               20/min
         report: rateLimit(env, 'REPORT', 0.00278, 3), //         10/hour
         block: rateLimit(env, 'BLOCK', 0.00556, 3), //           20/hour

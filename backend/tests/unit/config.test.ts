@@ -185,6 +185,7 @@ describe('loadConfig — per-command rate limits (R7)', () => {
       'message',
       'react',
       'report',
+      'save_connection',
       'skip',
       'typing',
     ]);

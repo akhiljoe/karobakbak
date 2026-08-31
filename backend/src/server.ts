@@ -53,6 +53,7 @@ import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
 import type { RetentionSink } from './storage/sink';
+import type { ConnectionRepository } from './accounts/connections';
 import { hashIp } from './util/ids';
 import { monotonicMs, nowIso, secondsSince } from './util/time';
 import { SocketConnection } from './ws/connection';
@@ -86,6 +87,15 @@ export interface ChatServerDeps {
   clients: RedisClients;
   /** Where retained records go. Never awaited on the chat path (D16). */
   retention: RetentionSink;
+  /**
+   * Saved connections, or absent when accounts are not wired up.
+   *
+   * Optional rather than a no-op, for the reason the payment routes are null:
+   * an unconfigured deployment gets no surface rather than one that pretends.
+   * The pipeline's default throws if it is ever reached, which it cannot be
+   * while no session carries an account id.
+   */
+  connections?: ConnectionRepository;
   metrics: Metrics;
   /**
    * The payment routes, or null when payments are off.
@@ -199,7 +209,14 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     logger,
     onEventDelivered,
   );
-  const pipeline = new MessagePipeline(store, dispatcher, config, logger, retention);
+  const pipeline = new MessagePipeline(
+    store,
+    dispatcher,
+    config,
+    logger,
+    retention,
+    deps.connections,
+  );
   const janitor = new Janitor(config, logger, store, dispatcher, (counts) => {
     // Cluster-wide gauges, refreshed by whichever instance holds the lock. They
     // are the same Redis cardinalities the presence frame reports, so the
@@ -1043,6 +1060,58 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // (security §31).
         connection.sendEvent('report_ack', { reportId, acceptedAt });
         return;
+      }
+
+      case 'save_connection': {
+        // Refused, not queued. A saved state that can never become a connection
+        // is worse than a refusal: the user believes it worked, and the absence
+        // of a connection afterwards reads as the other person declining.
+        if (connection.accountId === null) {
+          connection.sendError('ACCOUNT_REQUIRED', 'sign in to save a connection');
+          return;
+        }
+        const outcome = await pipeline.saveConnection(
+          connection.sessionId,
+          connection.accountId,
+          command.active,
+        );
+        switch (outcome.kind) {
+          case 'state':
+            // Only to the caller. The partner is told nothing — a save is
+            // disclosed on condition of reciprocity, and this is not it.
+            connection.sendEvent('connection_state', {
+              matchId: outcome.matchId,
+              saved: outcome.saved,
+            });
+            return;
+          case 'made': {
+            // Both, and simultaneously. This is the only frame that reveals
+            // anything about the partner's decision, and it is reachable only
+            // when that decision was to agree.
+            connection.sendEvent('connection_made', { matchId: outcome.matchId });
+            const route = await store.resolveRoute(connection.sessionId);
+            if (route.status === 'ok') {
+              await dispatcher.toSession(
+                route.partnerSessionId,
+                { event: 'connection_made', matchId: outcome.matchId },
+                new Date().toISOString(),
+              );
+            }
+            if (outcome.created) metrics.connectionsMade.inc();
+            return;
+          }
+          case 'rate_limited':
+            connection.sendError('RATE_LIMITED', 'slow down');
+            return;
+          case 'not_matched':
+            connection.sendError('NOT_MATCHED', 'you are not in a conversation');
+            return;
+          default: {
+            const done: never = outcome;
+            void done;
+            return;
+          }
+        }
       }
 
       default: {

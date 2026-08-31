@@ -48,6 +48,13 @@ export type SessionEvent =
   | { event: 'partner_reconnecting'; matchId: string; until: string }
   /** They came back inside the window; the conversation continues. */
   | { event: 'partner_returned'; matchId: string }
+  /**
+   * Both sides saved (§31). Crosses the bus because the two people are on two
+   * instances as often as not, and it is the only frame in the protocol that
+   * discloses anything about the partner's decision — which is safe precisely
+   * because it cannot exist unless that decision was to agree.
+   */
+  | { event: 'connection_made'; matchId: string }
   | { event: 'partner_disconnected'; matchId: string }
   /** The session was reaped server-side; the socket should be closed, not updated. */
   | { event: 'session_evicted'; matchId: string; reason: 'reaped' | 'shutdown' };
@@ -169,6 +176,8 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
       return { event: 'partner_reconnecting', matchId, until: data.until };
     case 'partner_returned':
       return { event: 'partner_returned', matchId };
+    case 'connection_made':
+      return { event: 'connection_made', matchId };
     case 'partner_disconnected':
       return { event: 'partner_disconnected', matchId };
     case 'session_evicted':
@@ -223,6 +232,8 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       return serverFrame('partner_returned', { matchId: event.matchId });
     case 'partner_disconnected':
       return serverFrame('partner_disconnected', { matchId: event.matchId });
+    case 'connection_made':
+      return serverFrame('connection_made', { matchId: event.matchId });
     case 'session_evicted':
       return null;
     default: {

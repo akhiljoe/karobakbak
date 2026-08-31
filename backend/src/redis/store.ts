@@ -161,6 +161,14 @@ export type ResolvePartnerResult =
   | { status: 'duplicate'; matchId: string }
   | { status: 'dedupe_full'; matchId: string };
 
+export type SaveConnectionResult =
+  | { status: 'made'; matchId: string; accountLo: string; accountHi: string }
+  | { status: 'already'; matchId: string }
+  | { status: 'pending'; matchId: string }
+  | { status: 'withdrawn'; matchId: string }
+  | { status: 'self'; matchId: string }
+  | { status: 'not_matched' };
+
 export type ResolveRouteResult =
   | { status: 'ok'; matchId: string; partnerSessionId: string; partnerInstanceId: string }
   | { status: 'partner_gone'; matchId: string }
@@ -691,6 +699,61 @@ export class RedisStore {
         return { status: 'not_matched' };
       default:
         throw new UnexpectedScriptReplyError('resolveRoute', status);
+    }
+  }
+
+  /**
+   * Record one side's consent to save the other (D47, §31).
+   *
+   * The reply carries both account ids on the completing call, because the
+   * script had both in hand and reading them back from two session hashes would
+   * open a window in which one expires between the agreement and the lookup of
+   * who agreed.
+   *
+   * `made` is returned to exactly one of the two callers — the second to press
+   * — so the caller can announce the connection once. A repeat of that press
+   * comes back as `already`, which is success without a second announcement.
+   */
+  async saveConnection(
+    sessionId: string,
+    accountId: string,
+    active: boolean,
+  ): Promise<SaveConnectionResult> {
+    const reply = await this.runner.run(
+      'saveConnection',
+      [this.keys.userMatch(sessionId)],
+      [
+        this.keys.prefix,
+        sessionId,
+        accountId,
+        active ? '1' : '0',
+        String(this.matchTtl),
+      ],
+    );
+    const status = str(reply, 0);
+    switch (status) {
+      case 'MADE':
+        return {
+          status: 'made',
+          matchId: str(reply, 1),
+          accountLo: str(reply, 2),
+          accountHi: str(reply, 3),
+        };
+      case 'AGAIN':
+        return { status: 'already', matchId: str(reply, 1) };
+      case 'PENDING':
+        return { status: 'pending', matchId: str(reply, 1) };
+      case 'WITHDRAWN':
+        return { status: 'withdrawn', matchId: str(reply, 1) };
+      // One account on both sides of a conversation. Reported rather than
+      // silently treated as pending, so the two tabs it actually means are
+      // distinguishable from a partner who has not pressed anything.
+      case 'SELF':
+        return { status: 'self', matchId: str(reply, 1) };
+      case 'NOT_MATCHED':
+        return { status: 'not_matched' };
+      default:
+        throw new UnexpectedScriptReplyError('saveConnection', status);
     }
   }
 

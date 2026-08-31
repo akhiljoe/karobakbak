@@ -27,6 +27,7 @@ describe('script registry', () => {
         'resolvePartner',
         'resolveRoute',
         'resumeSession',
+        'saveConnection',
         // Not a transition, and deliberately in this list anyway. It is a
         // conditional write on match state, and the reason it is a script at
         // all is that as a bare HSET it recreated a match that had already
