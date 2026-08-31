@@ -230,10 +230,20 @@ describe('escalating the sample', () => {
 
       const result = await matchWith(narrow, searcher, { genders: ['female'] });
 
+      // Deliberately not asserting `widened`. The first sample is two draws
+      // from twenty-two, so about one run in eleven finds the needle without
+      // escalating at all — which is the feature working, not failing. The
+      // claim this test makes is that a wide sample finds the one preferred
+      // session regardless; whether it was needed on any given run is the
+      // random part, and asserting it made the test fail on CI roughly a tenth
+      // of the time while passing locally.
+      //
+      // `widened` is covered deterministically elsewhere: true where nothing
+      // matches at all, false where the ordinary sample already held one.
       expect(result).toMatchObject({
         status: 'matched',
         partnerSessionId: needle,
-        preference: { preferred: true, widened: true },
+        preference: { preferred: true },
       });
     } finally {
       await narrow.flush();
