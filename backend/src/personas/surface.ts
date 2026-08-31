@@ -24,7 +24,7 @@
  * already has (D34).
  */
 
-import { MAX_DECLARED_AGE, MIN_DECLARED_AGE } from '../protocol/types';
+import { MAX_DECLARED_AGE, MIN_DECLARED_AGE, VIBES } from '../protocol/types';
 import type { CountryCode, Gender, Profile } from '../protocol/types';
 import { poolFor } from './names';
 import { Rng, randomSeed } from './rng';
@@ -69,6 +69,15 @@ export interface SurfaceOptions {
  * produce the same surface, which is what makes the distribution assertions in
  * the tests meaningful rather than flaky.
  */
+/**
+ * The vibes a persona may declare — every value except `flirty`.
+ *
+ * Derived from `VIBES` by exclusion rather than written out, so a fifth vibe
+ * added later is available to personas automatically and only a deliberate
+ * addition to this exclusion list can keep one from them.
+ */
+const SAFE_VIBES = VIBES.filter((vibe) => vibe !== 'flirty');
+
 export function generateSurface(
   character: PersonaCharacter,
   options: SurfaceOptions = {},
@@ -91,6 +100,17 @@ export function generateSurface(
     age: rng.chance(DECLINE_CHANCE) ? null : age,
     gender: rng.chance(DECLINE_CHANCE) ? null : gender,
     country: rng.chance(DECLINE_CHANCE) ? null : country,
+    // Never `flirty`, and that is a decision rather than an omission.
+    //
+    // A persona declares a vibe because a population where every real user has
+    // one and no persona does is a population you can sort by eye — the same
+    // fingerprint argument that makes the rest of this surface per-conversation
+    // (D-AI-3). But everything a persona says is the operator's own speech
+    // rather than a user's (D-AI-11), which already sits outside the s.79
+    // safe harbour, and declaring sexual intent on the operator's behalf to a
+    // stranger of unverified age is the one addition that is not worth the
+    // realism.
+    vibe: rng.chance(DECLINE_CHANCE) ? null : rng.pick([...SAFE_VIBES]),
   };
 
   // A generated age must satisfy the same rule a user's declaration does. The

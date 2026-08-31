@@ -421,7 +421,8 @@ return { 'OK' }
  * Attempt to pair the caller with someone already waiting.
  * KEYS: queue, session, user_match, matches, match(mid).
  * ARGV: prefix, sid, segment, mid, sampleK, matchTtl, sessionTtl,
- *       ipDimension, clientDimension, prefGender, wideSample.
+ *       ipDimension, clientDimension, prefGender, wideSample, prefCountry,
+ *       prefVibe.
  *
  * Preserves I2, I3, I4, I5 and I12. Every branch that decides the caller is not
  * matchable removes it from the queue first, so an ABORT never leaves a stale
@@ -440,7 +441,7 @@ return { 'OK' }
 const tryMatch = define(
   'tryMatch',
   5,
-  11,
+  13,
   `
 local sid = ARGV[2]
 local seg = ARGV[3]
@@ -483,24 +484,44 @@ end
 
 local cleaned = 0
 local blockedSkipped = 0
+-- One slot, carrying the best score seen so far, because a score of zero is
+-- exactly the ordinary candidate. A separate "preferred" slot beside it would
+-- be the two-tier version of a problem that has more than two tiers.
 local best = nil
 local bestAt = nil
--- The preferred candidate, tracked beside the ordinary one rather than instead
--- of it. Keeping both is what makes the fallback free: the ordinary pick is
--- already computed by the time we know the preference missed (D44, §29.2).
-local pBest = nil
-local pBestAt = nil
+local bestScore = -1
 
 -- Comma-wrapped by the caller, so a plain substring test cannot match a partial
--- value. ',other,' must not be found inside a preference for something else,
--- and an unwrapped 'male' would match inside 'female'.
-local pref = ARGV[10]
-local wide = tonumber(ARGV[11]) or 0
+-- value. An unwrapped 'male' would match inside 'female'.
+local prefGender  = ARGV[10]
+local wide        = tonumber(ARGV[11]) or 0
+local prefCountry = ARGV[12]
+local prefVibe    = ARGV[13]
 
-local function wanted(g)
-  if pref == '' or not g or g == '' then return false end
-  return string.find(pref, ',' .. g .. ',', 1, true) ~= nil
+local function listed(pref, v)
+  if pref == '' or not v or v == '' then return false end
+  return string.find(pref, ',' .. v .. ',', 1, true) ~= nil
 end
+
+-- Weighted, not counted, and the weights encode which dimension is given up
+-- last (§29.3). AND-ing three dimensions collapses the preferred pool
+-- multiplicatively -- 15% x 70% x 20% of a hundred waiting is two people -- so
+-- an all-or-nothing test would miss almost always at real volumes and the
+-- preference would read as broken. Scoring degrades instead: all three, then
+-- gender and country, then gender alone, then anyone.
+--
+-- Gender outweighs the other two combined on purpose, so a candidate matching
+-- country and vibe can never displace one matching gender. It is the dimension
+-- people are paying for, and the one a partial match is least useful without.
+local function score(g, c, v)
+  local n = 0
+  if listed(prefGender, g)  then n = n + 4 end
+  if listed(prefCountry, c) then n = n + 2 end
+  if listed(prefVibe, v)    then n = n + 1 end
+  return n
+end
+
+local anyPreference = prefGender ~= '' or prefCountry ~= '' or prefVibe ~= ''
 
 -- Candidates already considered, so the wider pass does not walk them twice.
 --
@@ -517,7 +538,7 @@ local function scan(cands)
     if c ~= sid and not seen[c] then
       seen[c] = true
       local ch = redis.call('HMGET', kSession(c),
-        'state', 'ipHash', 'clientHash', 'enqueuedAt', 'pGender')
+        'state', 'ipHash', 'clientHash', 'enqueuedAt', 'pGender', 'pCountry', 'pVibe')
       if (not ch[1]) or ch[1] ~= 'SEARCHING' or redis.call('GET', kUserMatch(c)) then
         -- Stale entry GC (§10.11): the queue is repaired by every scan that
         -- walks over it, so a crashed instance's entries do not accumulate.
@@ -529,18 +550,15 @@ local function scan(cands)
         blockedSkipped = blockedSkipped + 1
       else
         local at = tonumber(ch[4]) or 0
-        -- Longest-waiting wins, within each of the two pools independently.
-        -- The fairness rule (D2/D3) is not weakened by the preference; it is
-        -- applied twice.
-        if (not best) or at < bestAt then
+        local sc = score(ch[5], ch[6], ch[7])
+        -- Higher score first, longest-waiting to break a tie. Fairness (D2/D3)
+        -- is not weakened, it is applied within each score: a session cannot be
+        -- passed over indefinitely by someone who arrived later and scores the
+        -- same.
+        if sc > bestScore or (sc == bestScore and at < bestAt) then
           best = c
           bestAt = at
-        end
-        if wanted(ch[5]) then
-          if (not pBest) or at < pBestAt then
-            pBest = c
-            pBestAt = at
-          end
+          bestScore = sc
         end
       end
     end
@@ -556,20 +574,24 @@ scan(redis.call('SRANDMEMBER', KEYS[1], sample + 1))
 -- does, which is exactly when the extra reads are worth paying for. SRANDMEMBER
 -- returns the whole set when asked for more than it holds, so a small pool
 -- degrades to considering everyone.
+-- Widened only when nothing matched at all, never to chase a better partial
+-- score. Looking again for a 7 when a 4 is already in hand is the
+-- all-or-nothing behaviour the scoring exists to avoid, and it spends a second
+-- pass through the pool on a preference that is already partly met.
 local widened = 0
-if pref ~= '' and not pBest and wide > sample then
+if anyPreference and bestScore <= 0 and wide > sample then
   widened = 1
   scan(redis.call('SRANDMEMBER', KEYS[1], wide + 1))
 end
 
--- The whole of the fallback. A preference that missed costs the searcher
--- nothing: the ordinary candidate was found on the same pass.
-local chosen = pBest or best
+-- The whole of the fallback: a score of zero is the ordinary candidate, found
+-- on the same pass, so a preference that missed costs the searcher nothing.
+local chosen = best
 local preferred = 0
-if pBest then preferred = 1 end
+if bestScore > 0 then preferred = bestScore end
 
 if not chosen then
-  return { 'WAITING', cleaned, blockedSkipped, redis.call('SCARD', KEYS[1]), preferred, widened }
+  return { 'WAITING', cleaned, blockedSkipped, redis.call('SCARD', KEYS[1]), 0, widened }
 end
 
 local now = nowMs()

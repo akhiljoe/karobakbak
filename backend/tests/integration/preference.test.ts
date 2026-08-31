@@ -53,7 +53,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
 
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: preferred });
     expect(result).toMatchObject({ preference: { preferred: true } });
@@ -70,7 +70,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: first });
   });
 
@@ -79,10 +79,9 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), [
-      'female',
-      'nonbinary',
-    ]);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      genders: ['female', 'nonbinary'],
+    });
     expect(result).toMatchObject({ status: 'matched', partnerSessionId: nb });
   });
 
@@ -94,7 +93,7 @@ describe('a preference that can be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['male']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['male'] });
 
     // Matched — because a preference falls back — but explicitly NOT as a
     // preferred match.
@@ -115,7 +114,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
 
     expect(result).toMatchObject({
       status: 'matched',
@@ -130,7 +129,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
     expect(result).toMatchObject({
       status: 'matched',
       partnerSessionId: undeclared,
@@ -142,7 +141,7 @@ describe('a preference that cannot be satisfied', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
     expect(result).toMatchObject({
       status: 'waiting',
       queueDepth: 1,
@@ -174,7 +173,7 @@ describe('a block outranks a preference', () => {
     await enqueue(ctx, blocked);
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
     // One, not two. Nothing preferred is findable, so the wider pass runs and
     // draws an overlapping sample -- the script tracks what it has already
     // considered so this candidate is counted once. Without that the counters
@@ -211,9 +210,7 @@ describe('escalating the sample', () => {
       const searcher = await narrow.session();
       await enqueue(narrow, searcher);
 
-      const result = await narrow.store.tryMatch(searcher, narrow.segment, newMatchId(), [
-        'female',
-      ]);
+      const result = await narrow.store.tryMatch(searcher, narrow.segment, newMatchId(), { genders: ['female'] });
 
       expect(result).toMatchObject({
         status: 'matched',
@@ -231,7 +228,7 @@ describe('escalating the sample', () => {
     const searcher = await ctx.session();
     await enqueue(ctx, searcher);
 
-    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), ['female']);
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), { genders: ['female'] });
     // The second look costs a round trip through the pool and is only worth
     // paying for when the first one missed.
     expect(result).toMatchObject({ preference: { preferred: true, widened: false } });
@@ -257,7 +254,7 @@ describe('the feature flag', () => {
       const searcher = await off.session();
       await enqueue(off, searcher);
 
-      const result = await off.store.tryMatch(searcher, off.segment, newMatchId(), ['female']);
+      const result = await off.store.tryMatch(searcher, off.segment, newMatchId(), { genders: ['female'] });
 
       expect(result).toMatchObject({
         status: 'matched',
@@ -299,5 +296,143 @@ describe('what the pool is made of (§29.6)', () => {
     await enqueue(ctx, sid);
 
     expect(await ctx.store.queueComposition(ctx.segment)).toEqual({ none: 1 });
+  });
+});
+
+/**
+ * Three dimensions, scored rather than AND-ed (§29.3).
+ *
+ * The reason scoring exists at all is arithmetic: 15% of one gender times 70%
+ * of one country times 20% of one vibe is two or three people in a pool of a
+ * hundred. An all-or-nothing test would miss almost always at real volumes, and
+ * a premium user would experience the preference as doing nothing — while still
+ * matching perfectly well, which is what makes it hard to notice.
+ */
+describe('scoring across gender, country and vibe', () => {
+  async function declaring(
+    gender: string | null,
+    country: string | null,
+    vibe: string | null,
+  ): Promise<string> {
+    const sid = await ctx.session();
+    await ctx.store.setProfile(sid, { ...EMPTY_PROFILE, gender, country, vibe });
+    await enqueue(ctx, sid);
+    return sid;
+  }
+
+  it('prefers the candidate matching most of it', async () => {
+    await declaring('female', 'US', 'deep'); // gender only        -> 4
+    const all = await declaring('female', 'IN', 'chill'); // all three -> 7
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      genders: ['female'],
+      countries: ['IN'],
+      vibes: ['chill'],
+    });
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: all,
+      preference: { score: 7, preferred: true },
+    });
+  });
+
+  it('never lets country and vibe together outrank gender', async () => {
+    // The weights are the decision, not an implementation detail: gender is
+    // what people are paying for, and a partial match without it is the least
+    // useful kind. 2 + 1 must stay below 4.
+    const genderOnly = await declaring('female', 'US', 'deep');
+    await declaring('male', 'IN', 'chill'); // country + vibe -> 3
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      genders: ['female'],
+      countries: ['IN'],
+      vibes: ['chill'],
+    });
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: genderOnly,
+      preference: { score: 4 },
+    });
+  });
+
+  it('degrades one dimension at a time rather than falling to nothing', async () => {
+    // Nobody matches the vibe, so the best available is gender + country. A
+    // filter would return WAITING here; the whole point is that this does not.
+    const partial = await declaring('female', 'IN', 'funny');
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      genders: ['female'],
+      countries: ['IN'],
+      vibes: ['chill'],
+    });
+
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: partial,
+      preference: { score: 6, preferred: true },
+    });
+  });
+
+  it('matches on country alone, which is the server-derived value', async () => {
+    // `pCountry` is resolved from CF-IPCountry at the upgrade and whatever the
+    // client sent is discarded (protocol rule 3), so unlike gender this
+    // dimension cannot be lied about without a VPN.
+    const inIndia = await declaring(null, 'IN', null);
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      countries: ['IN'],
+    });
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: inIndia,
+      preference: { score: 2 },
+    });
+  });
+
+  it('matches on vibe alone', async () => {
+    const chill = await declaring(null, null, 'chill');
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      vibes: ['chill'],
+    });
+    expect(result).toMatchObject({
+      status: 'matched',
+      partnerSessionId: chill,
+      preference: { score: 1 },
+    });
+  });
+
+  it('does not widen for a better partial score', async () => {
+    // A 4 in hand is not worth a second pass through the pool to look for a 7.
+    // Chasing the perfect score is the all-or-nothing behaviour scoring exists
+    // to avoid, paid for one round trip at a time.
+    await declaring('female', 'US', 'deep');
+
+    const searcher = await ctx.session();
+    await enqueue(ctx, searcher);
+
+    const result = await ctx.store.tryMatch(searcher, ctx.segment, newMatchId(), {
+      genders: ['female'],
+      countries: ['IN'],
+      vibes: ['chill'],
+    });
+    expect(result).toMatchObject({ preference: { score: 4, widened: false } });
   });
 });

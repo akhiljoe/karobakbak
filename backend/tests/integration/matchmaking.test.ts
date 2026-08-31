@@ -126,7 +126,7 @@ describe('tryMatch', () => {
       queueDepth: 1,
       // No preference was asked for, so nothing was preferred and the wider
       // sample was never reached (D44, §29.2).
-      preference: { preferred: false, widened: false },
+      preference: { score: 0, preferred: false, widened: false },
     });
     // Still queued: waiting is not a reason to leave.
     expect(await ctx.client.sismember(ctx.keys.queue(ctx.segment), sid)).toBe(1);

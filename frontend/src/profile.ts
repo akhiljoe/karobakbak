@@ -36,6 +36,7 @@ import {
   MIN_DECLARED_AGE,
   isCountryCode,
   isGender,
+  isVibe,
   type Profile,
 } from './protocol/types';
 
@@ -76,6 +77,7 @@ export function loadProfile(storage: Storage | undefined = safeStorage()): Profi
     country: isCountryCode(value.country) ? value.country : null,
     age: cleanAge(value.age),
     gender: isGender(value.gender) ? value.gender : null,
+    vibe: isVibe(value.vibe) ? value.vibe : null,
   };
 }
 

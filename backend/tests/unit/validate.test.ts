@@ -50,7 +50,7 @@ describe('parseClientFrame — envelope', () => {
         type: 'join_queue',
         clientId: null,
         // Absent, null and every-field-declined all normalise to one shape.
-        profile: { name: null, country: null, age: null, gender: null },
+        profile: { name: null, country: null, age: null, gender: null, vibe: null },
       },
     });
   });
@@ -633,7 +633,7 @@ describe('validateProfile', () => {
   it('treats absent, null and all-declined as one shape', () => {
     // "Told us nothing" must have a single representation, or every consumer
     // has to handle three.
-    const empty = { name: null, country: null, age: null, gender: null };
+    const empty = { name: null, country: null, age: null, gender: null, vibe: null };
     expect(validateProfile(undefined)).toEqual({ ok: true, profile: empty });
     expect(validateProfile(null)).toEqual({ ok: true, profile: empty });
     expect(validateProfile({})).toEqual({ ok: true, profile: empty });
@@ -645,9 +645,11 @@ describe('validateProfile', () => {
   });
 
   it('accepts a full declaration and trims the name', () => {
-    expect(validateProfile({ name: '  Sam  ', country: 'IN', age: 27, gender: 'female' })).toEqual({
+    expect(
+      validateProfile({ name: '  Sam  ', country: 'IN', age: 27, gender: 'female', vibe: 'chill' }),
+    ).toEqual({
       ok: true,
-      profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
+      profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'chill' },
     });
   });
 
@@ -687,7 +689,7 @@ describe('validateProfile', () => {
     }
     expect(validateProfile({ country: 'IN' })).toEqual({
       ok: true,
-      profile: { name: null, country: 'IN', age: null, gender: null },
+      profile: { name: null, country: 'IN', age: null, gender: null, vibe: null },
     });
   });
 
@@ -750,7 +752,12 @@ describe('validateProfile', () => {
 
   it('rides along on a join_queue frame', () => {
     const result = parseClientFrame(
-      frame({ type: 'join_queue', payload: { profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' } } }),
+      frame({
+        type: 'join_queue',
+        payload: {
+          profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'deep' },
+        },
+      }),
       false,
       limits,
     );
@@ -759,7 +766,7 @@ describe('validateProfile', () => {
       command: {
         type: 'join_queue',
         clientId: null,
-        profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
+        profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'deep' },
       },
     });
   });

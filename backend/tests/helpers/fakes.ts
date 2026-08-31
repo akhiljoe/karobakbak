@@ -22,6 +22,7 @@ import type {
   HeartbeatResult,
   JoinQueueResult,
   LeaveQueueResult,
+  MatchPreference,
   SaveIdentitiesResult,
   SessionIdentity,
   TryMatchResult,
@@ -213,7 +214,7 @@ export class FakeStore implements LifecycleStore {
     sessionId: string,
     segment: string,
     matchId: string,
-    preferGenders: readonly string[] = [],
+    prefer: MatchPreference = {},
   ): Promise<TryMatchResult> {
     this.tryMatchCalls.push(matchId);
     const session = this.sessions.get(sessionId);
@@ -242,16 +243,25 @@ export class FakeStore implements LifecycleStore {
     // are tracked together, longest-waiting wins inside each, and a preference
     // that finds nobody falls through on the same pass rather than waiting.
     // The fake models no sample size, so it never has cause to widen.
-    const preferredPool =
-      preferGenders.length > 0
-        ? candidates.filter((candidate) => {
-            const gender = this.profiles.get(candidate.sessionId)?.gender ?? null;
-            return gender !== null && preferGenders.includes(gender);
-          })
-        : [];
+    const scoreOf = (sessionId: string): number => {
+      const profile = this.profiles.get(sessionId);
+      let n = 0;
+      if (profile?.gender && (prefer.genders ?? []).includes(profile.gender)) n += 4;
+      if (profile?.country && (prefer.countries ?? []).includes(profile.country)) n += 2;
+      if (profile?.vibe && (prefer.vibes ?? []).includes(profile.vibe)) n += 1;
+      return n;
+    };
 
-    const best = preferredPool[0] ?? candidates[0];
-    const preference = { preferred: preferredPool.length > 0, widened: false };
+    // Candidates arrive sorted longest-waiting first, so a stable sort by score
+    // descending leaves the oldest of each score in front — the same rule the
+    // script applies. The fake models no sample size, so it never widens.
+    const ranked = [...candidates].sort((l, r) => scoreOf(r.sessionId) - scoreOf(l.sessionId));
+    const best = ranked[0];
+    const preference = {
+      score: best ? scoreOf(best.sessionId) : 0,
+      preferred: best ? scoreOf(best.sessionId) > 0 : false,
+      widened: false,
+    };
 
     if (!best) {
       return {

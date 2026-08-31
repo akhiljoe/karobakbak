@@ -51,10 +51,37 @@ export type TryMatchAbortReason = 'session_gone' | 'already_matched' | 'not_sear
  * because this service has never recorded what its pool is made of.
  */
 export interface PreferenceOutcome {
-  /** A preferred candidate was found and taken. False means an ordinary match. */
+  /**
+   * How much of the preference the chosen candidate satisfied: gender 4,
+   * country 2, vibe 1, so 0 is an ordinary match and 7 is all three.
+   *
+   * A number rather than a flag because the interesting question at three
+   * dimensions is not "did it work" but "how much of it worked". A population
+   * scoring 4 has a preference that only ever matches on gender, which is the
+   * signal that the other two are too rare to be worth offering.
+   */
+  score: number;
+  /** True when anything at all was preferred — `score > 0`. */
   preferred: boolean;
-  /** The ordinary sample held nobody preferred, so the wider look was taken. */
+  /** The ordinary sample held nothing at all, so the wider look was taken. */
   widened: boolean;
+}
+
+/**
+ * What a searcher would like, in as many dimensions as they set.
+ *
+ * Every field is optional and an omitted one is simply not scored — this is a
+ * preference, so "no country preference" and "no country matched" both end in
+ * an ordinary match rather than in a wait (D44).
+ */
+export interface MatchPreference {
+  readonly genders?: readonly string[];
+  readonly countries?: readonly string[];
+  readonly vibes?: readonly string[];
+}
+
+function preferenceOutcome(score: number, widened: number): PreferenceOutcome {
+  return { score, preferred: score > 0, widened: widened === 1 };
 }
 
 export type TryMatchResult =
@@ -311,13 +338,14 @@ class UnexpectedScriptReplyError extends Error {
  */
 function profileFromFields(raw: unknown): Profile | null {
   if (!Array.isArray(raw)) return null;
-  const [name, country, age, gender] = raw as (string | null)[];
+  const [name, country, age, gender, vibe] = raw as (string | null)[];
   const parsedAge = typeof age === 'string' ? Number.parseInt(age, 10) : Number.NaN;
   const profile: Profile = {
     name: typeof name === 'string' && name.length > 0 ? name : null,
     country: typeof country === 'string' && country.length > 0 ? country : null,
     age: Number.isInteger(parsedAge) ? parsedAge : null,
     gender: typeof gender === 'string' && gender.length > 0 ? gender : null,
+    vibe: typeof vibe === 'string' && vibe.length > 0 ? vibe : null,
   };
   if (
     profile.name === null &&
@@ -542,11 +570,14 @@ export class RedisStore {
     sessionId: string,
     segment: string,
     matchId: string,
-    preferGenders: readonly string[] = [],
+    prefer: MatchPreference = {},
   ): Promise<TryMatchResult> {
-    const wanted =
-      this.config.preference.enabled && preferGenders.length > 0
-        ? `,${preferGenders.join(',')},`
+    // Wrapped here rather than in Lua so the script's membership test can be a
+    // plain substring find with no pattern semantics: `,male,` must not be
+    // found inside `,female,`.
+    const wrap = (values: readonly string[] | undefined): string =>
+      this.config.preference.enabled && values !== undefined && values.length > 0
+        ? `,${values.join(',')},`
         : '';
 
     const reply = await this.runner.run(
@@ -568,8 +599,10 @@ export class RedisStore {
         this.sessionTtl,
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
-        wanted,
+        wrap(prefer.genders),
         this.config.preference.wideSample,
+        wrap(prefer.countries),
+        wrap(prefer.vibes),
       ],
     );
     const status = str(reply, 0);
@@ -581,7 +614,7 @@ export class RedisStore {
           partnerSessionId: str(reply, 2),
           cleaned: num(reply, 3),
           blockedSkipped: num(reply, 4),
-          preference: { preferred: num(reply, 5) === 1, widened: num(reply, 6) === 1 },
+          preference: preferenceOutcome(num(reply, 5), num(reply, 6)),
         };
       case 'WAITING':
         return {
@@ -589,7 +622,7 @@ export class RedisStore {
           cleaned: num(reply, 1),
           blockedSkipped: num(reply, 2),
           queueDepth: num(reply, 3),
-          preference: { preferred: num(reply, 4) === 1, widened: num(reply, 5) === 1 },
+          preference: preferenceOutcome(num(reply, 4), num(reply, 5)),
         };
       case 'ABORT':
         return { status: 'abort', reason: abortReason(str(reply, 1)) };
@@ -848,6 +881,8 @@ export class RedisStore {
     else clear.push('pAge');
     if (profile.gender !== null) set.push('pGender', profile.gender);
     else clear.push('pGender');
+    if (profile.vibe !== null) set.push('pVibe', profile.vibe);
+    else clear.push('pVibe');
 
     const pipeline = this.client.pipeline();
     if (set.length > 0) pipeline.hset(key, ...set);
@@ -872,7 +907,7 @@ export class RedisStore {
     sessionA: string,
     sessionB: string,
   ): Promise<{ a: Profile | null; b: Profile | null }> {
-    const fields = ['pName', 'pCountry', 'pAge', 'pGender'] as const;
+    const fields = ['pName', 'pCountry', 'pAge', 'pGender', 'pVibe'] as const;
     const results = await this.client
       .pipeline()
       .hmget(this.keys.session(sessionA), ...fields)
