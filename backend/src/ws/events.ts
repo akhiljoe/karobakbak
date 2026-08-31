@@ -18,6 +18,7 @@
  * client's next action corrects.
  */
 import type { Identity, MessageContentType, Profile, ServerEnvelope } from '../protocol/types';
+import { isReaction } from '../protocol/types';
 import { serverFrame } from '../protocol/envelope';
 
 /** Envelope version for the internal bus. Independent of the wire protocol version. */
@@ -34,6 +35,8 @@ export type SessionEvent =
       sentAt: string;
     }
   | { event: 'partner_typing'; matchId: string; active: boolean }
+  /** Advisory and ephemeral: nothing here is stored or retained (D-INTAKE-4). */
+  | { event: 'partner_reacted'; matchId: string; messageId: string; reaction: string }
   | { event: 'partner_skipped'; matchId: string }
   /** Their socket dropped and the seat is held until `until` (§28). */
   | { event: 'partner_reconnecting'; matchId: string; until: string }
@@ -141,6 +144,18 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
     case 'partner_typing':
       if (typeof data.active !== 'boolean') return null;
       return { event: 'partner_typing', matchId, active: data.active };
+    case 'partner_reacted':
+      // Both are rechecked on the way in, not trusted because they crossed our
+      // own Pub/Sub: an instance running an older or newer build is still a
+      // sender, and this is the boundary that decides what reaches a socket.
+      if (typeof data.messageId !== 'string' || data.messageId.length === 0) return null;
+      if (!isReaction(data.reaction)) return null;
+      return {
+        event: 'partner_reacted',
+        matchId,
+        messageId: data.messageId,
+        reaction: data.reaction,
+      };
     case 'partner_skipped':
       return { event: 'partner_skipped', matchId };
     case 'partner_reconnecting':
@@ -186,6 +201,12 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       return serverFrame('partner_typing', { matchId: event.matchId, active: event.active });
     case 'partner_skipped':
       return serverFrame('partner_skipped', { matchId: event.matchId });
+    case 'partner_reacted':
+      return serverFrame('partner_reacted', {
+        matchId: event.matchId,
+        messageId: event.messageId,
+        reaction: event.reaction,
+      });
     case 'partner_reconnecting':
       return serverFrame('partner_reconnecting', { matchId: event.matchId, until: event.until });
     case 'partner_returned':

@@ -11,6 +11,7 @@ import {
   COUNTRY_NAMES,
   countryName,
   MAX_DECLARED_AGE,
+  MAX_CLIENT_ID_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DECLARED_AGE,
   PROTOCOL_VERSION,
@@ -869,5 +870,50 @@ describe('validatePreferences', () => {
       limits,
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+/**
+ * `react` is a pointer and a value from a closed list, and both are checked.
+ *
+ * The closed set is what keeps a reaction from becoming a content field on a
+ * path built to carry none — the same reasoning as `GENDERS` and `VIBES`.
+ */
+describe('react', () => {
+  function reactFrame(payload: unknown): unknown {
+    return parseClientFrame(frame({ type: 'react', payload }), false, limits);
+  }
+
+  it('accepts a message id and a known reaction', () => {
+    expect(reactFrame({ messageId: 'msg_1', reaction: 'heart' })).toMatchObject({
+      ok: true,
+      command: { type: 'react', messageId: 'msg_1', reaction: 'heart' },
+    });
+  });
+
+  it('refuses a reaction outside the list', () => {
+    for (const reaction of ['skull', '', '🔥', 42, null, undefined]) {
+      const result = reactFrame({ messageId: 'msg_1', reaction });
+      expect(result).toMatchObject({ ok: false });
+    }
+  });
+
+  it('refuses a missing, empty or oversized message id', () => {
+    expect(reactFrame({ reaction: 'heart' })).toMatchObject({ ok: false });
+    expect(reactFrame({ messageId: '', reaction: 'heart' })).toMatchObject({ ok: false });
+    expect(reactFrame({ messageId: 7, reaction: 'heart' })).toMatchObject({ ok: false });
+    expect(
+      reactFrame({ messageId: 'x'.repeat(MAX_CLIENT_ID_LENGTH + 1), reaction: 'heart' }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it('does not check that the message id names a message in this conversation', () => {
+    // Deliberate, and recorded in `ReactPayload`. The server routes by session
+    // and echoes the id; resolving it would put a lookup on an advisory path to
+    // prevent a client sending an id its own partner will not recognise. An id
+    // naming nothing is inert at the far end.
+    expect(reactFrame({ messageId: 'msg_that_never_existed', reaction: 'heart' })).toMatchObject({
+      ok: true,
+    });
   });
 });

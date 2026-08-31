@@ -11,6 +11,7 @@ import {
   DEFAULT_MESSAGE_CONTENT_TYPE,
   EMPTY_PROFILE,
   MAX_DECLARED_AGE,
+  MAX_CLIENT_ID_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DECLARED_AGE,
   PROTOCOL_VERSION,
@@ -19,6 +20,7 @@ import {
   isCountryCode,
   isGender,
   isVibe,
+  isReaction,
   EMPTY_PREFERENCES,
   MAX_PREFERENCE_VALUES,
   type MatchPreferences,
@@ -60,6 +62,7 @@ export type ValidatedCommand =
   | { type: 'block'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
   | { type: 'typing'; clientId: string | null; active: boolean }
+  | { type: 'react'; clientId: string | null; messageId: string; reaction: string }
   | {
       type: 'report';
       clientId: string | null;
@@ -560,6 +563,25 @@ export function parseClientFrame(
           contentType: contentType.contentType,
           text: result.text,
         },
+      };
+    }
+    case 'react': {
+      const raw = payload as { messageId?: unknown; reaction?: unknown };
+      // Checked for shape, not for membership of this conversation. The server
+      // routes by session (rule 3) and the id is echoed to a client that either
+      // recognises it or ignores it — see `ReactPayload`.
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) {
+        return fail('VALIDATION_FAILED', 'payload.messageId is required');
+      }
+      if (raw.messageId.length > MAX_CLIENT_ID_LENGTH) {
+        return fail('VALIDATION_FAILED', 'payload.messageId is too long');
+      }
+      if (!isReaction(raw.reaction)) {
+        return fail('VALIDATION_FAILED', 'payload.reaction is not one of the accepted values');
+      }
+      return {
+        ok: true,
+        command: { type, clientId, messageId: raw.messageId, reaction: raw.reaction },
       };
     }
     default: {

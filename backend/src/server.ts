@@ -887,6 +887,24 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         return;
       }
 
+      case 'react': {
+        const outcome = await pipeline.react(
+          connection.sessionId,
+          command.messageId,
+          command.reaction,
+        );
+        // Silent on success, for the same reason typing is: acknowledging an
+        // advisory frame doubles its traffic to confirm something nobody waits
+        // on.
+        if (outcome.kind === 'sent') metrics.reactions.inc();
+        if (outcome.kind === 'rate_limited') {
+          connection.sendError('RATE_LIMITED', 'slow down');
+        } else if (outcome.kind === 'not_matched') {
+          connection.sendError('NOT_MATCHED', 'you are not in a conversation');
+        }
+        return;
+      }
+
       case 'join_queue': {
         // A declared name is shown to every stranger this session meets, so it
         // is moderated more strictly than a message: *any* rule firing refuses

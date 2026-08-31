@@ -167,6 +167,8 @@ export interface Metrics {
   readonly matchesCreated: Counter<string>;
   readonly matchmakingFailures: Counter<'reason'>;
   readonly skips: Counter<string>;
+  /** Reactions delivered to a partner. Never stored, so this is the only trace. */
+  readonly reactions: Counter<string>;
   readonly matchmakingLatency: Histogram<string>;
 
   /* messages */
@@ -386,6 +388,7 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     matchesCreated: counter('chat_matches_created_total', 'Conversations formed'),
     matchmakingFailures: counter('chat_matchmaking_failures_total', 'Match attempts that aborted', ['reason']),
     skips: counter('chat_skips_total', 'Conversations ended by a skip'),
+    reactions: counter('chat_reactions_total', 'Message reactions delivered'),
     matchmakingLatency: histogram(
       'chat_matchmaking_latency_seconds',
       'Time from joining the queue to being matched',

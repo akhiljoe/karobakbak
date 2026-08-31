@@ -265,6 +265,37 @@ export class MessagePipeline {
    * routing it through the replay-protection path would consume one message id
    * per keystroke and let a client exhaust its own dedupe set by typing.
    */
+  /**
+   * Pass a reaction to the partner. Ephemeral, exactly like `typing`.
+   *
+   * Nothing is stored and nothing is moderated: a reaction is a pointer to a
+   * message plus a value from a closed list, so there is no content here for
+   * either to act on. It shares `TypingOutcome` because the outcomes are the
+   * same three — limited, not in a conversation, or sent.
+   *
+   * `messageId` is echoed rather than resolved. Checking that it names a
+   * message in this conversation would put a lookup on an advisory path to
+   * prevent a client sending an id its partner will not recognise, which costs
+   * more than it saves.
+   */
+  async react(sessionId: string, messageId: string, reaction: string): Promise<TypingOutcome> {
+    const limit = await this.store.rateLimit('react', sessionId);
+    if (!limit.allowed) {
+      return { kind: 'rate_limited', retryAfterMs: limit.retryAfterMs };
+    }
+
+    const route = await this.store.resolveRoute(sessionId);
+    if (route.status === 'not_matched') return { kind: 'not_matched' };
+    if (route.status === 'partner_gone') return { kind: 'no_partner' };
+
+    await this.dispatcher.toSession(
+      route.partnerSessionId,
+      { event: 'partner_reacted', matchId: route.matchId, messageId, reaction },
+      nowIso(),
+    );
+    return { kind: 'sent' };
+  }
+
   async typing(sessionId: string, active: boolean): Promise<TypingOutcome> {
     const limit = await this.store.rateLimit('typing', sessionId);
     if (!limit.allowed) {

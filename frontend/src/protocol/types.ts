@@ -29,6 +29,7 @@ export const CLIENT_EVENTS = [
   'leave_chat',
   'message',
   'typing',
+  'react',
   'skip',
   'report',
   'block',
@@ -44,6 +45,7 @@ export const SERVER_EVENTS = [
   'message',
   'message_ack',
   'partner_typing',
+  'partner_reacted',
   'partner_skipped',
   'partner_reconnecting',
   'partner_returned',
@@ -623,6 +625,7 @@ export interface ClientEventPayloads {
   leave_chat: LeaveChatPayload;
   message: MessagePayload;
   typing: TypingPayload;
+  react: ReactPayload;
   skip: SkipPayload;
   report: ReportPayload;
   block: BlockPayload;
@@ -799,6 +802,59 @@ export interface MessageAckPayload {
   status: MessageAckStatus;
 }
 
+/**
+ * The reactions a message may carry.
+ *
+ * A closed list for the same reason `GENDERS` and `VIBES` are closed: an open
+ * set — an arbitrary emoji, or free text — is a content field arriving through
+ * a path built to carry none, and it would need moderating like a message body.
+ *
+ * One value today. It stays a list so a second is a list change rather than a
+ * protocol change, and so the wire always says which reaction was sent instead
+ * of leaving it implied.
+ */
+export const REACTIONS = ['heart'] as const;
+export type Reaction = (typeof REACTIONS)[number];
+
+export function isReaction(value: unknown): value is Reaction {
+  return typeof value === 'string' && (REACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * React to one message. Fire-and-forget, exactly like `typing`.
+ *
+ * ---------------------------------------------------------------------------
+ * EPHEMERAL, AND THEREFORE NOT RECALLABLE
+ * ---------------------------------------------------------------------------
+ * A reaction is delivered or it is not. It is never written to PostgreSQL, never
+ * part of a retained transcript, and never seen by a moderator — which is what
+ * keeps a feature this small from adding a record type, a moderation surface
+ * and a console view.
+ *
+ * There is deliberately **no un-react**. `typing` carries an explicit `active`
+ * boolean because stopping is a real event; a reaction that has been delivered
+ * has already been seen, so a frame withdrawing it would describe something
+ * that did not happen. A client may hide it locally; it may not claim the
+ * partner un-saw it.
+ *
+ * `messageId` is **echoed, not resolved.** The server routes by session (rule 3)
+ * and does not check that the id names a message in this conversation: doing so
+ * would mean a lookup on an advisory path, and the receiving client either
+ * matches it against a message it holds or ignores it. An id naming nothing is
+ * inert.
+ */
+export interface ReactPayload {
+  messageId: string;
+  reaction: string;
+}
+
+/** The partner reacted to one of the messages on screen. Advisory only. */
+export interface PartnerReactedPayload {
+  matchId: string;
+  messageId: string;
+  reaction: string;
+}
+
 /** The partner started or stopped typing. Advisory only. */
 export interface PartnerTypingPayload {
   matchId: string;
@@ -873,6 +929,7 @@ export interface ServerEventPayloads {
   message: IncomingMessagePayload;
   message_ack: MessageAckPayload;
   partner_typing: PartnerTypingPayload;
+  partner_reacted: PartnerReactedPayload;
   partner_skipped: PartnerSkippedPayload;
   partner_reconnecting: PartnerReconnectingPayload;
   partner_returned: PartnerReturnedPayload;
