@@ -337,25 +337,32 @@ function Bubble({
               // `(hover: hover)` keeps it off touch devices, where a tap leaves
               // a sticky :hover behind and the picker would appear on a single
               // tap, competing with the long press that is supposed to open it.
-              className={`absolute -top-11 left-0 z-10 animate-fade-in gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-lift ${
-                picking ? 'flex' : 'hidden [@media(hover:hover)]:group-hover:flex'
+              // `bottom-full` puts the box flush against the bubble and the
+              // padding makes the visual gap, so the pointer never crosses dead
+              // space on its way up. Positioning it 44px above a 34px row left a
+              // 10px band belonging to neither: `:hover` dropped there and the
+              // picker vanished before the cursor arrived.
+              className={`absolute bottom-full left-0 z-10 animate-fade-in pb-2 ${
+                picking ? 'block' : 'hidden [@media(hover:hover)]:group-hover:block'
               }`}
             >
-              {REACTIONS.map((reaction) => (
-                <button
-                  key={reaction}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => send(reaction)}
-                  aria-label={REACTION_LABELS[reaction]}
-                  aria-pressed={yours === reaction}
-                  className={`touch-manipulation rounded-full px-1.5 py-1 text-base leading-none transition-transform hover:scale-125 ${
-                    yours === reaction ? 'bg-ink-800' : ''
-                  }`}
-                >
-                  {REACTION_GLYPHS[reaction]}
-                </button>
-              ))}
+              <span className="flex gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-lift">
+                {REACTIONS.map((reaction) => (
+                  <button
+                    key={reaction}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => send(reaction)}
+                    aria-label={REACTION_LABELS[reaction]}
+                    aria-pressed={yours === reaction}
+                    className={`touch-manipulation rounded-full px-1.5 py-1 text-base leading-none transition-transform hover:scale-125 ${
+                      yours === reaction ? 'bg-ink-800' : ''
+                    }`}
+                  >
+                    {REACTION_GLYPHS[reaction]}
+                  </button>
+                ))}
+              </span>
             </div>
           )}
           {renderBody(message)}
