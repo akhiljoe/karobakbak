@@ -158,6 +158,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const dispatcher = new EventDispatcher(registry, store, logger, onEventDelivered);
   const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention, {
     attempt: () => metrics.matchAttempts.inc(),
+    profileDeclared: (gender) => metrics.profilesDeclared.labels(gender).inc(),
     aborted: (reason) => metrics.matchmakingFailures.labels(reason).inc(),
     conversationEnded: (reason, seconds) => {
       // Nothing is recorded when the duration is unknown. A zero here would be

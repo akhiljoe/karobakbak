@@ -159,6 +159,15 @@ export interface MatchmakingObserver {
    * possible signal that the product is failing.
    */
   conversationEnded(reason: 'skip' | 'disconnect', seconds: number | null): void;
+  /**
+   * A user declared (or declined) a gender on an explicit join.
+   *
+   * Explicit only. An internal re-search after a skip carries no profile
+   * because nothing about the declaration changed, and counting those would
+   * measure how often people skip rather than how often people declare — with
+   * the heaviest skippers weighted highest.
+   */
+  profileDeclared(gender: string): void;
 }
 
 export type LeaveOutcome =
@@ -349,7 +358,10 @@ export class SessionLifecycle {
     // Written before the queue is joined, so a session can never be matched in
     // the window between entering the queue and its profile landing — the
     // partner would be shown a stale declaration or none at all.
-    if (profile !== undefined) await this.store.setProfile(sessionId, profile);
+    if (profile !== undefined) {
+      await this.store.setProfile(sessionId, profile);
+      this.observer?.profileDeclared(profile.gender ?? 'none');
+    }
     const joined = await this.store.joinQueue(sessionId, this.segment);
     switch (joined.status) {
       case 'session_gone':

@@ -117,6 +117,22 @@ export interface Metrics {
    */
   readonly profilesRefused: Counter<'reason'>;
   /**
+   * What people declare when they join, by gender, counting `none`.
+   *
+   * Not the same question as `chat_queue_composition`, and the difference is
+   * the point. That gauge is who is *waiting*, which is biased by how long each
+   * group waits: a group that matches quickly is under-represented in any
+   * snapshot of the queue, because they are not in it for long. This counts who
+   * *arrives*, which nothing distorts.
+   *
+   * Divergence between the two is itself the signal §29.6 asks for. If arrivals
+   * are 15% female and the pool is 5%, declared-female sessions are matching
+   * roughly three times faster than everyone else — which is precisely what a
+   * gender preference would cause, and the first sign that it is degrading the
+   * experience of the group it selects for.
+   */
+  readonly profilesDeclared: Counter<'gender'>;
+  /**
    * Resume attempts, by outcome.
    *
    * `expired` is the number worth watching: a high ratio means the grace window
@@ -339,6 +355,11 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     ]),
     socketErrors: counter('chat_socket_errors_total', 'Transport-level socket errors'),
     rateLimited: counter('chat_rate_limited_total', 'Commands refused by a token bucket', ['command']),
+    profilesDeclared: counter(
+      'chat_profiles_declared_total',
+      'Gender declared on an explicit join, counting "none" for declining it',
+      ['gender'],
+    ),
     profilesRefused: counter('chat_profiles_refused_total', 'Declared profiles refused at join, by reason', [
       'reason',
     ]),
