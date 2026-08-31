@@ -18,6 +18,7 @@ import {
   isClientEventType,
   isCountryCode,
   isGender,
+  isVibe,
   isMessageContentType,
   isReportCategory,
   type ClientEventType,
@@ -225,7 +226,13 @@ export function validateProfile(
   if (typeof value !== 'object' || Array.isArray(value)) {
     return { ok: false, code: 'VALIDATION_FAILED', message: 'payload.profile must be an object' };
   }
-  const raw = value as { name?: unknown; country?: unknown; age?: unknown; gender?: unknown };
+  const raw = value as {
+    name?: unknown;
+    country?: unknown;
+    age?: unknown;
+    gender?: unknown;
+    vibe?: unknown;
+  };
 
   let name: string | null = null;
   if (raw.name !== undefined && raw.name !== null) {
@@ -293,7 +300,19 @@ export function validateProfile(
     gender = raw.gender;
   }
 
-  return { ok: true, profile: { name, country, age, gender } };
+  let vibe: string | null = null;
+  if (raw.vibe !== undefined && raw.vibe !== null && raw.vibe !== '') {
+    if (!isVibe(raw.vibe)) {
+      return {
+        ok: false,
+        code: 'VALIDATION_FAILED',
+        message: 'profile.vibe is not one of the accepted values',
+      };
+    }
+    vibe = raw.vibe;
+  }
+
+  return { ok: true, profile: { name, country, age, gender, vibe } };
 }
 
 /**

@@ -268,10 +268,18 @@ export interface Profile {
   age: number | null;
   /** Self-declared, from `GENDERS`. */
   gender: string | null;
+  /** Self-declared, from `VIBES`. What they are in the mood for. */
+  vibe: string | null;
 }
 
 /** An empty profile — every field declined. */
-export const EMPTY_PROFILE: Profile = { name: null, country: null, age: null, gender: null };
+export const EMPTY_PROFILE: Profile = {
+  name: null,
+  country: null,
+  age: null,
+  gender: null,
+  vibe: null,
+};
 
 /**
  * The gender values a user may declare.
@@ -296,6 +304,44 @@ export const EMPTY_PROFILE: Profile = { name: null, country: null, age: null, ge
  */
 export const GENDERS = ['female', 'male', 'nonbinary', 'other'] as const;
 export type Gender = (typeof GENDERS)[number];
+
+/**
+ * The vibes a user may declare.
+ *
+ * A closed list for the same reason `GENDERS` is one: a free-text mood field is
+ * somewhere to write a sentence, a slur or a contact handle, and it would then
+ * need moderating like a message body. Omitting the field *is* "no preference",
+ * so there is no option for it.
+ *
+ * ---------------------------------------------------------------------------
+ * `flirty` IS NOT THE SAME KIND OF VALUE AS THE OTHER THREE
+ * ---------------------------------------------------------------------------
+ * `chill`, `deep` and `funny` describe a tone. `flirty` declares an intent to
+ * engage sexually or romantically, and once it is a matching signal the server
+ * is actively pairing people on that intent.
+ *
+ * It does so with **no age assurance anywhere in the system**. The age gate is
+ * the whole of the minor-safety enforcement (`minor-safety-policy.md` §3), and
+ * `age` is a claim anyone can type — which is why D36 refuses a declared age
+ * below 18 with its own protocol code, on the reasoning that broadcasting a
+ * self-declared minor's age to strangers automates a grooming signal that
+ * security §23 opens its list with.
+ *
+ * That makes enabling a `flirty` preference a different decision from enabling
+ * the rest, and it needs its own record before `FILTERS_ENABLED` is ever true:
+ * it changes what this product is, which reaches the minor-safety policy, the
+ * s.79 safe-harbour argument, and the payment processor's and ad networks'
+ * terms on dating and adult content.
+ *
+ * The value is accepted and stored today because a declaration is not a match.
+ * Nothing reads it while the flag is off.
+ */
+export const VIBES = ['chill', 'deep', 'funny', 'flirty'] as const;
+export type Vibe = (typeof VIBES)[number];
+
+export function isVibe(value: unknown): value is Vibe {
+  return typeof value === 'string' && (VIBES as readonly string[]).includes(value);
+}
 
 export function isGender(value: unknown): value is Gender {
   return typeof value === 'string' && (GENDERS as readonly string[]).includes(value);
