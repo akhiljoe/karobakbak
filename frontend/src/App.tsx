@@ -18,8 +18,15 @@ import { useAutoSearch } from './hooks/useAutoSearch';
 import { useBackButton } from './hooks/useBackButton';
 import { useMatchNotification } from './hooks/useMatchNotification';
 import { unlockSound } from './notify';
-import { EMPTY_PROFILE, clearProfile, loadProfile, saveProfile } from './profile';
-import type { Profile } from './protocol/types';
+import {
+  EMPTY_PROFILE,
+  clearProfile,
+  loadPreferences,
+  loadProfile,
+  savePreferences,
+  saveProfile,
+} from './profile';
+import type { MatchPreferences, Profile } from './protocol/types';
 import { AuthModal } from './components/AuthModal';
 import { ChatShell } from './components/ChatShell';
 import { FiltersModal } from './components/FiltersModal';
@@ -130,7 +137,7 @@ export function App(): JSX.Element {
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
       if (phase === 'idle' && state.screen === 'idle' && event.key === 'Enter' && !overlayOpen) {
         event.preventDefault();
-        chat.start();
+        chat.start(profile, matchPreferences);
       }
       if (phase === 'chatting' && event.key === 'Escape' && !overlayOpen) chat.skip();
     };
@@ -149,6 +156,12 @@ export function App(): JSX.Element {
   // Read once on mount: localStorage is synchronous and touching it during
   // render would cost on every keystroke elsewhere in the tree.
   const [profile, setProfile] = useState<Profile>(() => loadProfile());
+  // Kept beside the profile and sent with it: both ride on `join_queue`, and
+  // both are re-sent every time because the server keeps nothing between
+  // sessions.
+  const [matchPreferences, setMatchPreferences] = useState<MatchPreferences>(() =>
+    loadPreferences(),
+  );
 
   const showShell = phase === 'searching' || phase === 'chatting';
 
@@ -170,8 +183,8 @@ export function App(): JSX.Element {
       return;
     }
     unlockSound();
-    chat.start(profile);
-  }, [ageAcknowledged, chat, profile]);
+    chat.start(profile, matchPreferences);
+  }, [ageAcknowledged, chat, matchPreferences, profile]);
 
   /**
    * Block this person and move on, in one action.
@@ -243,8 +256,8 @@ export function App(): JSX.Element {
     // Carry on into the search they asked for. Making them press "Start" a
     // second time would read as the gate having failed.
     unlockSound();
-    chat.start(profile);
-  }, [chat, profile]);
+    chat.start(profile, matchPreferences);
+  }, [chat, matchPreferences, profile]);
 
   const leaveFromGate = useCallback(() => {
     // `about:blank` rather than `window.close()`, which browsers refuse for a
@@ -332,7 +345,15 @@ export function App(): JSX.Element {
 
       {/* Unmounted with its button: nothing can open it, so nothing renders it. */}
       {FILTERS_AVAILABLE && (
-        <FiltersModal open={filtersOpen} onClose={() => setFiltersOpen(false)} />
+        <FiltersModal
+          open={filtersOpen}
+          onClose={() => setFiltersOpen(false)}
+          preferences={matchPreferences}
+          onChange={(next) => {
+            setMatchPreferences(next);
+            savePreferences(next);
+          }}
+        />
       )}
 
       <SettingsSheet
