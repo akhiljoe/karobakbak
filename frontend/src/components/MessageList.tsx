@@ -209,18 +209,38 @@ function Bubble({
   // anything with, so the affordance has to be summoned deliberately.
   const [picking, setPicking] = useState(false);
   const holdTimer = useRef<number | null>(null);
+  const holdFrom = useRef<{ x: number; y: number } | null>(null);
 
   const cancelHold = (): void => {
     if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
     holdTimer.current = null;
+    holdFrom.current = null;
   };
 
-  const startHold = (): void => {
+  const startHold = (event: React.TouchEvent): void => {
     if (!offer) return;
     cancelHold();
+    const touch = event.touches[0];
+    holdFrom.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
     // Long enough not to fire while somebody is scrolling past, short enough
     // to feel like a press rather than a wait.
     holdTimer.current = window.setTimeout(() => setPicking(true), 450);
+  };
+
+  /**
+   * Cancel only when the finger has actually gone somewhere.
+   *
+   * Cancelling on any `touchmove` at all is the version that shipped first, and
+   * it meant the press almost never completed: a finger resting on glass for
+   * 450ms drifts a few pixels, every one of which fired the event. What
+   * distinguishes a press from a scroll is distance, not motion.
+   */
+  const moveHold = (event: React.TouchEvent): void => {
+    const from = holdFrom.current;
+    const touch = event.touches[0];
+    if (!from || !touch) return;
+    const moved = Math.hypot(touch.clientX - from.x, touch.clientY - from.y);
+    if (moved > 10) cancelHold();
   };
 
   useEffect(() => cancelHold, []);
@@ -269,27 +289,41 @@ function Bubble({
               ? 'rounded-2xl rounded-br-md bg-amber-400 text-ink-950'
               : 'rounded-2xl rounded-bl-md bg-ink-800 text-ink-100'
           } ${offer ? 'cursor-pointer select-none touch-manipulation' : ''}`}
-          style={mine ? undefined : { borderLeft: `2px solid ${partnerColour}55` }}
+          style={{
+            ...(mine ? {} : { borderLeft: `2px solid ${partnerColour}55` }),
+            // iOS raises its own selection callout on a long press, directly on
+            // top of the picker the press just opened.
+            ...(offer ? { WebkitTouchCallout: 'none' as const } : {}),
+          }}
           // Double-click covers the fast path on both: browsers deliver a
           // double-tap as dblclick, so one handler serves the gesture people
           // already expect from every other chat app.
           onDoubleClick={offer ? () => send(DEFAULT_REACTION) : undefined}
           onTouchStart={startHold}
           onTouchEnd={cancelHold}
-          onTouchMove={cancelHold}
+          onTouchMove={moveHold}
           onTouchCancel={cancelHold}
           // A long press otherwise raises the selection handles or the context
           // menu on top of the control it just revealed.
           onContextMenu={offer ? (event) => event.preventDefault() : undefined}
         >
-          {picking && (
+          {offer && (
             <div
               role="menu"
               aria-label="Pick a reaction"
               // Stops the window listener that closes it from firing on the
               // press that is choosing something.
               onPointerDown={(event) => event.stopPropagation()}
-              className="absolute -top-11 left-0 z-10 flex animate-fade-in gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-lift"
+              // Hover shows it outright on anything with a pointer — the row
+              // *is* the affordance, and a button that opens a row of buttons
+              // is a step that exists only because touch needed one.
+              //
+              // `(hover: hover)` keeps it off touch devices, where a tap leaves
+              // a sticky :hover behind and the picker would appear on a single
+              // tap, competing with the long press that is supposed to open it.
+              className={`absolute -top-11 left-0 z-10 animate-fade-in gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-lift ${
+                picking ? 'flex' : 'hidden [@media(hover:hover)]:group-hover:flex'
+              }`}
             >
               {REACTIONS.map((reaction) => (
                 <button
@@ -318,9 +352,10 @@ function Bubble({
           <time dateTime={message.at}>{formatTime(message.at)}</time>
           {mine ? <MessageStatus status={message.status} /> : null}
           {/*
-            Keyboard and pointer path to the same picker a long press opens.
-            A press-and-hold is not reachable without a touchscreen, and a
-            feature only some people can use is worse than one nobody can.
+            The keyboard path to the same picker. Hover opens it for a pointer
+            and a long press opens it on touch; neither is reachable from a
+            keyboard, and a feature only some people can use is worse than one
+            nobody can.
           */}
           {offer && (
             <button
@@ -331,7 +366,7 @@ function Bubble({
               }}
               aria-label="React to this message"
               aria-expanded={picking}
-              className="-m-2 touch-manipulation rounded p-2 text-ink-600 opacity-0 transition-opacity hover:text-ink-300 focus-visible:opacity-100 group-hover:opacity-100"
+              className="-m-2 touch-manipulation rounded p-2 text-ink-600 opacity-0 transition-opacity focus-visible:opacity-100"
             >
               <SmilePlus className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
