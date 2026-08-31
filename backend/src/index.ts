@@ -21,6 +21,9 @@ import { createChatServer } from './server';
 import { RazorpayGateway } from './payments/gateway';
 import { PaymentRepository } from './payments/repository';
 import { createPaymentRoutes, type PaymentRoutes } from './payments/routes';
+import { createAuthRoutes, type AuthRoutes } from './accounts/routes';
+import { createOidcClient } from './accounts/oidc';
+import { createConnectionRepository, type ConnectionRepository } from './accounts/connections';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
@@ -144,6 +147,24 @@ async function main(): Promise<void> {
     logger.info('payment routes enabled');
   }
 
+  // Sign-in, and the connections it unlocks. Both need a database: an account
+  // is a row, and a connection is a row. A database that is unreachable
+  // therefore turns sign-in off and leaves chat entirely unaffected, which is
+  // the line `010_accounts.sql` draws and the reason `/ready` reflects Redis
+  // rather than PostgreSQL.
+  let auth: AuthRoutes | null = null;
+  let connections: ConnectionRepository | undefined;
+  if (config.auth.enabled && database !== null) {
+    auth = createAuthRoutes({
+      config,
+      logger,
+      db: database,
+      oidc: createOidcClient(config, logger),
+    });
+    connections = createConnectionRepository(database, logger);
+    logger.info('sign-in enabled');
+  }
+
   const server = createChatServer({
     config,
     logger,
@@ -152,6 +173,8 @@ async function main(): Promise<void> {
     retention,
     metrics,
     payments,
+    auth,
+    connections,
     // The backup job reports inward; nothing here reaches out to look.
     onBackupReported: (ok) => {
       if (ok) backup.recordSuccess();

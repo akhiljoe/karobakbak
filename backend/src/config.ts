@@ -323,6 +323,78 @@ export interface Config {
    * This flag is the server half. Both must say yes, the same shape as
    * `PERSONAS_ENABLED` and the `persona_control` row.
    */
+  /**
+   * Sign-in, through one OIDC provider (§32, D48).
+   *
+   * ---------------------------------------------------------------------------
+   * FREE, AND NOT COUPLED TO PAYMENTS
+   * ---------------------------------------------------------------------------
+   * Signing in is what unlocks saved connections, recent history and friend
+   * requests. None of those is a scarcity worth selling, and all three are the
+   * reason to hold an account at all — so this flag stands alone. Premium is
+   * `PAYMENTS_ENABLED` plus `FILTERS_ENABLED`, and neither gates this.
+   *
+   * ---------------------------------------------------------------------------
+   * THE VENDOR IS NAMED NOWHERE IN THIS BLOCK
+   * ---------------------------------------------------------------------------
+   * Cognito is the intended provider and the config describes plain OIDC, for
+   * the reason the model adapters are split (D-AI-10): the vendor lives behind
+   * one seam and everything else talks to the protocol. A second provider is a
+   * **policy change before it is a config change** — the Privacy Policy names
+   * each processor individually, so this deliberately holds one issuer rather
+   * than a list.
+   */
+  readonly auth: {
+    readonly enabled: boolean;
+    /**
+     * The issuer URL, e.g. `https://cognito-idp.<region>.amazonaws.com/<poolId>`.
+     *
+     * Discovery hangs off this and the `iss` claim is checked against it, so a
+     * wrong value fails loudly at the first sign-in rather than authenticating
+     * somebody against the wrong pool.
+     */
+    readonly issuer: string;
+    /**
+     * Where the browser is sent to sign in. Cognito's hosted UI lives on its own
+     * domain rather than on the issuer, which is why this is separate.
+     */
+    readonly authorizeUrl: string;
+    readonly tokenUrl: string;
+    readonly jwksUrl: string;
+    /** Sent to the browser as a redirect target; not a secret. */
+    readonly clientId: string;
+    /**
+     * Set for a confidential client, empty for a public one.
+     *
+     * The exchange happens server-side either way, so a confidential client
+     * costs nothing here and is strictly better: PKCE alone proves the caller
+     * started the flow, a secret proves it is this server.
+     */
+    readonly clientSecret: string;
+    /** Absolute, and must match the value registered with the provider exactly. */
+    readonly redirectUri: string;
+    /** Where the browser lands after the callback resolves, success or failure. */
+    readonly returnUrl: string;
+    /**
+     * How long a minted session credential lives.
+     *
+     * Absolute, never sliding — `account_credentials.expires_at` says why: a
+     * credential that renews on use never expires for an active user, which is
+     * the property a stolen one benefits from most.
+     */
+    readonly sessionTtlSeconds: number;
+    /** How long the browser has to complete a started sign-in. */
+    readonly flowTtlSeconds: number;
+    /**
+     * Whether to set `Secure` on the cookies.
+     *
+     * Defaults to true and is only turned off for local HTTP. `assertCoherent`
+     * refuses a production start with it off, because the session cookie is a
+     * bearer credential and a cleartext one is a credential in transit.
+     */
+    readonly secureCookies: boolean;
+  };
+
   readonly payments: {
     readonly enabled: boolean;
     /** Razorpay publishable key id. Sent to the browser; not a secret. */
@@ -941,6 +1013,25 @@ export function loadConfig(env: Env = process.env): Config {
       apiKey: str(env, 'PERSONA_API_KEY', ''),
     },
 
+    auth: {
+      enabled: bool(env, 'AUTH_ENABLED', false),
+      issuer: str(env, 'AUTH_ISSUER', ''),
+      authorizeUrl: str(env, 'AUTH_AUTHORIZE_URL', ''),
+      tokenUrl: str(env, 'AUTH_TOKEN_URL', ''),
+      jwksUrl: str(env, 'AUTH_JWKS_URL', ''),
+      clientId: str(env, 'AUTH_CLIENT_ID', ''),
+      clientSecret: str(env, 'AUTH_CLIENT_SECRET', ''),
+      redirectUri: str(env, 'AUTH_REDIRECT_URI', ''),
+      returnUrl: str(env, 'AUTH_RETURN_URL', '/'),
+      // Thirty days. Long enough that signing in is rare, short enough that a
+      // credential lifted from a shared machine dies on its own.
+      sessionTtlSeconds: int(env, 'AUTH_SESSION_TTL_SECONDS', 2_592_000, 300, 31_536_000),
+      // Ten minutes to finish a redirect the user is actively performing. It
+      // bounds how long a state/verifier pair is worth stealing.
+      flowTtlSeconds: int(env, 'AUTH_FLOW_TTL_SECONDS', 600, 60, 3600),
+      secureCookies: bool(env, 'AUTH_SECURE_COOKIES', true),
+    },
+
     payments: {
       enabled: bool(env, 'PAYMENTS_ENABLED', false),
       keyId: str(env, 'RAZORPAY_KEY_ID', ''),
@@ -1325,6 +1416,52 @@ function assertCoherent(config: Config): void {
   // bounding the re-roll rate is the thing being prevented. `configWarnings`
   // carries the same message where it is legal, so it is visible rather than
   // silent.
+  // Sign-in that looks configured and goes nowhere is the failure this file
+  // exists to convert into a startup error. Every one of these is required for
+  // a redirect to complete, and a missing one produces a button that renders,
+  // navigates, and lands on a provider error page the user cannot act on.
+  if (config.auth.enabled) {
+    const missing = (
+      [
+        ['AUTH_ISSUER', config.auth.issuer],
+        ['AUTH_AUTHORIZE_URL', config.auth.authorizeUrl],
+        ['AUTH_TOKEN_URL', config.auth.tokenUrl],
+        ['AUTH_JWKS_URL', config.auth.jwksUrl],
+        ['AUTH_CLIENT_ID', config.auth.clientId],
+        ['AUTH_REDIRECT_URI', config.auth.redirectUri],
+      ] as const
+    )
+      .filter(([, value]) => value.trim() === '')
+      .map(([name]) => name);
+
+    if (missing.length > 0) {
+      throw new ConfigError(
+        `AUTH_ENABLED=true, but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} ` +
+          'not set. Sign-in would render a control that redirects to a provider ' +
+          'error page, which reads as "sign-in is broken" rather than "sign-in is ' +
+          'not configured" (DESIGN.md §32).',
+      );
+    }
+
+    // The one that is not about completeness. The session cookie is a bearer
+    // credential (§28's rule, same as the resume token), so serving it without
+    // `Secure` puts a credential on the wire in cleartext. Allowed off local
+    // HTTP, refused where it would be a real exposure.
+    if (config.isProduction && !config.auth.secureCookies) {
+      throw new ConfigError(
+        'AUTH_SECURE_COOKIES=false in production. The session cookie is a bearer ' +
+          'credential and would be sent over cleartext HTTP.',
+      );
+    }
+
+    // Cheap, and it catches the mistake that produces the most confusing
+    // symptom: the exchange succeeds, the `iss` check fails, and the log says
+    // the token is invalid rather than the pool is wrong.
+    if (!config.auth.issuer.startsWith('https://')) {
+      throw new ConfigError('AUTH_ISSUER must be an https URL — it is checked against the `iss` claim.');
+    }
+  }
+
   if (config.isProduction && config.preference.enabled && !PREFERENCE_LIMITS_ENFORCED) {
     throw new ConfigError(
       'FILTERS_ENABLED=true, but preference matching has no rate limits yet. ' +

@@ -85,6 +85,29 @@ export function newAuditId(): string {
   return `aud_${randomToken()}`;
 }
 
+/**
+ * Identifies one signed-in account (§32).
+ *
+ * Generated here rather than taken from the identity provider's `sub`, which is
+ * the obvious shortcut. Payments reference this key, and handing it to a vendor
+ * means the identifier a financial record is built on is defined by a system
+ * this project does not control — see `014_account_identity.sql`.
+ */
+export function newAccountId(): string {
+  return `acc_${randomToken()}`;
+}
+
+/**
+ * The bearer token a browser holds after signing in.
+ *
+ * 256 bits, like the resume token, and for the same reason: it is stored only
+ * as an unsalted SHA-256, which is safe precisely because there is no
+ * dictionary to defeat when the input is this size.
+ */
+export function newSessionToken(): string {
+  return randomToken(32);
+}
+
 /** Identifies one operator account. Opaque, so it can appear in an audit row. */
 export function newAdminAccountId(): string {
   return `adm_${randomToken()}`;

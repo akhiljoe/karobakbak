@@ -52,6 +52,7 @@ import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
+import type { AuthRoutes } from './accounts/routes';
 import type { RetentionSink } from './storage/sink';
 import type { ConnectionRepository } from './accounts/connections';
 import { hashIp } from './util/ids';
@@ -112,6 +113,13 @@ export interface ChatServerDeps {
    * it lazily, so a process with payments off never loads it.
    */
   payments?: PaymentRoutes | null;
+  /**
+   * The sign-in routes, or null when `AUTH_ENABLED` is false.
+   *
+   * Null rather than a no-op, the same shape as `payments`: an unconfigured
+   * deployment gets no surface at all rather than one that refuses.
+   */
+  auth?: AuthRoutes | null;
 }
 
 export interface ChatServer {
@@ -143,6 +151,7 @@ const FEATURES: ServerFeatures = {
 export function createChatServer(deps: ChatServerDeps): ChatServer {
   const { config, logger, store, clients, retention, metrics } = deps;
   const payments = deps.payments ?? null;
+  const auth = deps.auth ?? null;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
   /**
@@ -386,6 +395,32 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     // the URL constructor throws on a malformed `Host`, and a throw inside a
     // request handler takes the process — and every WebSocket on it — down. A
     // header anybody can set must not be able to do that.
+    // Registered only when sign-in is configured, so an unconfigured build has
+    // no auth surface to probe rather than four routes that refuse.
+    if (auth !== null) {
+      const authRoute =
+        req.method === 'GET' && path === '/auth/start'
+          ? auth.start
+          : req.method === 'GET' && path === '/auth/callback'
+            ? auth.callback
+            : req.method === 'GET' && path === '/auth/session'
+              ? auth.session
+              : req.method === 'POST' && path === '/auth/signout'
+                ? auth.signout
+                : null;
+      if (authRoute !== null) {
+        // Same shape as the payment routes: answer on failure rather than
+        // leaving the socket open until it times out, which hides the only
+        // signal that the route is broken.
+        void authRoute(req, res).catch((err: unknown) => {
+          logger.error('auth route failed', errorFields(err));
+          if (!res.headersSent) json(res, 500, { error: 'internal_error' });
+          else res.end();
+        });
+        return;
+      }
+    }
+
     if (req.method === 'POST' && payments !== null) {
       if (path === '/api/payments/create-order') {
         // `void` with a catch that answers, rather than `.catch(() => {})`.
@@ -498,6 +533,16 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       return;
     }
 
+    // Resolved once, here, because the upgrade is the only moment the request
+    // headers exist — the same reason `country` is resolved here. A failure to
+    // resolve is not a failure to connect: chatting never requires an account,
+    // and the anonymous path has to keep working while sign-in is down, which
+    // is the line `010_accounts.sql` draws from the other direction.
+    let accountId: string | null = null;
+    if (auth !== null) {
+      accountId = await auth.accountForRequest(req);
+    }
+
     if (!isOriginAllowed(req.headers.origin, config.http.allowedOrigins)) {
       // Refused without saying what would have been accepted: the allowlist is
       // not something a caller needs to enumerate.
@@ -601,10 +646,15 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         metrics.resumes.labels('ok').inc();
         const restored = resumed;
         wss.handleUpgrade(req, socket, head, (ws) => {
-          attach(ws, restored.sessionId, restored.ipHash, restored.clientHash, country, {
-            resumeToken: restored.resumeToken,
-            matchId: restored.matchId,
-          });
+          attach(
+            ws,
+            restored.sessionId,
+            restored.ipHash,
+            restored.clientHash,
+            country,
+            { resumeToken: restored.resumeToken, matchId: restored.matchId },
+            accountId,
+          );
         });
         return;
       }
@@ -658,7 +708,15 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     }
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      attach(ws, sessionId, ipHash, clientHash, country, { resumeToken: outcome.resumeToken });
+      attach(
+        ws,
+        sessionId,
+        ipHash,
+        clientHash,
+        country,
+        { resumeToken: outcome.resumeToken },
+        accountId,
+      );
     });
   }
 
@@ -717,6 +775,15 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     /** Resolved at the upgrade; null with no CDN in front. */
     country: string | null,
     session: { resumeToken: string; matchId?: string | null } = { resumeToken: '' },
+    /**
+     * Resolved from the session cookie at the upgrade, never from a frame.
+     *
+     * Held on the connection rather than the session hash because it is a
+     * property of *this socket's* credential. A resumed session re-presents its
+     * cookie and is resolved again, so signing out in one tab cannot leave a
+     * live socket holding an authority the credential no longer grants.
+     */
+    accountId: string | null = null,
   ): void {
     const connection = new SocketConnection({
       socket: ws,
@@ -724,6 +791,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       ipHash,
       clientHash,
       country,
+      accountId,
       config,
       logger,
       onCommand: (command, conn) => handleCommand(command, conn),
