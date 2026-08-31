@@ -43,6 +43,43 @@ export interface RedisClients {
   close(): Promise<void>;
 }
 
+/**
+ * One connection, pointed at whatever topology is configured.
+ *
+ * ioredis reaches a Sentinel set through an options object — `sentinels` plus
+ * the primary's `name` — and a single node through a URL. Those are two
+ * different constructor shapes rather than two spellings of an address, which
+ * is why no value of `REDIS_URL` could ever have produced failover.
+ *
+ * In Sentinel mode the client asks the Sentinels where the primary is, and asks
+ * again whenever its connection drops, so a promotion moves it without anybody
+ * editing configuration. `reconnectOnError` below is the other half of that and
+ * predates it: a client still holding a socket to the demoted primary is not in
+ * error, it is being answered `READONLY`, and without that line it would keep
+ * writing there for good.
+ */
+function createClient(config: Config, connectionName: string): Redis {
+  const base: RedisOptions = { ...baseOptions(config), connectionName };
+
+  if (config.redis.sentinels.length === 0) {
+    return new Redis(config.redis.url, base);
+  }
+
+  return new Redis({
+    ...base,
+    sentinels: config.redis.sentinels.map(({ host, port }) => ({ host, port })),
+    name: config.redis.sentinelName,
+    // Separate on purpose: the Sentinels and the data nodes are different
+    // processes and routinely hold different credentials. Passing one where the
+    // other belongs authenticates against nothing and fails at the first
+    // command — after connecting successfully, which is the confusing part.
+    ...(config.redis.password === '' ? {} : { password: config.redis.password }),
+    ...(config.redis.sentinelPassword === ''
+      ? {}
+      : { sentinelPassword: config.redis.sentinelPassword }),
+  });
+}
+
 function baseOptions(config: Config): RedisOptions {
   return {
     commandTimeout: config.redis.commandTimeoutMs,
@@ -71,11 +108,8 @@ export async function createRedisClients(
   logger: Logger,
   options: { connect?: boolean } = {},
 ): Promise<RedisClients> {
-  const command = new Redis(config.redis.url, { ...baseOptions(config), connectionName: 'command' });
-  const subscriber = new Redis(config.redis.url, {
-    ...baseOptions(config),
-    connectionName: 'subscriber',
-  });
+  const command = createClient(config, 'command');
+  const subscriber = createClient(config, 'subscriber');
 
   const state: Record<'command' | 'subscriber', RedisHealth> = {
     command: 'connecting',

@@ -39,6 +39,12 @@ export interface RateLimit {
   readonly burst: number;
 }
 
+/** One Sentinel to ask "where is the primary right now?". */
+export interface RedisSentinel {
+  readonly host: string;
+  readonly port: number;
+}
+
 export interface Config {
   readonly nodeEnv: string;
   readonly isProduction: boolean;
@@ -66,7 +72,23 @@ export interface Config {
   };
 
   readonly redis: {
+    /**
+     * The direct address. Used when `sentinels` is empty, which is the default
+     * and the single-node deployment.
+     */
     readonly url: string;
+    /**
+     * Sentinel addresses. Non-empty means Sentinel mode: the client asks these
+     * for the current primary instead of connecting to a fixed address, and
+     * follows it when a promotion moves it (D13).
+     */
+    readonly sentinels: readonly RedisSentinel[];
+    /** The primary's name as Sentinel knows it. Required in Sentinel mode. */
+    readonly sentinelName: string;
+    /** Password for the Redis nodes themselves. Empty means no AUTH. */
+    readonly password: string;
+    /** Password for the Sentinels, which is often not the nodes' password. */
+    readonly sentinelPassword: string;
     readonly keyPrefix: string;
     readonly commandTimeoutMs: number;
   };
@@ -533,6 +555,100 @@ function list(env: Env, key: string, fallback: string): string[] {
     .filter((item) => item.length > 0);
 }
 
+/**
+ * How the process reaches Redis: one address, or a Sentinel set to ask.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS REFUSES RATHER THAN FALLS BACK
+ * ---------------------------------------------------------------------------
+ * Redis holds every piece of live matchmaking state, and `/ready` is derived
+ * from its health and nothing else — so losing it takes every backend instance
+ * out of the load balancer at once. D13 rules out Cluster (the Lua scripts
+ * compute which keys they touch while running, so they cannot declare them the
+ * way a Cluster router needs) and names replica failover as the answer instead.
+ * This is that.
+ *
+ * Every bad combination below throws, and none of them defaults to a single
+ * node. That is the entire safety property. A half-specified topology that
+ * quietly connected to one address would look configured, pass every health
+ * check, serve traffic correctly for months, and then take the site down in the
+ * one event it was bought to survive — with the operator believing failover was
+ * in place. There is no error message at that point, because nothing failed:
+ * the client did exactly what it was told.
+ */
+function redisConfig(env: Env): Config['redis'] {
+  const sentinels = redisSentinels(env);
+  const sentinelName = str(env, 'REDIS_SENTINEL_NAME', '');
+  const urlWasSet = (env.REDIS_URL ?? '').trim() !== '';
+
+  if (sentinels.length > 0 && sentinelName === '') {
+    throw new ConfigError(
+      'REDIS_SENTINELS is set but REDIS_SENTINEL_NAME is empty. Sentinel is asked ' +
+        'for a primary *by name*, so without it there is nothing to ask for — and ' +
+        'defaulting to a direct connection here would silently give you the single ' +
+        'node you were trying to stop depending on',
+    );
+  }
+
+  if (sentinelName !== '' && sentinels.length === 0) {
+    throw new ConfigError(
+      'REDIS_SENTINEL_NAME is set but REDIS_SENTINELS is empty. A primary name with ' +
+        'nothing to ask about it is not a topology',
+    );
+  }
+
+  // Deliberately checked against what was *set*, not against the parsed value:
+  // REDIS_URL has a default, so by the time it is a string the two are
+  // indistinguishable. Refusing both together stops a stale REDIS_URL surviving
+  // a migration to Sentinel and leaving it ambiguous which one is live.
+  if (sentinels.length > 0 && urlWasSet) {
+    throw new ConfigError(
+      'REDIS_URL and REDIS_SENTINELS are mutually exclusive. Sentinel mode ignores ' +
+        'a fixed address, so leaving both set means the file says one thing and the ' +
+        'process does another — unset REDIS_URL',
+    );
+  }
+
+  return {
+    url: str(env, 'REDIS_URL', 'redis://localhost:6379'),
+    sentinels,
+    sentinelName,
+    password: str(env, 'REDIS_PASSWORD', ''),
+    sentinelPassword: str(env, 'REDIS_SENTINEL_PASSWORD', ''),
+    keyPrefix: str(env, 'REDIS_KEY_PREFIX', 'chat'),
+    commandTimeoutMs: int(env, 'REDIS_COMMAND_TIMEOUT_MS', 5000, 100, 60_000),
+  };
+}
+
+/**
+ * `host:port,host:port,...`, parsed here so a typo fails at startup.
+ *
+ * The port is required rather than defaulted to 26379. A Sentinel reached on
+ * the wrong port is indistinguishable from one that is down, and a set that is
+ * two-thirds reachable still forms a quorum and still fails over — so the
+ * mistake would hide until the day the remaining Sentinel was the one that
+ * needed to vote.
+ */
+function redisSentinels(env: Env): readonly RedisSentinel[] {
+  return list(env, 'REDIS_SENTINELS', '').map((entry) => {
+    const separator = entry.lastIndexOf(':');
+    if (separator <= 0 || separator === entry.length - 1) {
+      throw new ConfigError(
+        `REDIS_SENTINELS entries must be host:port, got ${JSON.stringify(entry)}`,
+      );
+    }
+    const host = entry.slice(0, separator).trim();
+    const port = Number(entry.slice(separator + 1).trim());
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new ConfigError(
+        `REDIS_SENTINELS entry ${JSON.stringify(entry)} has an invalid port; ` +
+          'expected an integer between 1 and 65535',
+      );
+    }
+    return { host, port };
+  });
+}
+
 function logLevel(env: Env): LogLevel {
   const raw = str(env, 'LOG_LEVEL', 'info').toLowerCase();
   if (raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error') return raw;
@@ -664,11 +780,7 @@ export function loadConfig(env: Env = process.env): Config {
       trustProxyHops: int(env, 'TRUST_PROXY_HOPS', 0, 0, 8),
     },
 
-    redis: {
-      url: str(env, 'REDIS_URL', 'redis://localhost:6379'),
-      keyPrefix: str(env, 'REDIS_KEY_PREFIX', 'chat'),
-      commandTimeoutMs: int(env, 'REDIS_COMMAND_TIMEOUT_MS', 5000, 100, 60_000),
-    },
+    redis: redisConfig(env),
 
     limits: {
       // 500, not 2000: security §11, and it quarters the retained-storage
@@ -1145,6 +1257,24 @@ export function configWarnings(config: Config): string[] {
         'nothing can tell this process a backup succeeded. `BackupsNeverObserved` ' +
         'will fire once the process has been up longer than BACKUP_MAX_AGE_SECONDS, ' +
         'which is correct — there is nothing to restore from.',
+    );
+  }
+  if (config.isProduction && config.redis.sentinels.length === 0) {
+    warnings.push(
+      'REDIS_SENTINELS is empty: this process reaches one Redis at a fixed address, ' +
+        'and every piece of live matchmaking state is in it. `/ready` is derived from ' +
+        'its health alone, so losing it takes every backend out of the load balancer ' +
+        'until somebody repoints REDIS_URL by hand. Legal, and the documented ' +
+        'single-node deployment (D13) — but it is the one component whose failure is ' +
+        'total.',
+    );
+  }
+  if (config.redis.sentinels.length > 0 && config.redis.sentinels.length < 3) {
+    warnings.push(
+      `REDIS_SENTINELS lists ${config.redis.sentinels.length}: fewer than three cannot ` +
+        'form a quorum that tolerates losing one. Two is the worst case — losing either ' +
+        'leaves the other unable to reach a majority, so no failover happens and the ' +
+        'topology performs worse than the single node it replaced.',
     );
   }
   if (!config.blocks.ipDimensionEnabled && !config.blocks.clientDimensionEnabled) {
