@@ -387,12 +387,25 @@ describe('a record the database will never accept', () => {
     expect(broken.spool.stats().records).toBeGreaterThan(0);
 
     // A working database that will still never accept this record.
-    const recovered = ctx.writer({ BREAKER_DRAIN_BATCHES_PER_SEC: '1000' });
-    await recovered.flush();
-    await recovered.flush();
+    //
+    // Two waits, so the bound is short enough to exhaust here and still be a
+    // bound rather than a single attempt. It used to leave the spool on the
+    // first drain, because a record deferred for a missing parent was handed to
+    // the in-memory queue and the file was cleared — which is what F-034 was.
+    // It now waits on disk, so it leaves the spool when its waits run out
+    // instead of when it is first deferred. Bounded either way, which is what
+    // this test is for; the cycle count is not the property.
+    const recovered = ctx.writer({
+      BREAKER_DRAIN_BATCHES_PER_SEC: '1000',
+      RETENTION_MISSING_PARENT_RETRIES: '2',
+    });
+    for (let i = 0; i < 4; i += 1) await recovered.flush();
 
     expect(recovered.snapshot().spool.records).toBe(0);
     expect(recovered.snapshot().breaker).toBe('CLOSED');
+
+    // Gone for the stated reason and counted, never quietly discarded.
+    expect(recovered.snapshot().counters.dropped).toEqual({ 'p3:no_parent': 1 });
   });
 
   /**
@@ -455,6 +468,102 @@ describe('a record the database will never accept', () => {
     const total = Object.values(dropped).reduce((sum, n) => sum + n, 0);
     expect(total).toBe(1);
     expect(Object.keys(dropped)).toEqual(['p3:no_parent']);
+  });
+
+  /**
+   * A record recovering from an outage must not lose its durability on the way
+   * (F-034).
+   *
+   * The salvage pass is shared by the live queue and the spool drain, and it
+   * used to hand everything it rescued to the in-memory queue. On the live path
+   * that is right. On this one it took a record that was on disk *because the
+   * database was down*, moved it into process memory to wait for a parent row,
+   * and then cleared the file -- so a restart in that window lost it with no
+   * counter moving and no line logged.
+   *
+   * The window is not narrow. A container restart is the likely event straight
+   * after a database outage, and the records in it are the ones the spool
+   * exists to protect.
+   *
+   * The second writer is the restart: `ctx.writer()` opens the same spool
+   * directory with a fresh queue, exactly as a new process would.
+   */
+  it('leaves a deferred spool record on disk, so a restart still has it', async () => {
+    const orphan = conversationId();
+
+    const broken = brokenWriterFor(ctx);
+    broken.writer.enqueue(message(orphan));
+    await broken.writer.flush();
+    await broken.writer.flush();
+    expect(broken.spool.stats().records).toBe(1);
+
+    // The database is back, but the parent conversation has not landed -- the
+    // ordinary cross-instance case, not a corrupt record.
+    const recovered = ctx.writer({ BREAKER_DRAIN_BATCHES_PER_SEC: '1000' });
+    await recovered.flush();
+
+    // Deferred, not written and not dropped...
+    expect(await ctx.count('messages')).toBe(0);
+    expect(recovered.snapshot().counters.dropped).toEqual({});
+
+    // ...and still on disk. This is the assertion that fails without the fix:
+    // the record was in the queue of a process that is about to disappear.
+    expect(recovered.snapshot().spool.records).toBe(1);
+
+    // The restart. Nothing carries over from `recovered` but the file.
+    const parent = conversation(orphan);
+    const afterRestart = ctx.writer({ BREAKER_DRAIN_BATCHES_PER_SEC: '1000' });
+    afterRestart.enqueue(parent);
+    await afterRestart.flush();
+    await afterRestart.flush();
+
+    expect(await ctx.count('messages')).toBe(1);
+    expect(afterRestart.snapshot().spool.records).toBe(0);
+  });
+
+  /**
+   * The wait count has to survive the disk round trip too.
+   *
+   * `deferForParent` bounds how long a record may wait, so one whose parent
+   * genuinely never arrives is eventually dropped and counted rather than
+   * circulating for good. Now that a deferred spool record goes back to the
+   * *file*, that counter is only bounded if it is still there when the record
+   * is read back -- and a record whose count resets on every drain would
+   * circulate exactly as long as the spool lives, which is the failure the
+   * bound exists to prevent.
+   *
+   * It survives because the spool serialises the whole `QueuedRecord`. Nothing
+   * asserted that, so a later change to what gets written would break the bound
+   * silently.
+   */
+  it('carries the wait count back to disk, so a parent that never comes still gives up', async () => {
+    const orphan = conversationId();
+
+    const broken = brokenWriterFor(ctx);
+    broken.writer.enqueue(message(orphan));
+    await broken.writer.flush();
+    await broken.writer.flush();
+    expect(broken.spool.stats().records).toBe(1);
+
+    // One wait allowed. The first drain defers and writes the record back with
+    // parentWaits: 1; the second must read that back and give up.
+    const first = ctx.writer({
+      BREAKER_DRAIN_BATCHES_PER_SEC: '1000',
+      RETENTION_MISSING_PARENT_RETRIES: '1',
+    });
+    await first.flush();
+    expect(first.snapshot().spool.records).toBe(1);
+    expect(first.snapshot().counters.dropped).toEqual({});
+
+    // A restart between the two, so the count can only have come from the file.
+    const second = ctx.writer({
+      BREAKER_DRAIN_BATCHES_PER_SEC: '1000',
+      RETENTION_MISSING_PARENT_RETRIES: '1',
+    });
+    await second.flush();
+
+    expect(second.snapshot().counters.dropped).toEqual({ 'p3:no_parent': 1 });
+    expect(second.snapshot().spool.records).toBe(0);
   });
 });
 

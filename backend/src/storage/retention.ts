@@ -102,6 +102,49 @@ const KIND_WRITE_ORDER: readonly RecordKind[] = [
   'admin_audit',
 ];
 
+/**
+ * Where a record goes when this cycle could not write it.
+ *
+ * The salvage pass is shared by the live queue and the spool drain, and it used
+ * to send everything it rescued to the in-memory queue regardless of where the
+ * record came from (F-034). For a record that arrived through `enqueue` that is
+ * right — memory is where it already lived. For one recovered from the spool it
+ * silently downgraded its durability: a record written to disk precisely
+ * because the database was down was moved back into process memory to wait
+ * there, and a restart — the likely event right after a database outage — lost
+ * it with no counter moving.
+ *
+ * So the destination is a parameter. `RetentionQueue` satisfies this shape
+ * already; the spool drain passes a collector instead and writes what it
+ * collects back to disk.
+ */
+interface RetryTarget {
+  /** Waiting on a parent row another instance has not flushed yet. */
+  defer(entries: readonly QueuedRecord[]): void;
+  /** Failed for a reason that may not recur — a timeout, a dead connection. */
+  requeue(entries: readonly QueuedRecord[]): void;
+}
+
+/**
+ * Collects what a spool drain could not write, so it can go back to disk.
+ *
+ * Both methods land in one list because the spool has no lanes and no ordering
+ * to restore: it is rewritten whole and read back in file order. The
+ * distinction between deferring and requeueing is a queue concept, and
+ * flattening it here is deliberate rather than an oversight.
+ */
+class SpoolRetryTarget implements RetryTarget {
+  readonly held: QueuedRecord[] = [];
+
+  defer(entries: readonly QueuedRecord[]): void {
+    this.held.push(...entries);
+  }
+
+  requeue(entries: readonly QueuedRecord[]): void {
+    this.held.push(...entries);
+  }
+}
+
 export class RetentionWriter implements RetentionSink {
   private readonly queue: RetentionQueue;
   private readonly repositories: Repositories;
@@ -328,7 +371,8 @@ export class RetentionWriter implements RetentionSink {
       // rest rather than discarding all of them, which is how a single
       // out-of-order message used to destroy a hundred reports and blocks.
       this.breaker.recordSuccess();
-      await this.salvage(batch, nowMs, err);
+      // These came from the queue, so anything rescued goes back to it.
+      await this.salvage(batch, nowMs, err, this.queue);
     }
   }
 
@@ -340,8 +384,17 @@ export class RetentionWriter implements RetentionSink {
    * tables down with it. The kinds that fail are then handled on their own
    * terms: a missing parent is waited on, anything else is narrowed to the
    * individual rows actually at fault.
+   *
+   * `target` is where anything rescued but unwritten goes. It is a parameter
+   * because this pass serves both the live queue and the spool drain, and those
+   * two must not share a destination (F-034).
    */
-  private async salvage(batch: QueuedRecord[], nowMs: number, err: unknown): Promise<void> {
+  private async salvage(
+    batch: QueuedRecord[],
+    nowMs: number,
+    err: unknown,
+    target: RetryTarget,
+  ): Promise<void> {
     this.logger.warn('a retention batch was rejected; salvaging it per table', {
       batchSize: batch.length,
       ...dbErrorFields(err),
@@ -356,12 +409,16 @@ export class RetentionWriter implements RetentionSink {
 
     for (const kind of KIND_WRITE_ORDER) {
       const group = groups.get(kind);
-      if (group !== undefined) await this.writeGroup(group, nowMs);
+      if (group !== undefined) await this.writeGroup(group, nowMs, target);
     }
   }
 
   /** One kind, one transaction. Narrows further only when it has to. */
-  private async writeGroup(group: QueuedRecord[], nowMs: number): Promise<void> {
+  private async writeGroup(
+    group: QueuedRecord[],
+    nowMs: number,
+    target: RetryTarget,
+  ): Promise<void> {
     try {
       await this.repositories.writeBatch(this.db, group, nowMs);
       this.counters.written += group.length;
@@ -369,12 +426,12 @@ export class RetentionWriter implements RetentionSink {
     } catch (err) {
       if (!isPermanentWriteError(err)) {
         this.breaker.recordFailure(nowMs);
-        this.queue.requeue(group);
+        target.requeue(group);
         return;
       }
 
       if (group.length === 1) {
-        if (isMissingParentError(err)) this.deferForParent(group, err);
+        if (isMissingParentError(err)) this.deferForParent(group, err, target);
         else this.discard(group, err);
         return;
       }
@@ -390,7 +447,7 @@ export class RetentionWriter implements RetentionSink {
       // were dropped because they shared a batch with one whose did not, which
       // is the failure this narrowing exists to prevent, arriving through the
       // one door left open to it.
-      for (const entry of group) await this.writeGroup([entry], nowMs);
+      for (const entry of group) await this.writeGroup([entry], nowMs, target);
     }
   }
 
@@ -403,7 +460,7 @@ export class RetentionWriter implements RetentionSink {
    * whose parent genuinely never arrives is eventually dropped and counted
    * rather than circulating forever.
    */
-  private deferForParent(group: QueuedRecord[], err: unknown): void {
+  private deferForParent(group: QueuedRecord[], err: unknown, target: RetryTarget): void {
     const waiting: QueuedRecord[] = [];
     const exhausted: QueuedRecord[] = [];
 
@@ -413,7 +470,7 @@ export class RetentionWriter implements RetentionSink {
       else waiting.push({ ...entry, parentWaits: waits });
     }
 
-    if (waiting.length > 0) this.queue.defer(waiting);
+    if (waiting.length > 0) target.defer(waiting);
     if (exhausted.length > 0) {
       this.logger.error('discarding retention records whose parent row never arrived', {
         count: exhausted.length,
@@ -465,7 +522,7 @@ export class RetentionWriter implements RetentionSink {
       // failure part-way leaves it intact rather than half-consumed.
       const remaining = spooled.slice(batch.length);
       this.spool.clear();
-      if (remaining.length > 0) this.spool.write(remaining);
+      this.respool(remaining);
     } catch (err) {
       if (isPermanentWriteError(err)) {
         // The database answered and refused the batch, so this is not a breaker
@@ -484,16 +541,58 @@ export class RetentionWriter implements RetentionSink {
         // So salvage on the same terms as the live path: per kind, in
         // dependency order, each in its own transaction, with a missing parent
         // waited on rather than discarded.
+        //
+        // On the same terms, but not to the same place. Salvage returns what it
+        // could not write, and for a spooled record that destination has to be
+        // the spool again (F-034). Sending it to the in-memory queue -- which is
+        // what this did -- took a record that was on disk *because the database
+        // was down*, moved it into process memory to wait for a parent row, and
+        // then cleared the file. A restart in that window lost it silently, and
+        // a restart is the likely event right after a database outage.
         this.breaker.recordSuccess();
-        await this.salvage(batch, nowMs, err);
+        const retry = new SpoolRetryTarget();
+        await this.salvage(batch, nowMs, err, retry);
+
+        // Behind `remaining`, not in front of it, for the reason
+        // `RetentionQueue.defer` puts deferred records at the back of their
+        // lane: a record waiting on a parent has no claim on the next batch,
+        // and leading with it would let a few waiting records block the drain
+        // of everything queued behind them.
         const remaining = spooled.slice(batch.length);
         this.spool.clear();
-        if (remaining.length > 0) this.spool.write(remaining);
+        this.respool([...remaining, ...retry.held]);
         return;
       }
 
       this.logger.error('spool drain failed', { batchSize: batch.length, ...dbErrorFields(err) });
       this.breaker.recordFailure(nowMs);
+    }
+  }
+
+  /**
+   * Put records the drain could not persist back into the spool.
+   *
+   * Everything passed here was read out of the spool moments ago and the file
+   * has just been cleared, so the size bounds cannot bind. The write can still
+   * fail on I/O, though, and a record lost that way must be counted rather than
+   * disappear — counting the loss is the difference between this path and the
+   * one it replaces.
+   *
+   * Deliberately not `toSpool`: that adds what it writes to `counters.spooled`,
+   * and these records were counted when they were spooled the first time.
+   * Counting them again on every drain that defers them would make the metric
+   * mean something other than "records that entered the spool". The shortfall
+   * reuses `spool_full` rather than inventing a reason, so the label set on
+   * `chat_retention_dropped_total` stays what it was; `spool.write` already
+   * counts its own refusals and logs the I/O error behind them.
+   */
+  private respool(entries: QueuedRecord[]): void {
+    if (entries.length === 0) return;
+    const written = this.spool.write(entries);
+    if (written < entries.length) {
+      for (const entry of entries.slice(written)) {
+        this.dropRecord(entry.priority, 'spool_full', entry.record);
+      }
     }
   }
 
