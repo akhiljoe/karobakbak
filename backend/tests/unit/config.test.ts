@@ -436,6 +436,30 @@ describe('loadConfig — preference matching (D44)', () => {
     });
   });
 
+  it('refuses to ship the preference in production without its rate limits', () => {
+    // The pairing §29.4 records: the cooldown and the hourly budget are part of
+    // D44, not later hardening, because they are what answers D37's targeting
+    // objection. `FILTERS_ENABLED` is one environment variable, and the person
+    // most likely to set it — somebody holding two weeks of data — is the least
+    // likely to remember the limits were never written.
+    const live = baseEnv({
+      NODE_ENV: 'production',
+      FILTERS_ENABLED: 'true',
+      IP_HASH_SALT: 'a-long-enough-production-salt-value',
+      ALLOWED_ORIGINS: 'https://karobakbak.example',
+    });
+    expect(() => loadConfig(live)).toThrow(ConfigError);
+    expect(() => loadConfig(live)).toThrow(/PREFERENCE_LIMITS_ENFORCED/);
+  });
+
+  it('allows it outside production, and says so out loud', () => {
+    // Turning it on locally is how the feature is exercised and how it will be
+    // judged against real numbers. Legal, and never silent.
+    const config = loadConfig(baseEnv({ FILTERS_ENABLED: 'true' }));
+    expect(config.preference.enabled).toBe(true);
+    expect(configWarnings(config).join(' ')).toMatch(/no rate limits yet/);
+  });
+
   it('refuses a wide sample that is not wider than the ordinary one', () => {
     // Equal is refused too: an escalation that considers the same number of
     // candidates is a second pass through the pool for nothing.
