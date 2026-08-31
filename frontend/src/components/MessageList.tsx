@@ -21,7 +21,43 @@
  * package — the message came from a stranger and is treated as data.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Heart } from 'lucide-react';
+import { SmilePlus } from 'lucide-react';
+
+import { REACTIONS } from '../protocol/types';
+
+/**
+ * What each reaction looks like, and what it is called.
+ *
+ * The wire carries a name — `laugh`, never a glyph — so the picture is decided
+ * here and can change without touching the protocol, a stored value or the
+ * console. Emoji rather than icons because these are five things everybody
+ * already recognises, and drawing them ourselves would make them worse.
+ */
+const REACTION_GLYPHS: Record<string, string> = {
+  like: '👍',
+  heart: '❤️',
+  laugh: '😂',
+  wow: '😮',
+  sad: '😢',
+};
+
+const REACTION_LABELS: Record<string, string> = {
+  like: 'Like',
+  heart: 'Love',
+  laugh: 'Laugh',
+  wow: 'Wow',
+  sad: 'Sad',
+};
+
+/**
+ * What a double-tap sends.
+ *
+ * The fast path needs one answer and this is it: a like is the least loaded
+ * thing to send by accident, which matters when the gesture is two taps on the
+ * message itself. Anything more specific belongs behind the picker, where it
+ * was chosen on purpose.
+ */
+const DEFAULT_REACTION = 'like';
 
 import { clientConfig } from '../config';
 import type { ChatMessage } from '../state/machine';
@@ -45,7 +81,7 @@ interface MessageListProps {
   /** Where the stranger is connecting from, for the opening line. */
   partnerCountry?: string | null;
   /** React to one of the stranger's messages, or take it back. */
-  onReact?: (messageId: string, active: boolean) => void;
+  onReact?: (messageId: string, reaction: string, active: boolean) => void;
 }
 
 export function MessageList({
@@ -160,21 +196,18 @@ function Bubble({
   message: ChatMessage;
   grouped: boolean;
   partnerColour: string;
-  onReact?: (messageId: string, active: boolean) => void;
+  onReact?: (messageId: string, reaction: string, active: boolean) => void;
 }): JSX.Element {
   const mine = message.from === 'you';
   // Only the stranger's messages. Reacting to your own is a mis-tap rather than
   // a feature, and offering it would make the gesture ambiguous everywhere.
-  const reactable = !mine && onReact !== undefined;
-  const reacted = message.reactions?.you !== undefined;
-  // Offered whether or not one is already there: the same control adds it and
-  // takes it back, so there is never a state the gesture cannot reach.
-  const offer = reactable;
+  const offer = !mine && onReact !== undefined;
+  const yours = message.reactions?.you;
 
-  // Revealed by a long press. Hover does the same thing on a pointer device
-  // through `group-hover`, which touch has no equivalent of — a tap is either a
-  // click or nothing, so the affordance has to be summoned deliberately.
-  const [held, setHeld] = useState(false);
+  // The picker, opened by a long press on touch and by the control beside the
+  // timestamp with a pointer or a keyboard. Touch has no hover to reveal
+  // anything with, so the affordance has to be summoned deliberately.
+  const [picking, setPicking] = useState(false);
   const holdTimer = useRef<number | null>(null);
 
   const cancelHold = (): void => {
@@ -187,19 +220,40 @@ function Bubble({
     cancelHold();
     // Long enough not to fire while somebody is scrolling past, short enough
     // to feel like a press rather than a wait.
-    holdTimer.current = window.setTimeout(() => setHeld(true), 450);
+    holdTimer.current = window.setTimeout(() => setPicking(true), 450);
   };
 
   useEffect(() => cancelHold, []);
 
+  // Dismissed by anything that is not a choice — a tap elsewhere, a scroll, or
+  // Escape. A picker that can only be closed by choosing is a trap on a phone,
+  // where there is no cursor to move away.
+  useEffect(() => {
+    if (!picking) return;
+    const close = (): void => setPicking(false);
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [picking]);
+
   // The id the *partner* knows this message by. Our own messages carry a local
   // id until the ack lands, and a reaction naming that would match nothing on
   // the other side.
-  const react = (): void => {
-    setHeld(false);
-    // Toggle. Removing is `active: false` rather than a separate command,
-    // mirroring `typing` — stopping is an event, not the absence of one.
-    onReact?.(message.serverId ?? message.id, !reacted);
+  const send = (reaction: string): void => {
+    setPicking(false);
+    // Choosing the one already there takes it back, so the picker never has a
+    // dead option and removal never needs a control of its own. Choosing a
+    // different one replaces it in a single frame: the receiver stores one
+    // reaction per side, so there is nothing to clear first.
+    onReact?.(message.serverId ?? message.id, reaction, yours !== reaction);
   };
 
   return (
@@ -219,7 +273,7 @@ function Bubble({
           // Double-click covers the fast path on both: browsers deliver a
           // double-tap as dblclick, so one handler serves the gesture people
           // already expect from every other chat app.
-          onDoubleClick={offer ? react : undefined}
+          onDoubleClick={offer ? () => send(DEFAULT_REACTION) : undefined}
           onTouchStart={startHold}
           onTouchEnd={cancelHold}
           onTouchMove={cancelHold}
@@ -228,31 +282,58 @@ function Bubble({
           // menu on top of the control it just revealed.
           onContextMenu={offer ? (event) => event.preventDefault() : undefined}
         >
+          {picking && (
+            <div
+              role="menu"
+              aria-label="Pick a reaction"
+              // Stops the window listener that closes it from firing on the
+              // press that is choosing something.
+              onPointerDown={(event) => event.stopPropagation()}
+              className="absolute -top-11 left-0 z-10 flex animate-fade-in gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-1 shadow-lift"
+            >
+              {REACTIONS.map((reaction) => (
+                <button
+                  key={reaction}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => send(reaction)}
+                  aria-label={REACTION_LABELS[reaction]}
+                  aria-pressed={yours === reaction}
+                  className={`touch-manipulation rounded-full px-1.5 py-1 text-base leading-none transition-transform hover:scale-125 ${
+                    yours === reaction ? 'bg-ink-800' : ''
+                  }`}
+                >
+                  {REACTION_GLYPHS[reaction]}
+                </button>
+              ))}
+            </div>
+          )}
           {renderBody(message)}
-          <Reactions reactions={message.reactions} onRemove={reacted ? react : undefined} />
+          <Reactions
+            reactions={message.reactions}
+            onRemove={yours === undefined ? undefined : () => send(yours)}
+          />
         </div>
         <span className="mt-1 flex items-center gap-1.5 px-1 text-[0.65rem] text-ink-500">
           <time dateTime={message.at}>{formatTime(message.at)}</time>
           {mine ? <MessageStatus status={message.status} /> : null}
           {/*
-            Keyboard and screen-reader path for the same action. A double-tap is
-            not reachable without a pointer, and a feature only some people can
-            use is worse than one nobody can.
+            Keyboard and pointer path to the same picker a long press opens.
+            A press-and-hold is not reachable without a touchscreen, and a
+            feature only some people can use is worse than one nobody can.
           */}
           {offer && (
             <button
               type="button"
-              onClick={react}
-              aria-label={reacted ? 'Remove your reaction' : 'React with a heart'}
-              aria-pressed={reacted}
-              className={`-m-2 touch-manipulation rounded p-2 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100 ${
-                held || reacted ? 'opacity-100' : 'opacity-0'
-              } ${reacted ? 'text-rose-400' : 'text-ink-600'}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPicking((open) => !open);
+              }}
+              aria-label="React to this message"
+              aria-expanded={picking}
+              className="-m-2 touch-manipulation rounded p-2 text-ink-600 opacity-0 transition-opacity hover:text-ink-300 focus-visible:opacity-100 group-hover:opacity-100"
             >
-              <Heart
-                className={`h-3 w-3 ${reacted ? 'fill-rose-400' : ''}`}
-                aria-hidden="true"
-              />
+              <SmilePlus className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           )}
         </span>
@@ -277,14 +358,29 @@ function Reactions({
   /** Present only when one of these is ours to take back. */
   onRemove?: () => void;
 }): JSX.Element | null {
-  if (!reactions?.you && !reactions?.partner) return null;
-  const both = reactions.you !== undefined && reactions.partner !== undefined;
-  const label = both ? 'You both reacted' : reactions.you ? 'You reacted' : 'They reacted';
+  const yours = reactions?.you;
+  const theirs = reactions?.partner;
+  if (yours === undefined && theirs === undefined) return null;
+
+  const same = yours !== undefined && yours === theirs;
+  const shown = same
+    ? [yours]
+    : ([yours, theirs].filter((value) => value !== undefined) as string[]);
+  const label =
+    yours !== undefined && theirs !== undefined
+      ? 'You both reacted'
+      : yours !== undefined
+        ? 'You reacted'
+        : 'They reacted';
 
   const body = (
     <>
-      <Heart className="h-2.5 w-2.5 fill-rose-400 text-rose-400" aria-hidden="true" />
-      {both && <span className="text-[0.6rem] font-medium text-ink-300">2</span>}
+      {shown.map((reaction) => (
+        <span key={reaction} className="text-[0.7rem] leading-none">
+          {REACTION_GLYPHS[reaction] ?? reaction}
+        </span>
+      ))}
+      {same && <span className="text-[0.6rem] font-medium text-ink-300">2</span>}
     </>
   );
 
@@ -293,8 +389,8 @@ function Reactions({
 
   // Tapping your own reaction takes it back — the gesture people already have
   // from every other chat app, and the only one big enough to hit reliably.
-  // The badge is 20px of ink; the padding around it carries the rest of the
-  // touch target without moving anything on screen.
+  // The badge is small on purpose; `after:-inset-3` carries the touch target
+  // out to something a thumb can find without moving a pixel on screen.
   if (onRemove === undefined) {
     return (
       <span className={chip} aria-label={label}>
@@ -305,7 +401,13 @@ function Reactions({
   return (
     <button
       type="button"
-      onClick={onRemove}
+      onClick={(event) => {
+        event.stopPropagation();
+        onRemove();
+      }}
+      // The badge sits inside the bubble, whose double-click adds a reaction.
+      // Without this a quick double-tap on the badge removes it and puts it
+      // straight back.
       onDoubleClick={(event) => event.stopPropagation()}
       aria-label="Remove your reaction"
       className={`${chip} touch-manipulation after:absolute after:-inset-3 after:content-[''] hover:border-ink-600`}

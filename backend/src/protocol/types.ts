@@ -809,11 +809,16 @@ export interface MessageAckPayload {
  * set — an arbitrary emoji, or free text — is a content field arriving through
  * a path built to carry none, and it would need moderating like a message body.
  *
- * One value today. It stays a list so a second is a list change rather than a
- * protocol change, and so the wire always says which reaction was sent instead
- * of leaving it implied.
+ * Five, and the list is the whole vocabulary: a client may send nothing else
+ * and a client may receive nothing else. Adding a sixth is a change here and
+ * nowhere else on the server, which is what the closed set buys.
+ *
+ * Named by meaning rather than by glyph — `laugh`, not an emoji — so the wire
+ * value survives a client rendering it differently, a console reading it years
+ * later, and a platform where the character does not exist. The picture is the
+ * frontend's business.
  */
-export const REACTIONS = ['heart'] as const;
+export const REACTIONS = ['like', 'heart', 'laugh', 'wow', 'sad'] as const;
 export type Reaction = (typeof REACTIONS)[number];
 
 export function isReaction(value: unknown): value is Reaction {
