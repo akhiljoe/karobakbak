@@ -713,6 +713,32 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
  * Named rather than repeated, because it is compared in two places and a
  * typo in either would silently disable the check that matters.
  */
+/**
+ * Whether the two limits D44 depends on are actually enforced yet.
+ *
+ * ---------------------------------------------------------------------------
+ * FLIP THIS IN THE COMMIT THAT BUILDS THEM, AND NOT BEFORE
+ * ---------------------------------------------------------------------------
+ * §29.4 records the cooldown and the hourly budget as **part of** the preference
+ * decision rather than as later hardening, because they are what answers D37's
+ * second objection: a preference is a preference, but a preference plus fast
+ * re-rolling is a scanning tool aimed at whichever group is preferred for.
+ *
+ * They are configured — `PREFERENCE_COOLDOWN_MS` and `PREFERENCE_HOURLY_BUDGET`
+ * both parse and both have defaults — and nothing reads them. Configuration that
+ * looks applied and is not is the failure this repository keeps finding: it is
+ * `SPOOL_BACKEND=redis` accepted and ignored (F-006), and it is a Sentinel
+ * topology that quietly falls back to one node.
+ *
+ * `FILTERS_ENABLED` is one environment variable. Somebody with two weeks of data
+ * in hand is exactly the person who would set it, and exactly the person who
+ * would not remember that these two were never written. So the process refuses
+ * to start instead of relying on them remembering.
+ *
+ * Deleting the check is not the way to satisfy it. Building the limits is.
+ */
+export const PREFERENCE_LIMITS_ENFORCED = false;
+
 export const DEFAULT_IP_HASH_SALT = 'change-me-in-production';
 
 /**
@@ -1277,6 +1303,27 @@ function assertCoherent(config: Config): void {
     );
   }
 
+  // Refuses the one combination that ships an unprotected preference: the
+  // feature on, with the limits that bound its abuse not yet written. The
+  // message names the constant to flip and the section that says why, because a
+  // startup failure whose fix is unclear gets solved by deleting the check.
+  //
+  // Production only, exactly like the origin allowlist above. Turning the
+  // preference on locally is how it is tested and how it will be evaluated
+  // against two weeks of real numbers; shipping it to strangers with nothing
+  // bounding the re-roll rate is the thing being prevented. `configWarnings`
+  // carries the same message where it is legal, so it is visible rather than
+  // silent.
+  if (config.isProduction && config.preference.enabled && !PREFERENCE_LIMITS_ENFORCED) {
+    throw new ConfigError(
+      'FILTERS_ENABLED=true, but preference matching has no rate limits yet. ' +
+        'PREFERENCE_COOLDOWN_MS and PREFERENCE_HOURLY_BUDGET are configured and ' +
+        'nothing reads them, so a preference plus fast re-rolling is a scanning ' +
+        'tool with nothing bounding it (DESIGN.md §29.4, D37). Build the two ' +
+        'limits and set PREFERENCE_LIMITS_ENFORCED to true in the same commit.',
+    );
+  }
+
   // The wider look has to actually be wider. Set below the ordinary sample it
   // reads as configured and silently does the opposite of its name: the
   // escalation pass would consider *fewer* candidates than the one that just
@@ -1316,6 +1363,14 @@ export function configWarnings(config: Config): string[] {
         'nothing can tell this process a backup succeeded. `BackupsNeverObserved` ' +
         'will fire once the process has been up longer than BACKUP_MAX_AGE_SECONDS, ' +
         'which is correct — there is nothing to restore from.',
+    );
+  }
+  if (config.preference.enabled && !PREFERENCE_LIMITS_ENFORCED) {
+    warnings.push(
+      'FILTERS_ENABLED is on and preference matching has no rate limits yet: ' +
+        'PREFERENCE_COOLDOWN_MS and PREFERENCE_HOURLY_BUDGET are configured and ' +
+        'nothing reads them. Fine for evaluating the feature; it is a startup ' +
+        'failure under NODE_ENV=production (DESIGN.md §29.4).',
     );
   }
   if (config.isProduction && config.redis.sentinels.length === 0) {
