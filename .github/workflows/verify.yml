@@ -60,10 +60,21 @@ jobs:
       # a Dockerfile or an nginx config breaks the image. Git will normalise on
       # commit, but a file committed from a tool that wrote CRLF and bypassed
       # that would not be caught by any test — so it is caught here.
+      #
+      # Matched positively on `w/crlf` rather than by excluding the endings that
+      # are acceptable. The exclusion list was `w/lf` and `w/none`, which quietly
+      # meant "any file that is not one of these two is a failure" — and a binary
+      # file is neither. It reports `w/-text`, so the first PNG committed to this
+      # repository turned this step red and kept it red, for a file that has no
+      # line endings to get wrong.
+      #
+      # Listing the acceptable endings cannot be completed correctly, because the
+      # set grows whenever git learns a new one. Naming the single unacceptable
+      # ending can.
       - name: No CRLF in tracked files
         run: |
-          if git ls-files --eol | grep -v 'w/lf' | grep -v 'w/none'; then
-            echo "::error::tracked files above are not LF in the working tree"
+          if git ls-files --eol | grep 'w/crlf'; then
+            echo "::error::tracked files above have CRLF in the working tree"
             exit 1
           fi
 
