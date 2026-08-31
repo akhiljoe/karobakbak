@@ -118,6 +118,23 @@ export interface ChatState {
   readonly partnerAway: string | null;
   readonly reportSent: boolean;
   /**
+   * Whether *you* have saved this stranger (§31).
+   *
+   * Your own press and nothing about theirs. The server answers with
+   * `connection_state`, which carries only the caller's own state, so this can
+   * never be a window onto what the other person did.
+   */
+  readonly connectionSaved: boolean;
+  /**
+   * Both of you saved, and the connection exists.
+   *
+   * Separate from `connectionSaved` rather than a third value on it, because
+   * the two answer different questions and only one of them is reversible: a
+   * save can be withdrawn while the conversation runs, a connection cannot —
+   * once made it is removed from the friend list, by one person, later.
+   */
+  readonly connectionMade: boolean;
+  /**
    * The user asked to go home and the server has not confirmed it yet.
    *
    * Leaving a conversation is two commands — `skip` ends the match, then
@@ -197,6 +214,8 @@ export const initialState: ChatState = {
   resumeGraceSeconds: 0,
   partnerAway: null,
   reportSent: false,
+  connectionSaved: false,
+  connectionMade: false,
   leaving: false,
   searchPending: false,
   resumeToken: null,
@@ -219,6 +238,8 @@ export type Action =
   | { type: 'partner_returned'; matchId: string }
   | { type: 'partner_left'; matchId: string }
   | { type: 'report_ack' }
+  | { type: 'connection_state'; matchId: string; saved: boolean }
+  | { type: 'connection_made'; matchId: string }
   | { type: 'server_error'; payload: ErrorPayload }
   | { type: 'server_shutdown' }
   /* local intents, applied optimistically where the server cannot contradict them */
@@ -253,6 +274,12 @@ function clearedConversation(state: ChatState): ChatState {
     messages: [],
     partnerTyping: false,
     reportSent: false,
+    // Both cleared here for the reason `partnerAway` is: they describe *this*
+    // conversation. A saved flag surviving into the next one would show a
+    // pressed button for a stranger who was never saved, and a `connectionMade`
+    // surviving would claim a connection with somebody who does not have one.
+    connectionSaved: false,
+    connectionMade: false,
     // Cleared with everything else, and its absence here was a real fault: a
     // held seat belongs to *this* conversation, so a skip taken while the
     // stranger was away carried the flag into the next one. The composer is
@@ -530,6 +557,24 @@ export function reduce(state: ChatState, action: Action): ChatState {
         screen: 'ended',
         endReason: 'you_blocked',
         notice: 'Blocked. You will not be matched with them again.',
+      };
+
+    case 'connection_state':
+      // Matched against the live conversation, because a late ack for a
+      // conversation that has ended would light the button in the next one.
+      if (state.matchId !== action.matchId) return state;
+      return { ...state, connectionSaved: action.saved };
+
+    case 'connection_made':
+      if (state.matchId !== action.matchId) return state;
+      // `connectionSaved` is forced true rather than left alone. This frame can
+      // only exist because both sides pressed, so a client whose own
+      // `connection_state` never arrived still shows a coherent pair.
+      return {
+        ...state,
+        connectionSaved: true,
+        connectionMade: true,
+        notice: 'Connected. You can find each other later.',
       };
 
     case 'report_ack':
