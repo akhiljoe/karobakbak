@@ -309,6 +309,7 @@ export function App(): JSX.Element {
               onBlockAndNext={blockAndNext}
               onSend={chat.send}
               onTyping={chat.typing}
+              onReact={chat.react}
               onSkip={chat.skip}
               onCancelSearch={chat.leave}
               onOpenSafety={() => setSafetyOpen(true)}
@@ -341,7 +342,7 @@ export function App(): JSX.Element {
         conversation, which is the thing the comment in `Root.tsx` is promising
         does not exist.
       */}
-      {!showShell && <SiteFooter />}
+      {!showShell && <SiteFooter width="full" />}
 
       {/* Unmounted with its button: nothing can open it, so nothing renders it. */}
       {FILTERS_AVAILABLE && (

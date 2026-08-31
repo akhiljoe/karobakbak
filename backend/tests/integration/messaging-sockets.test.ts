@@ -636,3 +636,64 @@ describe('a message cannot outlive its conversation (I6)', () => {
     }
   });
 });
+
+/**
+ * Reactions, over real sockets, both directions.
+ *
+ * Written because the feature failed exactly here when first used: the sender
+ * saw their own heart — applied locally and optimistically — and the partner
+ * received nothing. A local echo is not evidence of delivery, and only a second
+ * socket can tell the difference.
+ */
+describe('reactions reach the other person', () => {
+  it('delivers a reaction to a partner on the same instance', async () => {
+    const { alice, bob } = await pairOnOneInstance();
+
+    alice.command('message', { text: 'hello' }, 'c_1');
+    const received = payloadOf<{ messageId: string }>(await bob.waitForFrame('message'));
+
+    bob.command('react', { messageId: received.messageId, reaction: 'heart' });
+
+    const reacted = payloadOf<{ messageId: string; reaction: string; active: boolean }>(
+      await alice.waitForFrame('partner_reacted'),
+    );
+    expect(reacted.messageId).toBe(received.messageId);
+    expect(reacted.reaction).toBe('heart');
+    // Absent `active` means added, so an older client that only ever adds keeps
+    // working against a server that understands removal.
+    expect(reacted.active).toBe(true);
+  });
+
+  it('delivers the removal of a reaction', async () => {
+    // The state changed, so it is sent. Removing is not a claim that the
+    // partner un-saw it; it is a claim that the heart is no longer there.
+    const { alice, bob } = await pairOnOneInstance();
+
+    alice.command('message', { text: 'hello' }, 'c_1');
+    const received = payloadOf<{ messageId: string }>(await bob.waitForFrame('message'));
+
+    bob.command('react', { messageId: received.messageId, reaction: 'heart', active: true });
+    await alice.waitForFrame('partner_reacted');
+
+    bob.command('react', { messageId: received.messageId, reaction: 'heart', active: false });
+    const removal = await alice.next('partner_reacted');
+    expect(payloadOf<{ active: boolean }>(removal).active).toBe(false);
+  });
+
+  it('delivers a reaction across instances', async () => {
+    // The Pub/Sub path, where the event is encoded, published, decoded by the
+    // other instance and re-validated on the way in.
+    const { alice, bob } = await pairAcrossInstances();
+
+    alice.command('message', { text: 'hello' }, 'c_1');
+    const received = payloadOf<{ messageId: string }>(await bob.waitForFrame('message'));
+
+    bob.command('react', { messageId: received.messageId, reaction: 'heart' });
+
+    const reacted = payloadOf<{ messageId: string; reaction: string }>(
+      await alice.waitForFrame('partner_reacted'),
+    );
+    expect(reacted.messageId).toBe(received.messageId);
+    expect(reacted.reaction).toBe('heart');
+  });
+});

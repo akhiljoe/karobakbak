@@ -183,6 +183,7 @@ describe('loadConfig — per-command rate limits (R7)', () => {
       'leave_chat',
       'leave_queue',
       'message',
+      'react',
       'report',
       'skip',
       'typing',

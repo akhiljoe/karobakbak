@@ -175,3 +175,60 @@ describe('building the recipient frame', () => {
     expect(toClientFrame({ event: 'session_evicted', matchId: 'm_1', reason: 'reaped' })).toBeNull();
   });
 });
+
+/**
+ * Reactions cross the bus like any other event, and are rechecked on arrival.
+ *
+ * The sending instance validated the frame, and that is not a reason to trust
+ * what comes back off Pub/Sub: during a rolling deploy the sender is running a
+ * different build, and this decode is the boundary that decides what reaches a
+ * socket.
+ */
+describe('partner_reacted', () => {
+  function wire(data: Record<string, unknown>): string {
+    return JSON.stringify({
+      v: SESSION_EVENT_VERSION,
+      event: 'partner_reacted',
+      matchId: 'm_1',
+      at: AT,
+      data,
+    });
+  }
+
+  it('decodes a well-formed reaction', () => {
+    expect(decodeSessionEvent(wire({ messageId: 'msg_1', reaction: 'heart' }))).toEqual({
+      event: 'partner_reacted',
+      matchId: 'm_1',
+      messageId: 'msg_1',
+      reaction: 'heart',
+      // Absent means added, so a sender that predates removal still decodes.
+      active: true,
+    });
+  });
+
+  it('refuses a reaction outside the closed list', () => {
+    // The set is closed so that a reaction can never become a content field
+    // arriving through a path built to carry none. An instance that learned a
+    // new value must not be able to push it onto a client that has not.
+    expect(decodeSessionEvent(wire({ messageId: 'msg_1', reaction: 'skull' }))).toBeNull();
+    expect(decodeSessionEvent(wire({ messageId: 'msg_1', reaction: '' }))).toBeNull();
+    expect(decodeSessionEvent(wire({ messageId: 'msg_1' }))).toBeNull();
+  });
+
+  it('refuses a missing or empty message id', () => {
+    expect(decodeSessionEvent(wire({ reaction: 'heart' }))).toBeNull();
+    expect(decodeSessionEvent(wire({ messageId: '', reaction: 'heart' }))).toBeNull();
+    expect(decodeSessionEvent(wire({ messageId: 42, reaction: 'heart' }))).toBeNull();
+  });
+
+  it('becomes a client frame carrying exactly what it received', () => {
+    const event = decodeSessionEvent(wire({ messageId: 'msg_1', reaction: 'heart' }));
+    expect(event).not.toBeNull();
+    if (event === null) return;
+    expect(toClientFrame(event)).toMatchObject({
+      type: 'partner_reacted',
+      version: PROTOCOL_VERSION,
+      payload: { matchId: 'm_1', messageId: 'msg_1', reaction: 'heart', active: true },
+    });
+  });
+});

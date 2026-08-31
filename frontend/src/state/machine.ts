@@ -30,6 +30,7 @@ import type {
   MessageAckPayload,
   MessageAckStatus,
   MessageContentType,
+  PartnerReactedPayload,
   PartnerTypingPayload,
   PresencePayload,
   QueueStatusPayload,
@@ -46,11 +47,33 @@ export type OutgoingStatus = 'sending' | 'sent' | 'withheld' | 'undelivered' | '
 export interface ChatMessage {
   /** Local key. For our own messages this is the envelope id we generated. */
   readonly id: string;
+  /**
+   * The id the **server** gave this message, once it is known.
+   *
+   * The two sides of a conversation key the same message differently: the
+   * author holds their own envelope id until the ack arrives, while the
+   * recipient has only ever known the server's. Anything that refers to a
+   * message *across* the socket — a reaction, and anything like it later — has
+   * to speak the server's id, so it is carried here rather than overwriting
+   * `id` and remounting the bubble mid-conversation.
+   */
+  readonly serverId?: string;
   readonly from: 'you' | 'partner';
   readonly type: MessageContentType | string;
   readonly text: string;
   readonly at: string;
   readonly status?: OutgoingStatus;
+  /**
+   * Reactions on this message, by who sent them.
+   *
+   * Held here and nowhere else. The server stores nothing (D-INTAKE-4), so this
+   * is the only record a reaction ever has, and it dies with the conversation
+   * exactly as the conversation does.
+   */
+  readonly reactions?: {
+    readonly you?: string;
+    readonly partner?: string;
+  };
 }
 
 /** Why the last conversation ended, for the notice on the ended screen. */
@@ -189,6 +212,9 @@ export type Action =
   | { type: 'message'; payload: IncomingMessagePayload }
   | { type: 'message_ack'; payload: MessageAckPayload }
   | { type: 'partner_typing'; payload: PartnerTypingPayload }
+  | { type: 'partner_reacted'; payload: PartnerReactedPayload }
+  /** Our own reaction, applied locally the moment it is sent. */
+  | { type: 'user_reacted'; messageId: string; reaction: string; active: boolean }
   | { type: 'partner_reconnecting'; matchId: string; until: string }
   | { type: 'partner_returned'; matchId: string }
   | { type: 'partner_left'; matchId: string }
@@ -227,6 +253,16 @@ function clearedConversation(state: ChatState): ChatState {
     messages: [],
     partnerTyping: false,
     reportSent: false,
+    // Cleared with everything else, and its absence here was a real fault: a
+    // held seat belongs to *this* conversation, so a skip taken while the
+    // stranger was away carried the flag into the next one. The composer is
+    // disabled while it is set, so the next conversation opened unable to send
+    // anything, under a banner counting down a deadline that had already
+    // passed — for a stranger who was never involved.
+    //
+    // Skipping while a seat is held is deliberate and supported: the user asked
+    // for somebody else rather than waiting out the window.
+    partnerAway: null,
   };
 }
 
@@ -349,6 +385,7 @@ export function reduce(state: ChatState, action: Action): ChatState {
           ...state.messages,
           {
             id: action.payload.messageId,
+            serverId: action.payload.messageId,
             from: 'partner',
             type: action.payload.type,
             text: action.payload.text,
@@ -367,6 +404,31 @@ export function reduce(state: ChatState, action: Action): ChatState {
         ],
       };
 
+    case 'partner_reacted':
+    case 'user_reacted': {
+      const side = action.type === 'user_reacted' ? 'you' : 'partner';
+      const messageId =
+        action.type === 'user_reacted' ? action.messageId : action.payload.messageId;
+      const reaction = action.type === 'user_reacted' ? action.reaction : action.payload.reaction;
+      const active = action.type === 'user_reacted' ? action.active : action.payload.active;
+      // Applied optimistically for our own, because there is no acknowledgement
+      // to wait for: the command is fire-and-forget and a spinner on a heart
+      // would be heavier than the thing it describes.
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          // Either key: our own messages are keyed locally until the ack lands,
+          // and a reaction can arrive against the server's id before then.
+          message.serverId === messageId || message.id === messageId
+            ? {
+                ...message,
+                reactions: { ...message.reactions, [side]: active ? reaction : undefined },
+              }
+            : message,
+        ),
+      };
+    }
+
     case 'message_ack': {
       const id = action.payload.clientMsgId;
       if (id === null) return state;
@@ -376,6 +438,8 @@ export function reduce(state: ChatState, action: Action): ChatState {
           message.id === id
             ? {
                 ...message,
+                // The id the partner will use when referring to this message.
+                serverId: action.payload.messageId,
                 // "sent", never "read": the ack means accepted and routed
                 // towards the partner (D14), which is all the protocol
                 // promises. `withheld` means policy stopped it and `undelivered`

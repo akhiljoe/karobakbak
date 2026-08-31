@@ -29,6 +29,7 @@ export const CLIENT_EVENTS = [
   'leave_chat',
   'message',
   'typing',
+  'react',
   'skip',
   'report',
   'block',
@@ -44,6 +45,7 @@ export const SERVER_EVENTS = [
   'message',
   'message_ack',
   'partner_typing',
+  'partner_reacted',
   'partner_skipped',
   'partner_reconnecting',
   'partner_returned',
@@ -623,6 +625,7 @@ export interface ClientEventPayloads {
   leave_chat: LeaveChatPayload;
   message: MessagePayload;
   typing: TypingPayload;
+  react: ReactPayload;
   skip: SkipPayload;
   report: ReportPayload;
   block: BlockPayload;
@@ -799,6 +802,71 @@ export interface MessageAckPayload {
   status: MessageAckStatus;
 }
 
+/**
+ * The reactions a message may carry.
+ *
+ * A closed list for the same reason `GENDERS` and `VIBES` are closed: an open
+ * set — an arbitrary emoji, or free text — is a content field arriving through
+ * a path built to carry none, and it would need moderating like a message body.
+ *
+ * Five, and the list is the whole vocabulary: a client may send nothing else
+ * and a client may receive nothing else. Adding a sixth is a change here and
+ * nowhere else on the server, which is what the closed set buys.
+ *
+ * Named by meaning rather than by glyph — `laugh`, not an emoji — so the wire
+ * value survives a client rendering it differently, a console reading it years
+ * later, and a platform where the character does not exist. The picture is the
+ * frontend's business.
+ */
+export const REACTIONS = ['like', 'heart', 'laugh', 'wow', 'sad'] as const;
+export type Reaction = (typeof REACTIONS)[number];
+
+export function isReaction(value: unknown): value is Reaction {
+  return typeof value === 'string' && (REACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * React to one message. Fire-and-forget, exactly like `typing`.
+ *
+ * ---------------------------------------------------------------------------
+ * EPHEMERAL, AND THEREFORE NOT RECALLABLE
+ * ---------------------------------------------------------------------------
+ * A reaction is delivered or it is not. It is never written to PostgreSQL, never
+ * part of a retained transcript, and never seen by a moderator — which is what
+ * keeps a feature this small from adding a record type, a moderation surface
+ * and a console view.
+ *
+ * `active` mirrors `typing`, and for the same reason: stopping is an event in
+ * its own right rather than the absence of one.
+ *
+ * An earlier version refused to carry it, on the argument that a delivered
+ * reaction has already been seen so withdrawing it describes something that did
+ * not happen. That is an argument against claiming the partner *un-saw* it, and
+ * it is not what removing one means. A reaction is current state — "I have a
+ * heart on this message" — and `active: false` says that is no longer true,
+ * which is both honest and deliverable.
+ *
+ * `messageId` is **echoed, not resolved.** The server routes by session (rule 3)
+ * and does not check that the id names a message in this conversation: doing so
+ * would mean a lookup on an advisory path, and the receiving client either
+ * matches it against a message it holds or ignores it. An id naming nothing is
+ * inert.
+ */
+export interface ReactPayload {
+  messageId: string;
+  reaction: string;
+  /** False removes it. Explicit, so removal is never inferred from silence. */
+  active: boolean;
+}
+
+/** The partner reacted to one of the messages on screen. Advisory only. */
+export interface PartnerReactedPayload {
+  matchId: string;
+  messageId: string;
+  reaction: string;
+  active: boolean;
+}
+
 /** The partner started or stopped typing. Advisory only. */
 export interface PartnerTypingPayload {
   matchId: string;
@@ -873,6 +941,7 @@ export interface ServerEventPayloads {
   message: IncomingMessagePayload;
   message_ack: MessageAckPayload;
   partner_typing: PartnerTypingPayload;
+  partner_reacted: PartnerReactedPayload;
   partner_skipped: PartnerSkippedPayload;
   partner_reconnecting: PartnerReconnectingPayload;
   partner_returned: PartnerReturnedPayload;
