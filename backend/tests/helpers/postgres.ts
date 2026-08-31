@@ -75,8 +75,35 @@ export async function createPostgresContext(envOverrides: Env = {}): Promise<Pos
   await bootstrap.query(`create schema if not exists ${schema}`);
   await bootstrap.close();
 
+  // Migrations run on their own connection, at the default statement timeout,
+  // never on the one the test configured.
+  //
+  // `pool.test.ts` sets DATABASE_STATEMENT_TIMEOUT_MS to a second because that
+  // is the deadline it is testing, and every migration was inheriting it as
+  // fixture setup. That was already close to the edge on CI and went over it the
+  // moment a migration added three index builds — failing as "Query read
+  // timeout" inside `migrate`, which reads as a broken migration rather than as
+  // a fixture running out of budget.
+  //
+  // The short deadline is a property of the queries under test. Schema setup is
+  // not under test.
+  const migrator = createDatabase(
+    loadConfig({
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'error',
+      ALLOWED_ORIGINS: 'http://localhost:5173',
+      DATABASE_URL: url.toString(),
+      SPOOL_DIR: spoolDir,
+    }),
+    logger,
+  );
+  try {
+    await migrate(migrator, logger);
+  } finally {
+    await migrator.close();
+  }
+
   const db = createDatabase(config, logger);
-  await migrate(db, logger);
 
   const context: PostgresContext = {
     config,
