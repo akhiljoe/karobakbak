@@ -48,6 +48,7 @@ interface ChatShellProps {
   onBlockAndNext(): void;
   onSend(text: string): void;
   onTyping(active: boolean): void;
+  onReact(messageId: string): void;
   onSkip(): void;
   onCancelSearch(): void;
   onOpenSafety(): void;
@@ -64,6 +65,7 @@ export function ChatShell({
   onBlockAndNext,
   onSend,
   onTyping,
+  onReact,
   onSkip,
   onCancelSearch,
   onOpenSafety,
@@ -249,6 +251,10 @@ export function ChatShell({
               // opening line out of a transcript that is still on screen.
               conversationOpen={state.matchId !== null}
               reported={state.reportSent}
+              // Absent while the composer is disabled, so the gesture is
+              // offered exactly when a frame could actually be sent — a
+              // partner who is away cannot receive one (D43).
+              onReact={composerDisabled(state) ? undefined : onReact}
             />
           </div>
         </div>

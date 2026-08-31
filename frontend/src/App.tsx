@@ -309,6 +309,7 @@ export function App(): JSX.Element {
               onBlockAndNext={blockAndNext}
               onSend={chat.send}
               onTyping={chat.typing}
+              onReact={(messageId) => chat.react(messageId, 'heart')}
               onSkip={chat.skip}
               onCancelSearch={chat.leave}
               onOpenSafety={() => setSafetyOpen(true)}

@@ -21,6 +21,7 @@
  * package — the message came from a stranger and is treated as data.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Heart } from 'lucide-react';
 
 import { clientConfig } from '../config';
 import type { ChatMessage } from '../state/machine';
@@ -41,6 +42,8 @@ interface MessageListProps {
   conversationOpen: boolean;
   /** This conversation has been reported. Shown once, at the end. */
   reported: boolean;
+  /** React to one of the stranger's messages. Absent while nothing can be sent. */
+  onReact?: (messageId: string) => void;
 }
 
 export function MessageList({
@@ -49,6 +52,7 @@ export function MessageList({
   partnerColour,
   conversationOpen,
   reported,
+  onReact,
 }: MessageListProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showJump, setShowJump] = useState(false);
@@ -100,6 +104,7 @@ export function MessageList({
                 message={message}
                 grouped={grouped}
                 partnerColour={partnerColour}
+                onReact={onReact}
               />
             );
           })}
@@ -147,12 +152,19 @@ function Bubble({
   message,
   grouped,
   partnerColour,
+  onReact,
 }: {
   message: ChatMessage;
   grouped: boolean;
   partnerColour: string;
+  onReact?: (messageId: string) => void;
 }): JSX.Element {
   const mine = message.from === 'you';
+  // Only the stranger's messages. Reacting to your own is a mis-tap rather than
+  // a feature, and offering it would make the gesture ambiguous everywhere.
+  const reactable = !mine && onReact !== undefined;
+  const reacted = message.reactions?.you !== undefined;
+
   return (
     <li
       className={`flex animate-msg-in ${mine ? 'justify-end' : 'justify-start'} ${
@@ -161,21 +173,63 @@ function Bubble({
     >
       <div className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
         <div
-          className={`whitespace-pre-wrap break-words px-3.5 py-2.5 text-[0.95rem] leading-relaxed ${
+          className={`relative whitespace-pre-wrap break-words px-3.5 py-2.5 text-[0.95rem] leading-relaxed ${
             mine
               ? 'rounded-2xl rounded-br-md bg-amber-400 text-ink-950'
               : 'rounded-2xl rounded-bl-md bg-ink-800 text-ink-100'
-          }`}
+          } ${reactable && !reacted ? 'cursor-pointer select-none' : ''}`}
           style={mine ? undefined : { borderLeft: `2px solid ${partnerColour}55` }}
+          // Double-click is the desktop half of the same gesture. There is no
+          // touch handler beside it because browsers already deliver a
+          // double-tap as dblclick.
+          onDoubleClick={reactable && !reacted ? () => onReact(message.id) : undefined}
         >
           {renderBody(message)}
+          <Reactions reactions={message.reactions} />
         </div>
         <span className="mt-1 flex items-center gap-1.5 px-1 text-[0.65rem] text-ink-500">
           <time dateTime={message.at}>{formatTime(message.at)}</time>
           {mine ? <MessageStatus status={message.status} /> : null}
+          {/*
+            Keyboard and screen-reader path for the same action. A double-tap is
+            not reachable without a pointer, and a feature only some people can
+            use is worse than one nobody can.
+          */}
+          {reactable && !reacted && (
+            <button
+              type="button"
+              onClick={() => onReact(message.id)}
+              aria-label="React with a heart"
+              className="rounded p-0.5 text-ink-600 opacity-0 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <Heart className="h-3 w-3" aria-hidden="true" />
+            </button>
+          )}
         </span>
       </div>
     </li>
+  );
+}
+
+/**
+ * The hearts on a message, ours and theirs.
+ *
+ * Overlapping the bubble's bottom edge rather than sitting under it, so a
+ * reaction does not reflow the conversation as it arrives — a message moving
+ * because somebody else tapped it is the kind of jump that loses your place
+ * while you are reading.
+ */
+function Reactions({ reactions }: { reactions: ChatMessage['reactions'] }): JSX.Element | null {
+  if (!reactions?.you && !reactions?.partner) return null;
+  const both = reactions.you !== undefined && reactions.partner !== undefined;
+  return (
+    <span
+      className="absolute -bottom-2 right-2 inline-flex items-center gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-0.5 shadow-sm"
+      aria-label={both ? 'You both reacted' : reactions.you ? 'You reacted' : 'They reacted'}
+    >
+      <Heart className="h-2.5 w-2.5 fill-rose-400 text-rose-400" aria-hidden="true" />
+      {both && <span className="text-[0.6rem] font-medium text-ink-300">2</span>}
+    </span>
   );
 }
 

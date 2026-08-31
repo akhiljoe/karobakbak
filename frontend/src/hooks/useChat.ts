@@ -80,6 +80,8 @@ export interface ChatApi {
   report(category: ReportCategory, note?: string): void;
   send(text: string): void;
   typing(active: boolean): void;
+  /** React to a message. Fire-and-forget, applied locally at once. */
+  react(messageId: string, reaction: string): void;
   dismissNotice(): void;
 }
 
@@ -181,6 +183,24 @@ export function useChat(): ChatApi {
   useEffect(() => {
     saveResumeToken(state.resumeToken ?? '');
   }, [state.resumeToken]);
+
+  /* --- reactions ---------------------------------------------------------- */
+
+  /**
+   * React to one message, and show it immediately.
+   *
+   * Applied locally before the frame leaves, because there is nothing to wait
+   * for: the command is fire-and-forget by design and a pending state on a
+   * heart would weigh more than the thing it describes. Only our own messages
+   * are excluded — reacting to yourself is not a feature, it is a mis-tap.
+   */
+  const react = useCallback(
+    (messageId: string, reaction: string) => {
+      if (!sendCommand('react', { messageId, reaction })) return;
+      dispatch({ type: 'user_reacted', messageId, reaction });
+    },
+    [sendCommand],
+  );
 
   /* --- typing ------------------------------------------------------------- */
 
@@ -306,7 +326,7 @@ export function useChat(): ChatApi {
 
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
 
-  return { state, start, stop, skip, leave, block, report, send, typing, dismissNotice };
+  return { state, start, stop, skip, leave, block, report, send, typing, react, dismissNotice };
 }
 
 /**
@@ -332,6 +352,8 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
       return { type: 'message_ack', payload: frame.payload };
     case 'partner_typing':
       return { type: 'partner_typing', payload: frame.payload };
+    case 'partner_reacted':
+      return { type: 'partner_reacted', payload: frame.payload };
     case 'partner_reconnecting':
       return {
         type: 'partner_reconnecting',

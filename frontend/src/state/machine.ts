@@ -30,6 +30,7 @@ import type {
   MessageAckPayload,
   MessageAckStatus,
   MessageContentType,
+  PartnerReactedPayload,
   PartnerTypingPayload,
   PresencePayload,
   QueueStatusPayload,
@@ -51,6 +52,17 @@ export interface ChatMessage {
   readonly text: string;
   readonly at: string;
   readonly status?: OutgoingStatus;
+  /**
+   * Reactions on this message, by who sent them.
+   *
+   * Held here and nowhere else. The server stores nothing (D-INTAKE-4), so this
+   * is the only record a reaction ever has, and it dies with the conversation
+   * exactly as the conversation does.
+   */
+  readonly reactions?: {
+    readonly you?: string;
+    readonly partner?: string;
+  };
 }
 
 /** Why the last conversation ended, for the notice on the ended screen. */
@@ -189,6 +201,9 @@ export type Action =
   | { type: 'message'; payload: IncomingMessagePayload }
   | { type: 'message_ack'; payload: MessageAckPayload }
   | { type: 'partner_typing'; payload: PartnerTypingPayload }
+  | { type: 'partner_reacted'; payload: PartnerReactedPayload }
+  /** Our own reaction, applied locally the moment it is sent. */
+  | { type: 'user_reacted'; messageId: string; reaction: string }
   | { type: 'partner_reconnecting'; matchId: string; until: string }
   | { type: 'partner_returned'; matchId: string }
   | { type: 'partner_left'; matchId: string }
@@ -366,6 +381,25 @@ export function reduce(state: ChatState, action: Action): ChatState {
           { id: action.id, from: 'you', type: 'text', text: action.text, at: action.at, status: 'sending' },
         ],
       };
+
+    case 'partner_reacted':
+    case 'user_reacted': {
+      const side = action.type === 'user_reacted' ? 'you' : 'partner';
+      const messageId =
+        action.type === 'user_reacted' ? action.messageId : action.payload.messageId;
+      const reaction = action.type === 'user_reacted' ? action.reaction : action.payload.reaction;
+      // Applied optimistically for our own, because there is no acknowledgement
+      // to wait for: the command is fire-and-forget and a spinner on a heart
+      // would be heavier than the thing it describes.
+      return {
+        ...state,
+        messages: state.messages.map((message) =>
+          message.id === messageId
+            ? { ...message, reactions: { ...message.reactions, [side]: reaction } }
+            : message,
+        ),
+      };
+    }
 
     case 'message_ack': {
       const id = action.payload.clientMsgId;
