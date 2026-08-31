@@ -270,3 +270,34 @@ describe('the feature flag', () => {
     }
   });
 });
+
+describe('what the pool is made of (§29.6)', () => {
+  it('counts the waiting sessions by declared gender, and the undeclared too', async () => {
+    // The denominator. Every preference number is unreadable without it: a
+    // fallback rate means something very different in a pool that is 5%
+    // preferred than in one that is 40%.
+    await waiting('female');
+    await waiting('male');
+    await waiting('male');
+    await waiting(null);
+
+    const composition = await ctx.store.queueComposition(ctx.segment);
+
+    expect(composition).toEqual({ female: 1, male: 2, none: 1 });
+  });
+
+  it('reports an empty pool as empty rather than throwing', async () => {
+    expect(await ctx.store.queueComposition(ctx.segment)).toEqual({});
+  });
+
+  it('counts a session that declared a profile without a gender as undeclared', async () => {
+    // A profile is not all-or-nothing: somebody can give a name and decline the
+    // rest. They are in the pool and no preference can ever match them, so
+    // counting them anywhere but `none` would overstate the preferred share.
+    const sid = await ctx.session();
+    await ctx.store.setProfile(sid, { ...EMPTY_PROFILE, name: 'sam' });
+    await enqueue(ctx, sid);
+
+    expect(await ctx.store.queueComposition(ctx.segment)).toEqual({ none: 1 });
+  });
+});

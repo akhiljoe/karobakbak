@@ -102,7 +102,7 @@ end
 -- that ended it. Preserves I4 (no user_match without a match), I5 and I6 (a
 -- deleted match can never deliver again): the match record, both user_match
 -- keys and the dedupe set all go in the same atomic script.
--- Returns nil if the match was already gone, else { a, b, segment }.
+-- Returns nil if the match was already gone, else { a, b, segment, createdAt }.
 local function endMatchInline(mid, sessionTtl, lateTtl)
   local mkey = kMatch(mid)
   local flat = redis.call('HGETALL', mkey)
@@ -156,7 +156,11 @@ local function endMatchInline(mid, sessionTtl, lateTtl)
       end
     end
   end
-  return { m['a'] or '', m['b'] or '', seg }
+  -- createdAt rides along so the caller can measure how long the conversation
+  -- lasted. It is read here because this is the only place that still has the
+  -- match hash: the DEL above is what makes exactly one caller the winner, and
+  -- after it the row is gone for everybody.
+  return { m['a'] or '', m['b'] or '', seg, m['createdAt'] or '' }
 end
 `;
 
@@ -601,7 +605,7 @@ const endMatch = define(
   `
 local r = endMatchInline(ARGV[2], tonumber(ARGV[3]), tonumber(ARGV[4]))
 if not r then return { 'ALREADY_ENDED' } end
-return { 'ENDED', r[1], r[2], r[3] }
+return { 'ENDED', r[1], r[2], r[3], r[4] }
 `,
 );
 

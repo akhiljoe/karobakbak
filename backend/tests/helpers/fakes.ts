@@ -42,7 +42,7 @@ export interface FakeSession {
 export class FakeStore implements LifecycleStore {
   readonly sessions = new Map<string, FakeSession>();
   readonly queue = new Set<string>();
-  readonly matches = new Map<string, { a: string; b: string; segment: string }>();
+  readonly matches = new Map<string, { a: string; b: string; segment: string; createdAtMs: number }>();
   readonly blocks = new Map<string, Set<string>>();
   readonly connSlots = new Map<string, Set<string>>();
 
@@ -77,7 +77,7 @@ export class FakeStore implements LifecycleStore {
   }
 
   seedMatch(matchId: string, a: string, b: string, segment = 'default'): void {
-    this.matches.set(matchId, { a, b, segment });
+    this.matches.set(matchId, { a, b, segment, createdAtMs: (this.clock += 1) });
     // The real `tryMatch` writes the match hash as part of creating the match,
     // so a match always has a record to write identities onto. The fake kept
     // the two apart, which was invisible while the identity write recreated
@@ -290,7 +290,13 @@ export class FakeStore implements LifecycleStore {
       }
       this.queue.delete(sid);
     }
-    return { status: 'ended', a: match.a, b: match.b, segment: match.segment };
+    return {
+      status: 'ended',
+      a: match.a,
+      b: match.b,
+      segment: match.segment,
+      createdAtMs: match.createdAtMs,
+    };
   }
 
   async blockPartner(sessionId: string): Promise<BlockPartnerResult> {

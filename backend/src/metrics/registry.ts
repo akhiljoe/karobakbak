@@ -127,6 +127,25 @@ export interface Metrics {
 
   /* matchmaking */
   readonly queueDepth: Gauge<'segment'>;
+  /**
+   * What the pool is made of, by declared gender (§29.6).
+   *
+   * The denominator. Every other preference number is unreadable without it:
+   * a fallback rate means nothing unless you know whether the pool was 5%
+   * preferred or 40%. Sampled above a cap and exact below it, which at launch
+   * volumes means exact.
+   */
+  readonly queueComposition: Gauge<'segment' | 'gender'>;
+  /**
+   * How long a conversation lasted, by how it ended.
+   *
+   * The one product signal nothing else carries: a three-second skip and a
+   * twenty-minute conversation are otherwise the same event, both a single
+   * increment of `chat_matches_created_total`. Its `_count` per reason also
+   * gives the end-reason breakdown, so there is no separate counter to keep in
+   * step.
+   */
+  readonly conversationDuration: Histogram<'reason'>;
   readonly activeMatches: Gauge<string>;
   readonly matchAttempts: Counter<string>;
   readonly matchesCreated: Counter<string>;
@@ -326,6 +345,21 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     resumes: counter('chat_session_resumes_total', 'Session resume attempts, by outcome', ['outcome']),
 
     queueDepth: gauge('chat_queue_depth', 'Sessions waiting in a queue segment', ['segment']),
+    queueComposition: gauge(
+      'chat_queue_composition',
+      'Sessions waiting, by declared gender. Undeclared is reported as "none"',
+      ['segment', 'gender'],
+    ),
+    conversationDuration: histogram(
+      'chat_conversation_duration_seconds',
+      'How long a conversation lasted, by how it ended',
+      // Spans the two ends that matter: an instant skip, and a conversation
+      // somebody stayed in. The low buckets are close together because that is
+      // where the quality signal lives -- 1s versus 30s is the whole question,
+      // and 10min versus 20min is not.
+      [1, 3, 5, 10, 30, 60, 180, 600, 1800],
+      ['reason'],
+    ),
     activeMatches: gauge('chat_active_matches', 'Live conversations, cluster-wide'),
     matchAttempts: counter('chat_match_attempts_total', 'tryMatch invocations'),
     matchesCreated: counter('chat_matches_created_total', 'Conversations formed'),

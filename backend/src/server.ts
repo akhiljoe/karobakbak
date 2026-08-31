@@ -30,12 +30,23 @@ import { errorFields, type Logger } from './logger';
 import {
   BASE_PROTOCOL,
   CLOSE_CODES,
+  GENDERS,
   RESUME_PROTOCOL_PREFIX,
   type MatchedPayload,
   type ServerFeatures,
   type ServerLimits,
 } from './protocol/types';
 import type { ValidatedCommand } from './protocol/validate';
+
+/**
+ * Every label the queue-composition gauge may carry (§29.6).
+ *
+ * `none` is not a gender and is not padding: a session that declared nothing is
+ * in the pool and can never satisfy a preference, so counting it is what makes
+ * the preferred share honest. Closed, and low-cardinality, which is the reason
+ * a declared gender is safe as a label where a conversation id never is.
+ */
+const COMPOSITION_LABELS: readonly string[] = [...GENDERS, 'none'];
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
@@ -148,6 +159,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const lifecycle = new SessionLifecycle(store, dispatcher, registry, config, logger, retention, {
     attempt: () => metrics.matchAttempts.inc(),
     aborted: (reason) => metrics.matchmakingFailures.labels(reason).inc(),
+    conversationEnded: (reason, seconds) => {
+      // Nothing is recorded when the duration is unknown. A zero here would be
+      // indistinguishable from an instant skip, which is the exact signal this
+      // histogram exists to measure.
+      if (seconds === null) return;
+      metrics.conversationDuration.labels(reason).observe(seconds);
+    },
   });
 
   /**
@@ -193,13 +211,37 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     // `reset()` is deliberately not used — it clears a labelled gauge's series
     // and re-zeroes an unlabelled one, so the two here would behave
     // differently for no reason a reader could infer.
+    const segment = config.matchmaking.defaultSegment;
     if (counts === null) {
       metrics.activeMatches.set(0);
-      metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(0);
+      metrics.queueDepth.labels(segment).set(0);
+      for (const gender of COMPOSITION_LABELS) {
+        metrics.queueComposition.labels(segment, gender).set(0);
+      }
       return;
     }
     metrics.activeMatches.set(counts.conversations);
-    metrics.queueDepth.labels(config.matchmaking.defaultSegment).set(counts.queueDepth);
+    metrics.queueDepth.labels(segment).set(counts.queueDepth);
+
+    // Deliberately not awaited: this callback belongs to the janitor's sweep
+    // and a slow read here would delay reaping, which is a correctness job.
+    // The gauge lands a moment after the depth beside it, which is a difference
+    // no query can observe at a 15-second scrape.
+    void store
+      .queueComposition(segment)
+      .then((composition) => {
+        // Every known label is written every pass, including the zeros. A
+        // gauge that only sets the genders it happened to see leaves the
+        // others frozen at their last value, so a group that empties out
+        // appears to still be waiting — the exact reading this metric exists
+        // to get right.
+        for (const gender of COMPOSITION_LABELS) {
+          metrics.queueComposition.labels(segment, gender).set(composition[gender] ?? 0);
+        }
+      })
+      .catch((err: unknown) => {
+        logger.debug('could not sample the queue composition', errorFields(err));
+      });
   }, retention);
 
   const limits: ServerLimits = {

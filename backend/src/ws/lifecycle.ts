@@ -146,6 +146,19 @@ export interface MatchmakingObserver {
   attempt(): void;
   /** An attempt that aborted rather than reporting a queue state. */
   aborted(reason: 'already_matched' | 'session_gone' | 'unknown'): void;
+  /**
+   * A conversation ended, and how long it lasted.
+   *
+   * Reported by the caller that won the termination race, so exactly once per
+   * conversation (D6) — the same caller that writes the `conversation_ended`
+   * retention row, for the same reason.
+   *
+   * `seconds` is null when the match row carried no start time, which the
+   * caller must render as "not recorded" rather than as a duration of zero. A
+   * fabricated zero would sit in the fastest bucket and read as the strongest
+   * possible signal that the product is failing.
+   */
+  conversationEnded(reason: 'skip' | 'disconnect', seconds: number | null): void;
 }
 
 export type LeaveOutcome =
@@ -704,13 +717,23 @@ export class SessionLifecycle {
     const ended = await this.store.endMatch(matchId);
     if (ended.status !== 'ended') return false;
 
+    const reason = event === 'partner_skipped' ? 'skip' : 'disconnect';
+
     // Written once, by the caller that won the termination race (D6).
     this.retention.enqueue({
       kind: 'conversation_ended',
       conversationId: matchId,
       endedAt: nowIso(),
-      endReason: event === 'partner_skipped' ? 'skip' : 'disconnect',
+      endReason: reason,
     });
+
+    // Measured from the match row's own timestamp rather than from anything
+    // this process remembers: the conversation may have been created by a
+    // different instance, so only Redis knows when it started.
+    this.observer?.conversationEnded(
+      reason,
+      ended.createdAtMs > 0 ? (Date.now() - ended.createdAtMs) / 1000 : null,
+    );
 
     const peer = ended.a === sessionId ? ended.b : ended.a;
     if (peer === '' || peer === sessionId) return true;

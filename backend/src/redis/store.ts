@@ -87,7 +87,19 @@ export type TryMatchResult =
 export type SaveIdentitiesResult = { status: 'ok' } | { status: 'match_gone' };
 
 export type EndMatchResult =
-  | { status: 'ended'; a: string; b: string; segment: string }
+  | {
+      status: 'ended';
+      a: string;
+      b: string;
+      segment: string;
+      /**
+       * When the conversation started, so the caller can measure how long it
+       * lasted. Zero when the match row predates this field or carried no
+       * timestamp — the caller must treat zero as "unknown" and record nothing,
+       * rather than reporting a duration measured from the epoch.
+       */
+      createdAtMs: number;
+    }
   | { status: 'already_ended' };
 
 export type ResumeSessionResult =
@@ -594,7 +606,13 @@ export class RedisStore {
       [this.keys.prefix, matchId, this.sessionTtl, this.lateBlockTtl],
     );
     if (str(reply, 0) === 'ALREADY_ENDED') return { status: 'already_ended' };
-    return { status: 'ended', a: str(reply, 1), b: str(reply, 2), segment: str(reply, 3) };
+    return {
+      status: 'ended',
+      a: str(reply, 1),
+      b: str(reply, 2),
+      segment: str(reply, 3),
+      createdAtMs: num(reply, 4),
+    };
   }
 
   /* --- message routing ---------------------------------------------------- */
@@ -1012,6 +1030,44 @@ export class RedisStore {
   }
 
   /* --- reads -------------------------------------------------------------- */
+
+  /**
+   * What the waiting pool is made of, by declared gender (§29.6).
+   *
+   * The denominator for every preference number. A fallback rate is unreadable
+   * without it: "the preference missed 40% of the time" means something very
+   * different in a pool that is 5% preferred than in one that is 40%.
+   *
+   * Bounded by `cap` and sampled above it, because this runs on a timer and the
+   * cost is one read per waiting session. At launch volumes the cap is never
+   * reached, so the answer is exact; past it this becomes a sample of the pool,
+   * which is what the caller must label it as rather than reporting an estimate
+   * as a census (D21 is the same rule about a different number).
+   *
+   * Sessions that declared nothing are counted under `none` rather than
+   * dropped. They are part of the pool and a preference can never match them,
+   * so leaving them out would make the preferred share look larger than it is.
+   */
+  async queueComposition(segment: string, cap = 500): Promise<Record<string, number>> {
+    const members: string[] = await this.client.srandmember(this.keys.queue(segment), cap);
+    const counts: Record<string, number> = {};
+    if (members.length === 0) return counts;
+
+    const pipeline = this.client.pipeline();
+    for (const sid of members) pipeline.hget(this.keys.session(sid), 'pGender');
+    const replies = await pipeline.exec();
+
+    for (const entry of replies ?? []) {
+      const [err, value] = entry as [Error | null, string | null];
+      // A session that vanished between the sample and the read is not an
+      // error and is not a gender: it is simply no longer in the pool.
+      if (err) continue;
+      const gender = value === null || value === '' ? 'none' : value;
+      counts[gender] = (counts[gender] ?? 0) + 1;
+    }
+    return counts;
+  }
+
 
   /**
    * Real cardinalities for the `presence` frame (D21).
