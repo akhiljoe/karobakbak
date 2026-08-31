@@ -214,7 +214,7 @@ function Bubble({
             mine
               ? 'rounded-2xl rounded-br-md bg-amber-400 text-ink-950'
               : 'rounded-2xl rounded-bl-md bg-ink-800 text-ink-100'
-          } ${offer ? 'cursor-pointer select-none' : ''}`}
+          } ${offer ? 'cursor-pointer select-none touch-manipulation' : ''}`}
           style={mine ? undefined : { borderLeft: `2px solid ${partnerColour}55` }}
           // Double-click covers the fast path on both: browsers deliver a
           // double-tap as dblclick, so one handler serves the gesture people
@@ -229,7 +229,7 @@ function Bubble({
           onContextMenu={offer ? (event) => event.preventDefault() : undefined}
         >
           {renderBody(message)}
-          <Reactions reactions={message.reactions} />
+          <Reactions reactions={message.reactions} onRemove={reacted ? react : undefined} />
         </div>
         <span className="mt-1 flex items-center gap-1.5 px-1 text-[0.65rem] text-ink-500">
           <time dateTime={message.at}>{formatTime(message.at)}</time>
@@ -245,7 +245,7 @@ function Bubble({
               onClick={react}
               aria-label={reacted ? 'Remove your reaction' : 'React with a heart'}
               aria-pressed={reacted}
-              className={`rounded p-0.5 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100 ${
+              className={`-m-2 touch-manipulation rounded p-2 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100 ${
                 held || reacted ? 'opacity-100' : 'opacity-0'
               } ${reacted ? 'text-rose-400' : 'text-ink-600'}`}
             >
@@ -269,17 +269,49 @@ function Bubble({
  * because somebody else tapped it is the kind of jump that loses your place
  * while you are reading.
  */
-function Reactions({ reactions }: { reactions: ChatMessage['reactions'] }): JSX.Element | null {
+function Reactions({
+  reactions,
+  onRemove,
+}: {
+  reactions: ChatMessage['reactions'];
+  /** Present only when one of these is ours to take back. */
+  onRemove?: () => void;
+}): JSX.Element | null {
   if (!reactions?.you && !reactions?.partner) return null;
   const both = reactions.you !== undefined && reactions.partner !== undefined;
-  return (
-    <span
-      className="absolute -bottom-2 right-2 inline-flex items-center gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-0.5 shadow-sm"
-      aria-label={both ? 'You both reacted' : reactions.you ? 'You reacted' : 'They reacted'}
-    >
+  const label = both ? 'You both reacted' : reactions.you ? 'You reacted' : 'They reacted';
+
+  const body = (
+    <>
       <Heart className="h-2.5 w-2.5 fill-rose-400 text-rose-400" aria-hidden="true" />
       {both && <span className="text-[0.6rem] font-medium text-ink-300">2</span>}
-    </span>
+    </>
+  );
+
+  const chip =
+    'absolute -bottom-2 right-2 inline-flex items-center gap-0.5 rounded-full border border-ink-700 bg-ink-900 px-1.5 py-0.5 shadow-sm';
+
+  // Tapping your own reaction takes it back — the gesture people already have
+  // from every other chat app, and the only one big enough to hit reliably.
+  // The badge is 20px of ink; the padding around it carries the rest of the
+  // touch target without moving anything on screen.
+  if (onRemove === undefined) {
+    return (
+      <span className={chip} aria-label={label}>
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      onDoubleClick={(event) => event.stopPropagation()}
+      aria-label="Remove your reaction"
+      className={`${chip} touch-manipulation after:absolute after:-inset-3 after:content-[''] hover:border-ink-600`}
+    >
+      {body}
+    </button>
   );
 }
 
