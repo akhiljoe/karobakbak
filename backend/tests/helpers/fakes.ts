@@ -10,7 +10,8 @@
  * someone else ends first, a connection slot that is full.
  */
 import type { Logger } from '../../src/logger';
-import type { Profile } from '../../src/protocol/types';
+import { EMPTY_PREFERENCES } from '../../src/protocol/types';
+import type { MatchPreferences, Profile } from '../../src/protocol/types';
 import type { ResumeSessionResult } from '../../src/redis/store';
 import type {
   BlockPartnerResult,
@@ -22,7 +23,6 @@ import type {
   HeartbeatResult,
   JoinQueueResult,
   LeaveQueueResult,
-  MatchPreference,
   SaveIdentitiesResult,
   SessionIdentity,
   TryMatchResult,
@@ -210,12 +210,15 @@ export class FakeStore implements LifecycleStore {
     return { status: 'ok' };
   }
 
-  async tryMatch(
-    sessionId: string,
-    segment: string,
-    matchId: string,
-    prefer: MatchPreference = {},
-  ): Promise<TryMatchResult> {
+  /** Preferences, keyed by session, exactly as the real store holds them. */
+  readonly preferences = new Map<string, MatchPreferences>();
+
+  async setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void> {
+    this.preferences.set(sessionId, preferences);
+  }
+
+  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
+    const prefer = this.preferences.get(sessionId) ?? EMPTY_PREFERENCES;
     this.tryMatchCalls.push(matchId);
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -246,9 +249,9 @@ export class FakeStore implements LifecycleStore {
     const scoreOf = (sessionId: string): number => {
       const profile = this.profiles.get(sessionId);
       let n = 0;
-      if (profile?.gender && (prefer.genders ?? []).includes(profile.gender)) n += 4;
-      if (profile?.country && (prefer.countries ?? []).includes(profile.country)) n += 2;
-      if (profile?.vibe && (prefer.vibes ?? []).includes(profile.vibe)) n += 1;
+      if (profile?.gender && prefer.genders.includes(profile.gender)) n += 4;
+      if (profile?.country && prefer.countries.includes(profile.country)) n += 2;
+      if (profile?.vibe && prefer.vibes.includes(profile.vibe)) n += 1;
       return n;
     };
 

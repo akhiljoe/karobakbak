@@ -19,6 +19,9 @@ import {
   isCountryCode,
   isGender,
   isVibe,
+  EMPTY_PREFERENCES,
+  MAX_PREFERENCE_VALUES,
+  type MatchPreferences,
   isMessageContentType,
   isReportCategory,
   type ClientEventType,
@@ -45,7 +48,12 @@ import {
  * a validated command at all.
  */
 export type ValidatedCommand =
-  | { type: 'join_queue'; clientId: string | null; profile: Profile }
+  | {
+      type: 'join_queue';
+      clientId: string | null;
+      profile: Profile;
+      preferences: MatchPreferences;
+    }
   | { type: 'leave_queue'; clientId: string | null }
   | { type: 'leave_chat'; clientId: string | null }
   | { type: 'skip'; clientId: string | null }
@@ -316,6 +324,75 @@ export function validateProfile(
 }
 
 /**
+ * Validate a declared match preference (D44, §29).
+ *
+ * Every value is checked against the same closed list the corresponding profile
+ * field uses, because a preference is a client-supplied string reaching a Redis
+ * script's membership test. Unknown values are **refused rather than dropped**,
+ * for the same reason an unknown country is: silently ignoring half of what
+ * somebody asked for produces a search that does not do what they set, with
+ * nothing anywhere saying so.
+ *
+ * Duplicates are collapsed. They would otherwise lengthen the string the script
+ * substring-searches once per candidate, for no change in meaning.
+ */
+export function validatePreferences(
+  value: unknown,
+):
+  | { ok: true; preferences: MatchPreferences }
+  | { ok: false; code: ProtocolErrorCode; message: string } {
+  if (value === undefined || value === null) {
+    return { ok: true, preferences: EMPTY_PREFERENCES };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      ok: false,
+      code: 'VALIDATION_FAILED',
+      message: 'payload.preference must be an object',
+    };
+  }
+
+  const raw = value as { genders?: unknown; countries?: unknown; vibes?: unknown };
+
+  const dimension = (
+    input: unknown,
+    field: string,
+    accepts: (candidate: unknown) => boolean,
+  ): { ok: true; values: string[] } | { ok: false; message: string } => {
+    if (input === undefined || input === null) return { ok: true, values: [] };
+    if (!Array.isArray(input)) {
+      return { ok: false, message: `preference.${field} must be an array` };
+    }
+    if (input.length > MAX_PREFERENCE_VALUES) {
+      return {
+        ok: false,
+        message: `preference.${field} accepts at most ${MAX_PREFERENCE_VALUES} values`,
+      };
+    }
+    const values: string[] = [];
+    for (const entry of input) {
+      if (!accepts(entry)) {
+        return { ok: false, message: `preference.${field} contains an unaccepted value` };
+      }
+      if (!values.includes(entry as string)) values.push(entry as string);
+    }
+    return { ok: true, values };
+  };
+
+  const genders = dimension(raw.genders, 'genders', isGender);
+  if (!genders.ok) return { ok: false, code: 'VALIDATION_FAILED', message: genders.message };
+  const countries = dimension(raw.countries, 'countries', isCountryCode);
+  if (!countries.ok) return { ok: false, code: 'VALIDATION_FAILED', message: countries.message };
+  const vibes = dimension(raw.vibes, 'vibes', isVibe);
+  if (!vibes.ok) return { ok: false, code: 'VALIDATION_FAILED', message: vibes.message };
+
+  return {
+    ok: true,
+    preferences: { genders: genders.values, countries: countries.values, vibes: vibes.values },
+  };
+}
+
+/**
  * Validate the content-type discriminator on a `message` payload.
  *
  * Two distinct controls, both required because `type` is client-supplied and
@@ -425,7 +502,12 @@ export function parseClientFrame(
     case 'join_queue': {
       const profile = validateProfile((payload as { profile?: unknown }).profile);
       if (!profile.ok) return fail(profile.code, profile.message);
-      return { ok: true, command: { type, clientId, profile: profile.profile } };
+      const preferences = validatePreferences((payload as { preference?: unknown }).preference);
+      if (!preferences.ok) return fail(preferences.code, preferences.message);
+      return {
+        ok: true,
+        command: { type, clientId, profile: profile.profile, preferences: preferences.preferences },
+      };
     }
     case 'leave_queue':
     case 'leave_chat':
