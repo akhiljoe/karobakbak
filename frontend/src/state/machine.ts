@@ -253,6 +253,16 @@ function clearedConversation(state: ChatState): ChatState {
     messages: [],
     partnerTyping: false,
     reportSent: false,
+    // Cleared with everything else, and its absence here was a real fault: a
+    // held seat belongs to *this* conversation, so a skip taken while the
+    // stranger was away carried the flag into the next one. The composer is
+    // disabled while it is set, so the next conversation opened unable to send
+    // anything, under a banner counting down a deadline that had already
+    // passed — for a stranger who was never involved.
+    //
+    // Skipping while a seat is held is deliberate and supported: the user asked
+    // for somebody else rather than waiting out the window.
+    partnerAway: null,
   };
 }
 

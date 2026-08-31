@@ -6,7 +6,7 @@
  * same shell rather than being a separate screen the layout jumps between.
  */
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clock, MoreVertical, ShieldX, SkipForward, X } from 'lucide-react';
+import { ArrowLeft, Clock, Loader2, MoreVertical, ShieldX, SkipForward, X } from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
 import type { ChatState } from '../state/machine';
@@ -134,10 +134,6 @@ export function ChatShell({
                 <span className="text-amber-300">
                   Reconnecting{selfCountdown === null ? '…' : ` — ${selfCountdown}s`}
                 </span>
-              ) : state.partnerAway !== null ? (
-                <span className="text-amber-300">
-                  They dropped out{partnerCountdown === null ? '' : ` — back within ${partnerCountdown}s`}
-                </span>
               ) : state.partnerTyping ? (
                 <span className="text-amber-300">typing…</span>
               ) : (
@@ -251,6 +247,7 @@ export function ChatShell({
               // opening line out of a transcript that is still on screen.
               conversationOpen={state.matchId !== null}
               reported={state.reportSent}
+              partnerCountry={state.partner?.profile?.country ?? null}
               // Absent while the composer is disabled, so the gesture is
               // offered exactly when a frame could actually be sent — a
               // partner who is away cannot receive one (D43).
@@ -290,6 +287,27 @@ export function ChatShell({
             <SkipForward className="h-3.5 w-3.5" />
             Next stranger
           </button>
+        </div>
+      )}
+
+      {/*
+        Above the composer rather than beside the stranger's name, because the
+        composer is what it explains. Next to the profile it read as a fact
+        about them; here it reads as the reason the box below will not accept
+        anything, which is what somebody staring at a disabled field is
+        actually asking.
+      */}
+      {state.partnerAway !== null && (
+        <div
+          role="status"
+          className="mx-auto mb-1.5 flex w-full max-w-3xl items-center gap-2 px-1 text-xs text-amber-300"
+        >
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+          <span>
+            They dropped out
+            {partnerCountdown === null ? '' : ` — back within ${partnerCountdown}s`}. You can wait
+            or move on.
+          </span>
         </div>
       )}
 

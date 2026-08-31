@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { canSend, initialState, reduce, type ChatState } from './machine';
+import { composerDisabled } from '../view/presentation';
 import { messageKindFor } from '../components/MessageList';
 import { toAction } from '../hooks/useChat';
 import type { AnyServerEnvelope, ErrorPayload, ServerFeatures } from '../protocol/types';
@@ -636,5 +637,136 @@ describe('a refused join', () => {
 
     expect(fresh.searchPending).toBe(false);
     expect(fresh.leaving).toBe(false);
+  });
+});
+
+/**
+ * The author seeing a reaction on a message they sent.
+ *
+ * This is the path that failed in use: the sender of a reaction saw their own
+ * heart while the author of the message saw nothing. The two sides key the same
+ * message differently — the author by the envelope id they generated, the
+ * recipient by the id the server assigned — so a reaction naming the server's
+ * id has to find the author's locally-keyed copy.
+ */
+describe('reactions', () => {
+  function authorWithSentMessage() {
+    const pending = reduce(matched(), {
+      type: 'send_pending',
+      id: 'c_local_1',
+      text: 'hello',
+      at: '2026-08-19T10:00:02.000Z',
+    });
+    return reduce(pending, {
+      type: 'message_ack',
+      payload: {
+        clientMsgId: 'c_local_1',
+        messageId: 'msg_server_1',
+        matchId: 'm_1',
+        acceptedAt: '2026-08-19T10:00:02.000Z',
+        route: 'local',
+        status: 'routed',
+      },
+    });
+  }
+
+  it('learns the server id from the ack', () => {
+    const state = authorWithSentMessage();
+    expect(state.messages[0]?.id).toBe('c_local_1');
+    expect(state.messages[0]?.serverId).toBe('msg_server_1');
+  });
+
+  it('shows a partner reaction on our own message, keyed by the server id', () => {
+    const state = reduce(authorWithSentMessage(), {
+      type: 'partner_reacted',
+      payload: {
+        matchId: 'm_1',
+        messageId: 'msg_server_1',
+        reaction: 'heart',
+        active: true,
+      },
+    });
+    expect(state.messages[0]?.reactions?.partner).toBe('heart');
+  });
+
+  it('removes it again when the partner takes it back', () => {
+    const reacted = reduce(authorWithSentMessage(), {
+      type: 'partner_reacted',
+      payload: { matchId: 'm_1', messageId: 'msg_server_1', reaction: 'heart', active: true },
+    });
+    const removed = reduce(reacted, {
+      type: 'partner_reacted',
+      payload: { matchId: 'm_1', messageId: 'msg_server_1', reaction: 'heart', active: false },
+    });
+    expect(removed.messages[0]?.reactions?.partner).toBeUndefined();
+  });
+
+  it('shows our own reaction on an inbound message', () => {
+    const inbound = reduce(matched(), {
+      type: 'message',
+      payload: {
+        matchId: 'm_1',
+        messageId: 'msg_server_2',
+        type: 'text',
+        text: 'hi there',
+        sentAt: '2026-08-19T10:00:02.000Z',
+        from: 'partner',
+      },
+    });
+    const state = reduce(inbound, {
+      type: 'user_reacted',
+      messageId: 'msg_server_2',
+      reaction: 'heart',
+      active: true,
+    });
+    expect(state.messages[0]?.reactions?.you).toBe('heart');
+  });
+});
+
+/**
+ * Skipping while the stranger's seat is still held (§28, D42).
+ *
+ * Supported and ordinary: the window is an offer to wait, not an obligation.
+ * What must not happen is the flag outliving the conversation it belongs to —
+ * it disables the composer, so carrying it forward opened the next
+ * conversation unable to send anything.
+ */
+describe('a held seat does not outlive its conversation', () => {
+  function partnerAway() {
+    return reduce(matched(), {
+      type: 'partner_reconnecting',
+      matchId: 'm_1',
+      until: '2026-08-19T10:00:20.000Z',
+    });
+  }
+
+  it('clears the countdown when the user skips instead of waiting', () => {
+    const away = partnerAway();
+    expect(away.partnerAway).not.toBeNull();
+    expect(composerDisabled(away)).toBe(true);
+
+    const skipped = reduce(away, { type: 'user_skipped' });
+    expect(skipped.partnerAway).toBeNull();
+  });
+
+  it('leaves the next conversation able to send', () => {
+    // The symptom this came from: a new stranger, a banner counting down a
+    // deadline that had already passed, and a composer that refused everything.
+    const next = reduce(reduce(partnerAway(), { type: 'user_skipped' }), {
+      type: 'matched',
+      payload: {
+        matchId: 'm_2',
+        startedAt: '2026-08-19T10:01:00.000Z',
+        you: YOU,
+        partner: PARTNER,
+      },
+    });
+    expect(next.partnerAway).toBeNull();
+    expect(composerDisabled(next)).toBe(false);
+  });
+
+  it('clears it when the stranger leaves for good', () => {
+    const left = reduce(partnerAway(), { type: 'partner_left', matchId: 'm_1' });
+    expect(left.partnerAway).toBeNull();
   });
 });

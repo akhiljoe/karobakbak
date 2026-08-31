@@ -42,6 +42,8 @@ interface MessageListProps {
   conversationOpen: boolean;
   /** This conversation has been reported. Shown once, at the end. */
   reported: boolean;
+  /** Where the stranger is connecting from, for the opening line. */
+  partnerCountry?: string | null;
   /** React to one of the stranger's messages, or take it back. */
   onReact?: (messageId: string, active: boolean) => void;
 }
@@ -52,6 +54,7 @@ export function MessageList({
   partnerColour,
   conversationOpen,
   reported,
+  partnerCountry,
   onReact,
 }: MessageListProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -89,7 +92,7 @@ export function MessageList({
         aria-label="Conversation"
       >
         <ol className="mx-auto flex max-w-3xl flex-col gap-1.5">
-          {conversationOpen && <SystemMessage kind="started" />}
+          {conversationOpen && <SystemMessage kind="started" country={partnerCountry} />}
 
           {messages.map((message, index) => {
             const previous = messages[index - 1];

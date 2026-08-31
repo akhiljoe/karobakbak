@@ -1,3 +1,5 @@
+import { COUNTRY_NAMES } from '../protocol/types';
+
 /**
  * A system line inside the transcript.
  *
@@ -19,15 +21,38 @@
 type SystemKind = 'started' | 'reported';
 
 const COPY: Record<SystemKind, string> = {
-  started: 'You are now chatting with a stranger. Say hi.',
+  started: 'Connected to a stranger. Say hi.',
   reported: 'Reported. A reviewer has this conversation.',
 };
 
-export function SystemMessage({ kind }: { kind: SystemKind }): JSX.Element {
+/**
+ * Where they are connecting from, when the edge could tell us.
+ *
+ * The country is resolved from the connection rather than declared (protocol
+ * rule 3), which makes it the one thing on screen about a stranger that they
+ * did not choose — and the only one worth putting in an opening line for that
+ * reason. It is still not proof of anything: a VPN moves it, and no copy here
+ * may suggest otherwise.
+ *
+ * Null on a laptop, where there is no CDN to set the header, so the line has to
+ * read correctly without it rather than treat its absence as a gap.
+ */
+export function SystemMessage({
+  kind,
+  country,
+}: {
+  kind: SystemKind;
+  country?: string | null;
+}): JSX.Element {
+  const text =
+    kind === 'started' && country
+      ? `Connected to someone in ${COUNTRY_NAMES[country as keyof typeof COUNTRY_NAMES] ?? country}. Say hi.`
+      : COPY[kind];
+
   return (
     <li className="my-3 flex animate-fade-in justify-center">
       <span className="rounded-full bg-ink-900/70 px-3 py-1 text-center text-xs text-ink-400 ring-1 ring-ink-800">
-        {COPY[kind]}
+        {text}
       </span>
     </li>
   );
