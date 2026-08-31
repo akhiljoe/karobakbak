@@ -71,7 +71,7 @@ function newClientMessageId(): string {
 
 export interface ChatApi {
   readonly state: ChatState;
-  start(profile?: Profile, preferences?: MatchPreferences): void;
+  start(profile?: Profile, preferences?: MatchPreferences, intent?: string | null): void;
   stop(): void;
   skip(): void;
   /** End the conversation (or the search) and return to the landing screen. */
@@ -244,9 +244,15 @@ export function useChat(): ChatApi {
    * a stale value behind.
    */
   const start = useCallback(
-    (profile?: Profile, preferences?: MatchPreferences) => {
-      const payload: { profile?: Profile; preference?: MatchPreferences } = {};
+    (profile?: Profile, preferences?: MatchPreferences, intent?: string | null) => {
+      const payload: { profile?: Profile; preference?: MatchPreferences; intent?: string | null } =
+        {};
       if (profile !== undefined) payload.profile = profile;
+      // Beside the profile on the frame, never inside it (D45, §30.1). Sent
+      // even when null, because a join carries the whole declaration and the
+      // server clears what it does not receive — an intent the user turned off
+      // has to actually stop steering their matches.
+      if (intent !== undefined) payload.intent = intent;
       // Sent whole, like the profile and for the same reason: a dimension the
       // user cleared has to reach the server as cleared, because there is no
       // partial update and a stale one would keep steering matches.

@@ -328,38 +328,49 @@ describe('what the pool is made of (§29.6)', () => {
 });
 
 /**
- * Three dimensions, scored rather than AND-ed (§29.3).
+ * Three dimensions, scored rather than AND-ed (§29.3), and they are not three
+ * of a kind.
+ *
+ * Gender and country are premium preferences: asymmetric lists, one party gets
+ * what they asked for and the other is selected. Intent is free and symmetric
+ * (D45, §30) — one selector, matched by equality against the candidate's own
+ * declaration, so both sides asked for the same thing.
  *
  * The reason scoring exists at all is arithmetic: 15% of one gender times 70%
- * of one country times 20% of one vibe is two or three people in a pool of a
+ * of one country times 20% of one intent is two or three people in a pool of a
  * hundred. An all-or-nothing test would miss almost always at real volumes, and
  * a premium user would experience the preference as doing nothing — while still
  * matching perfectly well, which is what makes it hard to notice.
  */
-describe('scoring across gender, country and vibe', () => {
+describe('scoring across gender, country and intent', () => {
   async function declaring(
     gender: string | null,
     country: string | null,
-    vibe: string | null,
+    intent: string | null,
   ): Promise<string> {
     const sid = await ctx.session();
-    await ctx.store.setProfile(sid, { ...EMPTY_PROFILE, gender, country, vibe });
+    await ctx.store.setProfile(sid, { ...EMPTY_PROFILE, gender, country });
+    await ctx.store.setIntent(sid, intent);
     await enqueue(ctx, sid);
     return sid;
   }
 
-  it('prefers the candidate matching most of it', async () => {
-    await declaring('female', 'US', 'deep'); // gender only        -> 4
-    const all = await declaring('female', 'IN', 'chill'); // all three -> 7
-
+  /** A searcher who has declared an intent of their own, then matches. */
+  async function searchWith(
+    intent: string | null,
+    prefer: Partial<MatchPreferences>,
+  ): Promise<TryMatchResult> {
     const searcher = await ctx.session();
+    await ctx.store.setIntent(searcher, intent);
     await enqueue(ctx, searcher);
+    return matchWith(ctx, searcher, prefer);
+  }
 
-    const result = await matchWith(ctx, searcher, {
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
-    });
+  it('prefers the candidate matching most of it', async () => {
+    await declaring('female', 'US', 'deep'); // gender only           -> 4
+    const all = await declaring('female', 'IN', 'chat'); // all three -> 7
+
+    const result = await searchWith('chat', { genders: ['female'], countries: ['IN'] });
 
     expect(result).toMatchObject({
       status: 'matched',
@@ -368,21 +379,14 @@ describe('scoring across gender, country and vibe', () => {
     });
   });
 
-  it('never lets country and vibe together outrank gender', async () => {
+  it('never lets country and intent together outrank gender', async () => {
     // The weights are the decision, not an implementation detail: gender is
     // what people are paying for, and a partial match without it is the least
     // useful kind. 2 + 1 must stay below 4.
     const genderOnly = await declaring('female', 'US', 'deep');
-    await declaring('male', 'IN', 'chill'); // country + vibe -> 3
+    await declaring('male', 'IN', 'chat'); // country + intent -> 3
 
-    const searcher = await ctx.session();
-    await enqueue(ctx, searcher);
-
-    const result = await matchWith(ctx, searcher, {
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
-    });
+    const result = await searchWith('chat', { genders: ['female'], countries: ['IN'] });
 
     expect(result).toMatchObject({
       status: 'matched',
@@ -392,18 +396,11 @@ describe('scoring across gender, country and vibe', () => {
   });
 
   it('degrades one dimension at a time rather than falling to nothing', async () => {
-    // Nobody matches the vibe, so the best available is gender + country. A
+    // Nobody shares the intent, so the best available is gender + country. A
     // filter would return WAITING here; the whole point is that this does not.
     const partial = await declaring('female', 'IN', 'funny');
 
-    const searcher = await ctx.session();
-    await enqueue(ctx, searcher);
-
-    const result = await matchWith(ctx, searcher, {
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
-    });
+    const result = await searchWith('chat', { genders: ['female'], countries: ['IN'] });
 
     expect(result).toMatchObject({
       status: 'matched',
@@ -413,37 +410,16 @@ describe('scoring across gender, country and vibe', () => {
   });
 
   it('matches on country alone, which is the server-derived value', async () => {
-    // `pCountry` is resolved from CF-IPCountry at the upgrade and whatever the
+    // pCountry is resolved from CF-IPCountry at the upgrade and whatever the
     // client sent is discarded (protocol rule 3), so unlike gender this
     // dimension cannot be lied about without a VPN.
     const inIndia = await declaring(null, 'IN', null);
 
-    const searcher = await ctx.session();
-    await enqueue(ctx, searcher);
-
-    const result = await matchWith(ctx, searcher, {
-      countries: ['IN'],
-    });
+    const result = await searchWith(null, { countries: ['IN'] });
     expect(result).toMatchObject({
       status: 'matched',
       partnerSessionId: inIndia,
       preference: { score: 2 },
-    });
-  });
-
-  it('matches on vibe alone', async () => {
-    const chill = await declaring(null, null, 'chill');
-
-    const searcher = await ctx.session();
-    await enqueue(ctx, searcher);
-
-    const result = await matchWith(ctx, searcher, {
-      vibes: ['chill'],
-    });
-    expect(result).toMatchObject({
-      status: 'matched',
-      partnerSessionId: chill,
-      preference: { score: 1 },
     });
   });
 
@@ -453,15 +429,114 @@ describe('scoring across gender, country and vibe', () => {
     // to avoid, paid for one round trip at a time.
     await declaring('female', 'US', 'deep');
 
+    const result = await searchWith('chat', { genders: ['female'], countries: ['IN'] });
+    expect(result).toMatchObject({ preference: { score: 4, widened: false } });
+  });
+});
+
+/**
+ * Intent is the free half, and every test here runs with NO preference set.
+ *
+ * That is the whole distinction being asserted: FILTERS_ENABLED gates the two
+ * asymmetric dimensions somebody pays for, and it does not gate this one. The
+ * obvious simplification — folding intent into setPreferences beside the other
+ * two — would leave every test in this block failing, which is why they run
+ * without a preference rather than beside one.
+ */
+describe('intent, which is symmetric and free', () => {
+  async function declaring(intent: string | null): Promise<string> {
+    const sid = await ctx.session();
+    await ctx.store.setIntent(sid, intent);
+    await enqueue(ctx, sid);
+    return sid;
+  }
+
+  async function searchAs(intent: string | null): Promise<TryMatchResult> {
     const searcher = await ctx.session();
+    await ctx.store.setIntent(searcher, intent);
+    await enqueue(ctx, searcher);
+    return ctx.store.tryMatch(searcher, ctx.segment, newMatchId());
+  }
+
+  it('takes the candidate who chose the same value, with no preference at all', async () => {
+    // The older session joins first, so the ordinary longest-waiting rule would
+    // take it. This is the assertion that intent steers anything.
+    await declaring('funny');
+    const same = await declaring('venting');
+
+    expect(await searchAs('venting')).toMatchObject({
+      status: 'matched',
+      partnerSessionId: same,
+      preference: { score: 1, preferred: true },
+    });
+  });
+
+  it('is equality, not membership: a different value scores nothing', async () => {
+    const other = await declaring('funny');
+
+    expect(await searchAs('venting')).toMatchObject({
+      status: 'matched',
+      partnerSessionId: other,
+      preference: { score: 0, preferred: false },
+    });
+  });
+
+  it('scores nothing when the searcher declined, against a candidate who did not', async () => {
+    // Declining is not a wildcard. Somebody who did not answer the question has
+    // not asked to be put with anyone in particular, and treating an absent
+    // value as matching everything would make the one non-answer the strongest
+    // signal in the system.
+    const declared = await declaring('deep');
+
+    expect(await searchAs(null)).toMatchObject({
+      status: 'matched',
+      partnerSessionId: declared,
+      preference: { score: 0 },
+    });
+  });
+
+  it('never holds a seat: an intent nobody shares still matches immediately', async () => {
+    const nobody = await declaring(null);
+
+    expect(await searchAs('venting')).toMatchObject({
+      status: 'matched',
+      partnerSessionId: nobody,
+      preference: { score: 0 },
+    });
+  });
+
+  it('does not trigger the wide sample', async () => {
+    // The cost half of D45, and the reason intent can be free. Escalation is a
+    // second SRANDMEMBER plus up to PREFERENCE_WIDE_SAMPLE further HMGETs, and
+    // most of the population will have set an intent — counting it in
+    // anyPreference would put that second pass on nearly every search in the
+    // system to chase a dimension worth 1.
+    //
+    // Twenty candidates and none sharing the intent, against a sample of one:
+    // if intent widened, this is exactly the shape that would make it widen.
+    for (let i = 0; i < 20; i += 1) await declaring('funny');
+
+    expect(await searchAs('venting')).toMatchObject({
+      status: 'matched',
+      preference: { score: 0, widened: false },
+    });
+  });
+
+  it('stops steering once it is cleared', async () => {
+    // A join carries the whole declaration and there is no partial update, so
+    // an intent the user switched off has to stop mattering. Without the HDEL
+    // in setIntent this picks the sharer and scores 1.
+    await declaring('venting');
+
+    const searcher = await ctx.session();
+    await ctx.store.setIntent(searcher, 'venting');
+    await ctx.store.setIntent(searcher, null);
     await enqueue(ctx, searcher);
 
-    const result = await matchWith(ctx, searcher, {
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
+    expect(await ctx.store.tryMatch(searcher, ctx.segment, newMatchId())).toMatchObject({
+      status: 'matched',
+      preference: { score: 0 },
     });
-    expect(result).toMatchObject({ preference: { score: 4, widened: false } });
   });
 });
 

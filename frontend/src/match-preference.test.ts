@@ -10,7 +10,7 @@
  * silently dropped half a request is indistinguishable from one that honoured
  * it and found nobody.
  *
- * So a value left behind by an older build — a vibe that was renamed, a country
+ * So a value left behind by an older build — a gender that was renamed, a country
  * code that was retired — would stop somebody searching at all, with an error
  * about a preference they cannot see and did not set today. Filtering on the
  * way out of storage is what prevents that.
@@ -19,9 +19,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   EMPTY_PREFERENCES,
+  EMPTY_PROFILE,
+  clearProfile,
   isEmptyPreferences,
+  loadMatchIntent,
   loadPreferences,
+  loadProfile,
   savePreferences,
+  saveProfile,
+  saveMatchIntent,
 } from './profile';
 
 /** An in-memory `Storage`, so nothing here depends on a browser. */
@@ -65,12 +71,8 @@ describe('loadPreferences', () => {
 
   it('round-trips what was saved', () => {
     const storage = fakeStorage();
-    savePreferences({ genders: ['female'], countries: ['IN'], vibes: ['chill'] }, storage);
-    expect(loadPreferences(storage)).toEqual({
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
-    });
+    savePreferences({ genders: ['female'], countries: ['IN'] }, storage);
+    expect(loadPreferences(storage)).toEqual({ genders: ['female'], countries: ['IN'] });
   });
 
   it('drops a value the server would refuse, keeping the rest', () => {
@@ -80,14 +82,9 @@ describe('loadPreferences', () => {
       [KEY]: JSON.stringify({
         genders: ['female', 'woman'],
         countries: ['IN', 'ZZ'],
-        vibes: ['chill', 'spicy'],
       }),
     });
-    expect(loadPreferences(storage)).toEqual({
-      genders: ['female'],
-      countries: ['IN'],
-      vibes: ['chill'],
-    });
+    expect(loadPreferences(storage)).toEqual({ genders: ['female'], countries: ['IN'] });
   });
 
   it('collapses duplicates and caps a dimension', () => {
@@ -95,7 +92,6 @@ describe('loadPreferences', () => {
       [KEY]: JSON.stringify({
         genders: ['female', 'female'],
         countries: Array(20).fill('IN'),
-        vibes: [],
       }),
     });
     const loaded = loadPreferences(storage);
@@ -105,7 +101,7 @@ describe('loadPreferences', () => {
   });
 
   it('survives anything that is not the shape it expects', () => {
-    for (const raw of ['not json', '[]', 'null', '{"genders":"female"}', '{"vibes":42}']) {
+    for (const raw of ['not json', '[]', 'null', '{"genders":"female"}', '{"countries":42}']) {
       expect(loadPreferences(fakeStorage({ [KEY]: raw }))).toEqual(EMPTY_PREFERENCES);
     }
   });
@@ -120,6 +116,59 @@ describe('loadPreferences', () => {
 describe('isEmptyPreferences', () => {
   it('is true only when nothing at all is asked for', () => {
     expect(isEmptyPreferences(EMPTY_PREFERENCES)).toBe(true);
-    expect(isEmptyPreferences({ genders: [], countries: [], vibes: ['deep'] })).toBe(false);
+    expect(isEmptyPreferences({ genders: [], countries: ['IN'] })).toBe(false);
+  });
+});
+
+/**
+ * The declared intent (D45, §30).
+ *
+ * Stored under its own key, and the test that matters most is the last one:
+ * clearing the profile must not clear this. They are two controls with two
+ * promises — one about what strangers see, one about who you are put in front
+ * of — and a button labelled for the first silently doing the second is the
+ * kind of thing nobody notices until a matching feature has quietly been off
+ * for weeks.
+ */
+describe('the declared intent', () => {
+  const INTENT_KEY = 'karobakbak.match-intent.v1';
+
+  it('reads nothing as no intent', () => {
+    expect(loadMatchIntent(fakeStorage())).toBeNull();
+  });
+
+  it('round-trips a value the server accepts', () => {
+    const storage = fakeStorage();
+    saveMatchIntent('venting', storage);
+    expect(loadMatchIntent(storage)).toBe('venting');
+  });
+
+  it('drops a value the server would refuse', () => {
+    // Same failure mode as the preference: `flirty` was in the list this
+    // replaces, so a browser that stored it is a real case rather than a
+    // hypothetical one, and sending it would refuse the whole join.
+    for (const stale of ['flirty', 'chill', 'spicy', '']) {
+      expect(loadMatchIntent(fakeStorage({ [INTENT_KEY]: stale }))).toBeNull();
+    }
+  });
+
+  it('clears rather than storing null', () => {
+    const storage = fakeStorage({ [INTENT_KEY]: 'deep' });
+    saveMatchIntent(null, storage);
+    expect(storage.getItem(INTENT_KEY)).toBeNull();
+  });
+
+  it('survives storage being unavailable in both directions', () => {
+    expect(loadMatchIntent(hostileStorage())).toBeNull();
+    expect(() => saveMatchIntent('chat', hostileStorage())).not.toThrow();
+  });
+
+  it('is not touched by clearing the profile', () => {
+    const storage = fakeStorage();
+    saveMatchIntent('deep', storage);
+    saveProfile({ name: 'Ana', country: 'IN', age: 24, gender: 'female' }, storage);
+    clearProfile(storage);
+    expect(loadProfile(storage)).toEqual(EMPTY_PROFILE);
+    expect(loadMatchIntent(storage)).toBe('deep');
   });
 });

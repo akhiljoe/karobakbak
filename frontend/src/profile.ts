@@ -36,8 +36,8 @@ import {
   MIN_DECLARED_AGE,
   isCountryCode,
   isGender,
-  isVibe,
-  VIBES,
+  isIntent,
+  INTENTS,
   EMPTY_PREFERENCES,
   MAX_PREFERENCE_VALUES,
   type MatchPreferences,
@@ -81,7 +81,6 @@ export function loadProfile(storage: Storage | undefined = safeStorage()): Profi
     country: isCountryCode(value.country) ? value.country : null,
     age: cleanAge(value.age),
     gender: isGender(value.gender) ? value.gender : null,
-    vibe: isVibe(value.vibe) ? value.vibe : null,
   };
 }
 
@@ -138,22 +137,67 @@ export const GENDER_OPTIONS = GENDERS.map((value) => ({
 }));
 
 /**
- * What each vibe is called on screen.
+ * What each intent is called on screen, and what it promises.
  *
- * Sentence case rather than the wire value, which stays lowercase so stored
- * evidence reads unambiguously — the same split `GENDER_LABELS` makes.
+ * Phrased as an answer to "what are you here for" rather than as an adjective,
+ * because that is the question the selector asks and the thing the other person
+ * is also answering. `INTENT_LABELS` stays sentence case while the wire value
+ * stays lowercase, the same split `GENDER_LABELS` makes.
  */
-const VIBE_LABELS: Record<string, string> = {
-  chill: 'Chill',
-  deep: 'Deep',
-  funny: 'Funny',
-  flirty: 'Flirty',
+const INTENT_LABELS: Record<string, string> = {
+  chat: 'Just chatting',
+  deep: 'Something deeper',
+  funny: 'Something funny',
+  venting: 'I need to vent',
 };
 
-export const VIBE_OPTIONS = VIBES.map((value) => ({
+export const INTENT_OPTIONS = INTENTS.map((value) => ({
   value,
-  label: VIBE_LABELS[value] ?? value,
+  label: INTENT_LABELS[value] ?? value,
 }));
+
+/* -------------------------------------------------------------------------- */
+/* Intent                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Stored under its own key rather than inside the profile, and the separation
+ * is the same one the wire makes (D45, §30.1).
+ *
+ * The profile blob is the thing shown to a stranger. Keeping intent out of it
+ * means "clear my profile" and "stop matching me on intent" stay two actions,
+ * and that a future version reading an old profile blob cannot find an intent
+ * in it to display.
+ */
+// Named `match-intent` rather than `intent` because `src/intent.ts` already
+// owns that word for something unrelated — the "start chatting" press recorded
+// on a page that has no socket. Two different intents in one codebase is worth
+// one longer identifier.
+const INTENT_KEY = 'karobakbak.match-intent.v1';
+
+export function loadMatchIntent(storage: Storage | undefined = safeStorage()): string | null {
+  if (!storage) return null;
+  let raw: string | null = null;
+  try {
+    raw = storage.getItem(INTENT_KEY);
+  } catch {
+    return null;
+  }
+  return isIntent(raw) ? raw : null;
+}
+
+export function saveMatchIntent(
+  intent: string | null,
+  storage: Storage | undefined = safeStorage(),
+): void {
+  if (!storage) return;
+  try {
+    if (intent === null) storage.removeItem(INTENT_KEY);
+    else storage.setItem(INTENT_KEY, intent);
+  } catch {
+    // Same as the profile: applies to this session, will not survive a reload.
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Match preference                                                           */
@@ -206,7 +250,6 @@ export function loadPreferences(
   return {
     genders: clean(value.genders, isGender),
     countries: clean(value.countries, isCountryCode),
-    vibes: clean(value.vibes, isVibe),
   };
 }
 
@@ -227,9 +270,7 @@ export function savePreferences(
 /** Whether anything at all is being asked for. */
 export function isEmptyPreferences(preferences: MatchPreferences): boolean {
   return (
-    preferences.genders.length === 0 &&
-    preferences.countries.length === 0 &&
-    preferences.vibes.length === 0
+    preferences.genders.length === 0 && preferences.countries.length === 0
   );
 }
 

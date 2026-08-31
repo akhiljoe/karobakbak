@@ -183,6 +183,7 @@ export interface PersonaClientOptions {
   readonly character: PersonaCharacter;
   /** Generated per conversation (D-AI-3) and re-declared on every join. */
   readonly profile: Profile;
+  readonly intent: string | null;
   readonly voice: PersonaVoice;
   /** Injected so tests do not sleep. */
   readonly now?: () => number;
@@ -323,7 +324,7 @@ export class PersonaClient {
     this.sentThisConversation = 0;
     this.clearSilenceTimer();
     this.resetRepetition();
-    this.send('join_queue', { profile: this.options.profile });
+    this.send('join_queue', { profile: this.options.profile, intent: this.options.intent });
     this.state = 'searching';
     return true;
   }

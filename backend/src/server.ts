@@ -946,6 +946,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           // Validated against the same closed lists the profile fields use, and
           // refused rather than trimmed when it names something unknown.
           command.preferences,
+          // Not folded into the profile above, and that is the feature (D45,
+          // §30.1): `Profile` is what reaches the other side, so intent travels
+          // beside it and is never a member of it.
+          command.intent,
         );
         replyToSearch(connection, outcome);
         return;

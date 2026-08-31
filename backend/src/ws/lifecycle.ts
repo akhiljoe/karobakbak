@@ -65,6 +65,7 @@ export interface LifecycleStore {
   joinQueue(sessionId: string, segment: string): Promise<JoinQueueResult>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
   setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void>;
+  setIntent(sessionId: string, intent: string | null): Promise<void>;
   resumeSession(
     presentedHash: string,
     replacementHash: string,
@@ -359,6 +360,7 @@ export class SessionLifecycle {
     sessionId: string,
     profile?: Profile,
     preferences?: MatchPreferences,
+    intent?: string | null,
   ): Promise<SearchOutcome> {
     // Written before the queue is joined, so a session can never be matched in
     // the window between entering the queue and its profile landing — the
@@ -372,6 +374,11 @@ export class SessionLifecycle {
       this.observer?.profileDeclared(profile.gender ?? 'none');
     }
     if (preferences !== undefined) await this.store.setPreferences(sessionId, preferences);
+    // Same ordering requirement as the two above, and the reason is the one
+    // that bit the preference: a session queued before its intent lands is
+    // matched by ordinary rules, and the user's one selector did nothing on the
+    // attempt they were watching.
+    if (intent !== undefined) await this.store.setIntent(sessionId, intent);
     const joined = await this.store.joinQueue(sessionId, this.segment);
     switch (joined.status) {
       case 'session_gone':

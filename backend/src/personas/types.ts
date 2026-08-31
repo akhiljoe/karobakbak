@@ -197,6 +197,12 @@ export interface PersonaCharacter {
 export interface PersonaSurface {
   readonly characterId: string;
   readonly profile: Profile;
+  /**
+   * From `INTENTS`, or null when declined. Beside the profile rather than in
+   * it, mirroring the wire (D45, §30.1) — it steers who the persona is matched
+   * with and is never shown to them.
+   */
+  readonly intent: string | null;
 }
 
 /**

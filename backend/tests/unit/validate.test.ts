@@ -3,11 +3,13 @@ import {
   validateMessageText,
   validateProfile,
   validatePreferences,
+  validateIntent,
   validateReportNote,
 } from '../../src/protocol/validate';
 import {
   COUNTRY_CODES,
   GENDERS,
+  INTENTS,
   COUNTRY_NAMES,
   countryName,
   MAX_DECLARED_AGE,
@@ -52,8 +54,9 @@ describe('parseClientFrame — envelope', () => {
         type: 'join_queue',
         clientId: null,
         // Absent, null and every-field-declined all normalise to one shape.
-        profile: { name: null, country: null, age: null, gender: null, vibe: null },
-        preferences: { genders: [], countries: [], vibes: [] },
+        profile: { name: null, country: null, age: null, gender: null },
+        preferences: { genders: [], countries: [] },
+        intent: null,
       },
     });
   });
@@ -636,7 +639,7 @@ describe('validateProfile', () => {
   it('treats absent, null and all-declined as one shape', () => {
     // "Told us nothing" must have a single representation, or every consumer
     // has to handle three.
-    const empty = { name: null, country: null, age: null, gender: null, vibe: null };
+    const empty = { name: null, country: null, age: null, gender: null };
     expect(validateProfile(undefined)).toEqual({ ok: true, profile: empty });
     expect(validateProfile(null)).toEqual({ ok: true, profile: empty });
     expect(validateProfile({})).toEqual({ ok: true, profile: empty });
@@ -649,10 +652,10 @@ describe('validateProfile', () => {
 
   it('accepts a full declaration and trims the name', () => {
     expect(
-      validateProfile({ name: '  Sam  ', country: 'IN', age: 27, gender: 'female', vibe: 'chill' }),
+      validateProfile({ name: '  Sam  ', country: 'IN', age: 27, gender: 'female' }),
     ).toEqual({
       ok: true,
-      profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'chill' },
+      profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
     });
   });
 
@@ -692,7 +695,7 @@ describe('validateProfile', () => {
     }
     expect(validateProfile({ country: 'IN' })).toEqual({
       ok: true,
-      profile: { name: null, country: 'IN', age: null, gender: null, vibe: null },
+      profile: { name: null, country: 'IN', age: null, gender: null },
     });
   });
 
@@ -758,7 +761,7 @@ describe('validateProfile', () => {
       frame({
         type: 'join_queue',
         payload: {
-          profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'deep' },
+          profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
         },
       }),
       false,
@@ -769,8 +772,9 @@ describe('validateProfile', () => {
       command: {
         type: 'join_queue',
         clientId: null,
-        profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female', vibe: 'deep' },
-        preferences: { genders: [], countries: [], vibes: [] },
+        profile: { name: 'Sam', country: 'IN', age: 27, gender: 'female' },
+        preferences: { genders: [], countries: [] },
+        intent: null,
       },
     });
   });
@@ -793,24 +797,112 @@ describe('validateProfile', () => {
  * The preference is client-supplied and reaches a Redis script's membership
  * test, so it is validated like every other thing a stranger types (D44, §29).
  */
+/**
+ * The declared intent (D45, §30).
+ *
+ * Validated by its own function rather than as a profile field, and the first
+ * test is the one that enforces the whole feature: a client that sends it
+ * *inside* the profile must get nothing, because Profile is defined as the
+ * thing the other side is shown and a value that could arrive through the
+ * profile parser could be displayed by anything that renders one.
+ */
+describe('validateIntent', () => {
+  it('cannot be smuggled in through the profile', () => {
+    const result = validateProfile({ name: 'Sam', intent: 'venting', vibe: 'flirty' });
+    expect(result).toEqual({
+      ok: true,
+      profile: { name: 'Sam', country: null, age: null, gender: null },
+    });
+    // Not merely absent from the output — absent from its shape, so nothing
+    // downstream can find a truthy value on it.
+    if (result.ok) {
+      expect(Object.keys(result.profile).sort()).toEqual(['age', 'country', 'gender', 'name']);
+    }
+  });
+
+  it('accepts every value in the closed list', () => {
+    for (const value of INTENTS) {
+      expect(validateIntent(value)).toEqual({ ok: true, intent: value });
+    }
+  });
+
+  it('reads absent, null and empty as declined', () => {
+    // The empty string is what a <select> reset to its placeholder sends, so it
+    // is a normal case rather than a malformed one.
+    for (const value of [undefined, null, '']) {
+      expect(validateIntent(value)).toEqual({ ok: true, intent: null });
+    }
+  });
+
+  it('refuses anything outside the list rather than dropping it', () => {
+    // Refused, not trimmed — the rule every closed list here follows. Silently
+    // ignoring it would give somebody a search that does not do what they set,
+    // with nothing anywhere saying so.
+    for (const value of ['spicy', 'CHAT', 'chat ', 42, {}, ['chat'], true]) {
+      const result = validateIntent(value);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  it('refuses flirty, which was in the list this replaces', () => {
+    // Not an arbitrary example. A browser that stored it under the old vibe
+    // selector is a real case, and the value is absent deliberately: intent is
+    // matched on, free, and on by default, so carrying it across would have the
+    // server pairing people on sexual intent with no age assurance anywhere in
+    // the system. Adding it back is a decision, and this test is one of the
+    // places that decision has to visit.
+    expect(validateIntent('flirty').ok).toBe(false);
+  });
+
+  it('rides along on a join_queue frame, beside the profile', () => {
+    const result = parseClientFrame(
+      frame({
+        type: 'join_queue',
+        payload: { profile: { name: 'Sam' }, intent: 'venting' },
+      }),
+      false,
+      limits,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      command: { type: 'join_queue', intent: 'venting' },
+    });
+  });
+
+  it('refuses the whole join when the intent is unknown', () => {
+    // Consistent with the preference and deliberately unlike a profile field: a
+    // join that silently dropped half of what was asked for is indistinguishable
+    // from one that honoured it and found nobody.
+    expectError(
+      parseClientFrame(
+        frame({ type: 'join_queue', payload: { intent: 'spicy' } }),
+        false,
+        limits,
+      ),
+      'VALIDATION_FAILED',
+    );
+  });
+});
+
 describe('validatePreferences', () => {
   it('treats absent and null as no preference at all', () => {
     expect(validatePreferences(undefined)).toEqual({
       ok: true,
-      preferences: { genders: [], countries: [], vibes: [] },
+      preferences: { genders: [], countries: [] },
     });
     expect(validatePreferences(null)).toEqual({
       ok: true,
-      preferences: { genders: [], countries: [], vibes: [] },
+      preferences: { genders: [], countries: [] },
     });
   });
 
   it('accepts values from the closed lists, in every dimension', () => {
     expect(
-      validatePreferences({ genders: ['female'], countries: ['IN'], vibes: ['chill', 'deep'] }),
+      validatePreferences({ genders: ['female'], countries: ['IN'] }),
     ).toEqual({
       ok: true,
-      preferences: { genders: ['female'], countries: ['IN'], vibes: ['chill', 'deep'] },
+      preferences: { genders: ['female'], countries: ['IN'] },
     });
   });
 
@@ -821,7 +913,6 @@ describe('validatePreferences', () => {
     for (const bad of [
       { genders: ['woman'] },
       { countries: ['ZZ'] },
-      { vibes: ['spicy'] },
       { genders: [42] },
     ]) {
       const result = validatePreferences(bad);
@@ -847,7 +938,7 @@ describe('validatePreferences', () => {
     const result = parseClientFrame(
       frame({
         type: 'join_queue',
-        payload: { preference: { genders: ['female'], vibes: ['chill'] } },
+        payload: { preference: { genders: ['female'] } },
       }),
       false,
       limits,
@@ -856,7 +947,7 @@ describe('validatePreferences', () => {
       ok: true,
       command: {
         type: 'join_queue',
-        preferences: { genders: ['female'], countries: [], vibes: ['chill'] },
+        preferences: { genders: ['female'], countries: [] },
       },
     });
   });

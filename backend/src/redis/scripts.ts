@@ -463,12 +463,12 @@ if redis.call('GET', KEYS[3]) then
   redis.call('SREM', KEYS[1], sid)
   return { 'ABORT', 'ALREADY_MATCHED' }
 end
--- The caller's own row, read once. The preference rides on it exactly as the
--- profile does (D34): it is session-scoped, it dies with the session, and the
--- browser re-sends it on every join. Reading it here rather than passing it in
--- ARGV costs nothing, because this HMGET was already being issued.
+-- The caller's own row, read once. The preference and the intent ride on it
+-- exactly as the profile does (D34): session-scoped, dead with the session, and
+-- re-sent by the browser on every join. Reading them here rather than passing
+-- them in ARGV costs nothing, because this HMGET was already being issued.
 local mine = redis.call('HMGET', KEYS[2],
-  'state', 'ipHash', 'clientHash', 'prefG', 'prefC', 'prefV')
+  'state', 'ipHash', 'clientHash', 'prefG', 'prefC', 'intent')
 if mine[1] ~= 'SEARCHING' then
   redis.call('SREM', KEYS[1], sid)
   return { 'ABORT', 'NOT_SEARCHING' }
@@ -507,7 +507,13 @@ local prefOn      = ARGV[10] == '1'
 local wide        = tonumber(ARGV[11]) or 0
 local prefGender  = prefOn and (mine[4] or '') or ''
 local prefCountry = prefOn and (mine[5] or '') or ''
-local prefVibe    = prefOn and (mine[6] or '') or ''
+
+-- Read WITHOUT the flag, and that is the difference between the two features
+-- rather than an oversight (D45, section 30). prefOn is FILTERS_ENABLED, which
+-- gates the asymmetric dimensions somebody pays for. Intent is symmetric and
+-- free: both sides asked for the same thing, so there is no selected party and
+-- nothing to charge for.
+local myIntent    = mine[6] or ''
 
 local function listed(pref, v)
   if pref == '' or not v or v == '' then return false end
@@ -522,17 +528,32 @@ end
 -- gender and country, then gender alone, then anyone.
 --
 -- Gender outweighs the other two combined on purpose, so a candidate matching
--- country and vibe can never displace one matching gender. It is the dimension
--- people are paying for, and the one a partial match is least useful without.
+-- country and intent can never displace one matching gender. It is the
+-- dimension people are paying for, and the one a partial match is least useful
+-- without.
+--
+-- Intent is EQUALITY, not membership: there is one selector and it is satisfied
+-- by a candidate who chose the same value. The other two are lists because they
+-- express what somebody wants a stranger to be; intent expresses what both of
+-- them are there for, so wanting a list of them is wanting nothing in
+-- particular.
 local function score(g, c, v)
   local n = 0
   if listed(prefGender, g)  then n = n + 4 end
   if listed(prefCountry, c) then n = n + 2 end
-  if listed(prefVibe, v)    then n = n + 1 end
+  if myIntent ~= '' and v == myIntent then n = n + 1 end
   return n
 end
 
-local anyPreference = prefGender ~= '' or prefCountry ~= '' or prefVibe ~= ''
+-- Intent is deliberately NOT counted here, so it never triggers the wide pass.
+--
+-- Escalation is the expensive half of D44 -- a second SRANDMEMBER and up to
+-- PREFERENCE_WIDE_SAMPLE further HMGETs -- and it stays paid for. Intent is
+-- free and most of the population will have set one, so counting it would put
+-- that second pass on nearly every search in the system to chase a dimension
+-- worth 1. It is scored in whatever sample is drawn and never asks for a bigger
+-- one, which is the whole of what "free" costs here.
+local anyPreference = prefGender ~= '' or prefCountry ~= ''
 
 -- Candidates already considered, so the wider pass does not walk them twice.
 --
@@ -549,7 +570,7 @@ local function scan(cands)
     if c ~= sid and not seen[c] then
       seen[c] = true
       local ch = redis.call('HMGET', kSession(c),
-        'state', 'ipHash', 'clientHash', 'enqueuedAt', 'pGender', 'pCountry', 'pVibe')
+        'state', 'ipHash', 'clientHash', 'enqueuedAt', 'pGender', 'pCountry', 'intent')
       if (not ch[1]) or ch[1] ~= 'SEARCHING' or redis.call('GET', kUserMatch(c)) then
         -- Stale entry GC (§10.11): the queue is repaired by every scan that
         -- walks over it, so a crashed instance's entries do not accumulate.
