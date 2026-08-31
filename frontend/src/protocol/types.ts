@@ -831,11 +831,15 @@ export function isReaction(value: unknown): value is Reaction {
  * keeps a feature this small from adding a record type, a moderation surface
  * and a console view.
  *
- * There is deliberately **no un-react**. `typing` carries an explicit `active`
- * boolean because stopping is a real event; a reaction that has been delivered
- * has already been seen, so a frame withdrawing it would describe something
- * that did not happen. A client may hide it locally; it may not claim the
- * partner un-saw it.
+ * `active` mirrors `typing`, and for the same reason: stopping is an event in
+ * its own right rather than the absence of one.
+ *
+ * An earlier version refused to carry it, on the argument that a delivered
+ * reaction has already been seen so withdrawing it describes something that did
+ * not happen. That is an argument against claiming the partner *un-saw* it, and
+ * it is not what removing one means. A reaction is current state — "I have a
+ * heart on this message" — and `active: false` says that is no longer true,
+ * which is both honest and deliverable.
  *
  * `messageId` is **echoed, not resolved.** The server routes by session (rule 3)
  * and does not check that the id names a message in this conversation: doing so
@@ -846,6 +850,8 @@ export function isReaction(value: unknown): value is Reaction {
 export interface ReactPayload {
   messageId: string;
   reaction: string;
+  /** False removes it. Explicit, so removal is never inferred from silence. */
+  active: boolean;
 }
 
 /** The partner reacted to one of the messages on screen. Advisory only. */
@@ -853,6 +859,7 @@ export interface PartnerReactedPayload {
   matchId: string;
   messageId: string;
   reaction: string;
+  active: boolean;
 }
 
 /** The partner started or stopped typing. Advisory only. */

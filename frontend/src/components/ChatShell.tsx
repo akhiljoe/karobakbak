@@ -48,7 +48,7 @@ interface ChatShellProps {
   onBlockAndNext(): void;
   onSend(text: string): void;
   onTyping(active: boolean): void;
-  onReact(messageId: string): void;
+  onReact(messageId: string, active: boolean): void;
   onSkip(): void;
   onCancelSearch(): void;
   onOpenSafety(): void;

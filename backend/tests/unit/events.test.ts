@@ -201,6 +201,8 @@ describe('partner_reacted', () => {
       matchId: 'm_1',
       messageId: 'msg_1',
       reaction: 'heart',
+      // Absent means added, so a sender that predates removal still decodes.
+      active: true,
     });
   });
 
@@ -226,7 +228,7 @@ describe('partner_reacted', () => {
     expect(toClientFrame(event)).toMatchObject({
       type: 'partner_reacted',
       version: PROTOCOL_VERSION,
-      payload: { matchId: 'm_1', messageId: 'msg_1', reaction: 'heart' },
+      payload: { matchId: 'm_1', messageId: 'msg_1', reaction: 'heart', active: true },
     });
   });
 });

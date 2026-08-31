@@ -278,7 +278,12 @@ export class MessagePipeline {
    * prevent a client sending an id its partner will not recognise, which costs
    * more than it saves.
    */
-  async react(sessionId: string, messageId: string, reaction: string): Promise<TypingOutcome> {
+  async react(
+    sessionId: string,
+    messageId: string,
+    reaction: string,
+    active: boolean,
+  ): Promise<TypingOutcome> {
     const limit = await this.store.rateLimit('react', sessionId);
     if (!limit.allowed) {
       return { kind: 'rate_limited', retryAfterMs: limit.retryAfterMs };
@@ -290,7 +295,7 @@ export class MessagePipeline {
 
     await this.dispatcher.toSession(
       route.partnerSessionId,
-      { event: 'partner_reacted', matchId: route.matchId, messageId, reaction },
+      { event: 'partner_reacted', matchId: route.matchId, messageId, reaction, active },
       nowIso(),
     );
     return { kind: 'sent' };

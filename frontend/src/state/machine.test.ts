@@ -129,7 +129,17 @@ describe('messages', () => {
       },
     });
     expect(state.messages).toEqual([
-      { id: 'msg_1', from: 'partner', type: 'text', text: 'hi there', at: '2026-08-19T10:00:02.000Z' },
+      {
+        id: 'msg_1',
+        // The same value for an inbound message: the id it arrived with *is*
+        // the one the server gave it. They only diverge for our own messages,
+        // which carry a local id until the ack lands.
+        serverId: 'msg_1',
+        from: 'partner',
+        type: 'text',
+        text: 'hi there',
+        at: '2026-08-19T10:00:02.000Z',
+      },
     ]);
   });
 

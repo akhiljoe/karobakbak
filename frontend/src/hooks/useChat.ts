@@ -80,8 +80,8 @@ export interface ChatApi {
   report(category: ReportCategory, note?: string): void;
   send(text: string): void;
   typing(active: boolean): void;
-  /** React to a message. Fire-and-forget, applied locally at once. */
-  react(messageId: string, reaction: string): void;
+  /** React to a message, or take it back. Fire-and-forget, applied locally at once. */
+  react(messageId: string, reaction: string, active?: boolean): void;
   dismissNotice(): void;
 }
 
@@ -195,9 +195,9 @@ export function useChat(): ChatApi {
    * are excluded — reacting to yourself is not a feature, it is a mis-tap.
    */
   const react = useCallback(
-    (messageId: string, reaction: string) => {
-      if (!sendCommand('react', { messageId, reaction })) return;
-      dispatch({ type: 'user_reacted', messageId, reaction });
+    (messageId: string, reaction: string, active = true) => {
+      if (!sendCommand('react', { messageId, reaction, active })) return;
+      dispatch({ type: 'user_reacted', messageId, reaction, active });
     },
     [sendCommand],
   );

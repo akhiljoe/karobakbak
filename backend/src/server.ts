@@ -892,6 +892,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           connection.sessionId,
           command.messageId,
           command.reaction,
+          command.active,
         );
         // Silent on success, for the same reason typing is: acknowledging an
         // advisory frame doubles its traffic to confirm something nobody waits

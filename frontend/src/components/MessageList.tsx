@@ -42,8 +42,8 @@ interface MessageListProps {
   conversationOpen: boolean;
   /** This conversation has been reported. Shown once, at the end. */
   reported: boolean;
-  /** React to one of the stranger's messages. Absent while nothing can be sent. */
-  onReact?: (messageId: string) => void;
+  /** React to one of the stranger's messages, or take it back. */
+  onReact?: (messageId: string, active: boolean) => void;
 }
 
 export function MessageList({
@@ -157,17 +157,51 @@ function Bubble({
   message: ChatMessage;
   grouped: boolean;
   partnerColour: string;
-  onReact?: (messageId: string) => void;
+  onReact?: (messageId: string, active: boolean) => void;
 }): JSX.Element {
   const mine = message.from === 'you';
   // Only the stranger's messages. Reacting to your own is a mis-tap rather than
   // a feature, and offering it would make the gesture ambiguous everywhere.
   const reactable = !mine && onReact !== undefined;
   const reacted = message.reactions?.you !== undefined;
+  // Offered whether or not one is already there: the same control adds it and
+  // takes it back, so there is never a state the gesture cannot reach.
+  const offer = reactable;
+
+  // Revealed by a long press. Hover does the same thing on a pointer device
+  // through `group-hover`, which touch has no equivalent of — a tap is either a
+  // click or nothing, so the affordance has to be summoned deliberately.
+  const [held, setHeld] = useState(false);
+  const holdTimer = useRef<number | null>(null);
+
+  const cancelHold = (): void => {
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+
+  const startHold = (): void => {
+    if (!offer) return;
+    cancelHold();
+    // Long enough not to fire while somebody is scrolling past, short enough
+    // to feel like a press rather than a wait.
+    holdTimer.current = window.setTimeout(() => setHeld(true), 450);
+  };
+
+  useEffect(() => cancelHold, []);
+
+  // The id the *partner* knows this message by. Our own messages carry a local
+  // id until the ack lands, and a reaction naming that would match nothing on
+  // the other side.
+  const react = (): void => {
+    setHeld(false);
+    // Toggle. Removing is `active: false` rather than a separate command,
+    // mirroring `typing` — stopping is an event, not the absence of one.
+    onReact?.(message.serverId ?? message.id, !reacted);
+  };
 
   return (
     <li
-      className={`flex animate-msg-in ${mine ? 'justify-end' : 'justify-start'} ${
+      className={`group flex animate-msg-in ${mine ? 'justify-end' : 'justify-start'} ${
         grouped ? 'mt-0.5' : 'mt-2'
       }`}
     >
@@ -177,12 +211,19 @@ function Bubble({
             mine
               ? 'rounded-2xl rounded-br-md bg-amber-400 text-ink-950'
               : 'rounded-2xl rounded-bl-md bg-ink-800 text-ink-100'
-          } ${reactable && !reacted ? 'cursor-pointer select-none' : ''}`}
+          } ${offer ? 'cursor-pointer select-none' : ''}`}
           style={mine ? undefined : { borderLeft: `2px solid ${partnerColour}55` }}
-          // Double-click is the desktop half of the same gesture. There is no
-          // touch handler beside it because browsers already deliver a
-          // double-tap as dblclick.
-          onDoubleClick={reactable && !reacted ? () => onReact(message.id) : undefined}
+          // Double-click covers the fast path on both: browsers deliver a
+          // double-tap as dblclick, so one handler serves the gesture people
+          // already expect from every other chat app.
+          onDoubleClick={offer ? react : undefined}
+          onTouchStart={startHold}
+          onTouchEnd={cancelHold}
+          onTouchMove={cancelHold}
+          onTouchCancel={cancelHold}
+          // A long press otherwise raises the selection handles or the context
+          // menu on top of the control it just revealed.
+          onContextMenu={offer ? (event) => event.preventDefault() : undefined}
         >
           {renderBody(message)}
           <Reactions reactions={message.reactions} />
@@ -195,14 +236,20 @@ function Bubble({
             not reachable without a pointer, and a feature only some people can
             use is worse than one nobody can.
           */}
-          {reactable && !reacted && (
+          {offer && (
             <button
               type="button"
-              onClick={() => onReact(message.id)}
-              aria-label="React with a heart"
-              className="rounded p-0.5 text-ink-600 opacity-0 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100"
+              onClick={react}
+              aria-label={reacted ? 'Remove your reaction' : 'React with a heart'}
+              aria-pressed={reacted}
+              className={`rounded p-0.5 transition-opacity hover:text-rose-300 focus-visible:opacity-100 group-hover:opacity-100 ${
+                held || reacted ? 'opacity-100' : 'opacity-0'
+              } ${reacted ? 'text-rose-400' : 'text-ink-600'}`}
             >
-              <Heart className="h-3 w-3" aria-hidden="true" />
+              <Heart
+                className={`h-3 w-3 ${reacted ? 'fill-rose-400' : ''}`}
+                aria-hidden="true"
+              />
             </button>
           )}
         </span>

@@ -36,7 +36,13 @@ export type SessionEvent =
     }
   | { event: 'partner_typing'; matchId: string; active: boolean }
   /** Advisory and ephemeral: nothing here is stored or retained (D-INTAKE-4). */
-  | { event: 'partner_reacted'; matchId: string; messageId: string; reaction: string }
+  | {
+      event: 'partner_reacted';
+      matchId: string;
+      messageId: string;
+      reaction: string;
+      active: boolean;
+    }
   | { event: 'partner_skipped'; matchId: string }
   /** Their socket dropped and the seat is held until `until` (§28). */
   | { event: 'partner_reconnecting'; matchId: string; until: string }
@@ -155,6 +161,7 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
         matchId,
         messageId: data.messageId,
         reaction: data.reaction,
+        active: data.active !== false,
       };
     case 'partner_skipped':
       return { event: 'partner_skipped', matchId };
@@ -206,6 +213,7 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
         matchId: event.matchId,
         messageId: event.messageId,
         reaction: event.reaction,
+        active: event.active,
       });
     case 'partner_reconnecting':
       return serverFrame('partner_reconnecting', { matchId: event.matchId, until: event.until });

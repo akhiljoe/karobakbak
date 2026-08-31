@@ -62,7 +62,13 @@ export type ValidatedCommand =
   | { type: 'block'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
   | { type: 'typing'; clientId: string | null; active: boolean }
-  | { type: 'react'; clientId: string | null; messageId: string; reaction: string }
+  | {
+      type: 'react';
+      clientId: string | null;
+      messageId: string;
+      reaction: string;
+      active: boolean;
+    }
   | {
       type: 'report';
       clientId: string | null;
@@ -566,7 +572,7 @@ export function parseClientFrame(
       };
     }
     case 'react': {
-      const raw = payload as { messageId?: unknown; reaction?: unknown };
+      const raw = payload as { messageId?: unknown; reaction?: unknown; active?: unknown };
       // Checked for shape, not for membership of this conversation. The server
       // routes by session (rule 3) and the id is echoed to a client that either
       // recognises it or ignores it — see `ReactPayload`.
@@ -579,9 +585,21 @@ export function parseClientFrame(
       if (!isReaction(raw.reaction)) {
         return fail('VALIDATION_FAILED', 'payload.reaction is not one of the accepted values');
       }
+      // Strict boolean, and defaulting to true when absent: an older client
+      // that only ever adds reactions keeps working, while anything that sends
+      // the field must mean it rather than have it coerced.
+      if (raw.active !== undefined && typeof raw.active !== 'boolean') {
+        return fail('VALIDATION_FAILED', 'payload.active must be a boolean');
+      }
       return {
         ok: true,
-        command: { type, clientId, messageId: raw.messageId, reaction: raw.reaction },
+        command: {
+          type,
+          clientId,
+          messageId: raw.messageId,
+          reaction: raw.reaction,
+          active: raw.active ?? true,
+        },
       };
     }
     default: {
