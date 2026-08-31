@@ -94,7 +94,6 @@ function readProfile(value: unknown): Profile | null {
     country: typeof value.country === 'string' ? value.country : null,
     age: typeof value.age === 'number' ? value.age : null,
     gender: typeof value.gender === 'string' ? value.gender : null,
-    vibe: typeof value.vibe === 'string' ? value.vibe : null,
   };
 }
 

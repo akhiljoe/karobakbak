@@ -167,12 +167,24 @@ export function LandingScreen({
           Was `text-xs text-ink-500` — technically readable, visually invisible,
           which wasted the most reassuring line on the page. It is the answer to
           "what is this going to cost me", and it should be legible at a glance.
+
+          Both halves are claims about this system and are checked against it,
+          the same rule the policy documents follow. The declared variant used
+          to read "your profile stays on this device" and that was simply false:
+          the profile rides on `join_queue`, is shown to the partner, and is
+          written to `conversations.profile_a`/`_b` for the retention period,
+          where the console can read it. What IS true is the §24.3 property —
+          the server keeps no profile between sessions, the browser re-sends it
+          every time, and nothing links one conversation to the next.
+
+          The other half avoids "no profile", which stopped being the whole
+          story once there was a profile editor and an intent selector to reach.
         */}
         <div className="mt-4 flex items-center justify-center gap-2 text-sm text-ink-400 short:mt-3">
           <Lock className="h-3.5 w-3.5 shrink-0 text-ink-500" />
           {declaredAnything
-            ? 'No signup · No account · Your profile stays on this device'
-            : 'No signup · No profile · No commitment'}
+            ? 'Nothing you declare follows you from one conversation to the next'
+            : 'Free, anonymous, and nothing to set up'}
         </div>
 
 

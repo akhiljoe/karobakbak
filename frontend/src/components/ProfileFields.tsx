@@ -18,7 +18,7 @@ import {
   MIN_DECLARED_AGE,
   type Profile,
 } from '../protocol/types';
-import { GENDER_OPTIONS, VIBE_OPTIONS, isEmptyProfile } from '../profile';
+import { GENDER_OPTIONS, INTENT_OPTIONS, isEmptyProfile } from '../profile';
 
 interface ProfileFieldsProps {
   profile: Profile;
@@ -32,6 +32,17 @@ interface ProfileFieldsProps {
    * difference between the control working and appearing to.
    */
   appliesToNextMatch?: boolean;
+  /**
+   * The declared intent, and its setter.
+   *
+   * Passed separately from `profile` rather than added to it, because `Profile`
+   * is defined as the thing the other side is shown (D45, §30.1). Keeping the
+   * two apart here means the sentence under the profile fields — "every
+   * stranger you match with sees this" — stays true, which it would not be if
+   * intent were one more entry in the same grid.
+   */
+  intent: string | null;
+  onIntentChange: (intent: string | null) => void;
 }
 
 /** Countries sorted by the name a person reads, not by the code. */
@@ -41,6 +52,8 @@ export function ProfileFields({
   onChange,
   onClear,
   appliesToNextMatch = false,
+  intent,
+  onIntentChange,
 }: ProfileFieldsProps): JSX.Element {
   // The raw string, because "1" and "01" parse the same and only one of
   // them is somebody halfway through typing "18".
@@ -107,25 +120,6 @@ export function ProfileFields({
           </select>
         </Field>
 
-        {/*
-          Full width, unlike the four above it, because it is the one field that
-          says what you are here for rather than who you are — and because
-          pairing it with anything would put a mood next to an age.
-        */}
-        <Field label="Vibe" className="col-span-2">
-          <select
-            value={profile.vibe ?? ''}
-            onChange={(event) => onChange({ ...profile, vibe: orNull(event.target.value) })}
-            className={inputClass}
-          >
-            <option value="">—</option>
-            {VIBE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </Field>
       </div>
 
 
@@ -141,6 +135,38 @@ export function ProfileFields({
           </>
         )}
       </p>
+
+      {/*
+        Separated by a rule, and below the disclosure paragraph rather than
+        above it, because that paragraph says everything here is shown to a
+        stranger and this control is the one thing that is not.
+      */}
+      <div className="space-y-2 border-t border-ink-800 pt-3">
+        <Field label="What are you here for?">
+          <select
+            value={intent ?? ''}
+            onChange={(event) => onIntentChange(orNull(event.target.value))}
+            className={inputClass}
+          >
+            <option value="">—</option>
+            {INTENT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {/*
+          The whole weight of the claim sits on this sentence, so it says what
+          is true and stops there. "Not shown" is the guarantee; "not knowable"
+          is not, because being matched on a value leaks it probabilistically —
+          two people paired on venting are likelier than chance to share it.
+        */}
+        <p className="text-xs leading-relaxed text-ink-500">
+          Used only to find you a better match.{' '}
+          <span className="text-ink-300">This is never shown to anyone.</span>
+        </p>
+      </div>
 
       {!empty && (
         <button
@@ -194,9 +220,6 @@ export function summariseProfile(profile: Profile): string {
   }
   if (profile.country) {
     parts.push(COUNTRY_NAMES[profile.country as keyof typeof COUNTRY_NAMES] ?? profile.country);
-  }
-  if (profile.vibe) {
-    parts.push(VIBE_OPTIONS.find((option) => option.value === profile.vibe)?.label ?? profile.vibe);
   }
   return parts.join(' · ');
 }

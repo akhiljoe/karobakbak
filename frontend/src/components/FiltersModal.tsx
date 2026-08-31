@@ -40,8 +40,8 @@ import { useEffect } from 'react';
 import { ArrowUpRight, Lock, SlidersHorizontal, X } from 'lucide-react';
 
 import { FILTERS_ENABLED } from '../features';
-import { COUNTRY_NAMES, GENDERS, VIBES, type MatchPreferences } from '../protocol/types';
-import { GENDER_OPTIONS, VIBE_OPTIONS, isEmptyPreferences } from '../profile';
+import { COUNTRY_NAMES, GENDERS, type MatchPreferences } from '../protocol/types';
+import { GENDER_OPTIONS, isEmptyPreferences } from '../profile';
 import { Button } from './Button';
 
 /**
@@ -62,8 +62,14 @@ interface FiltersModalProps {
   onChange(preferences: MatchPreferences): void;
 }
 
-/** The dimensions, in the order they are weighted server-side (§29.8). */
-const PLANNED = ['Gender', 'Country', 'Vibe'] as const;
+/**
+ * The dimensions, in the order they are weighted server-side (§29.8).
+ *
+ * Intent is not one of them and never appears here. It is symmetric and free,
+ * so it lives beside the profile where everybody can reach it (D45, §30.2) —
+ * putting it in this modal would sell something that is not for sale.
+ */
+const PLANNED = ['Gender', 'Country'] as const;
 
 export function FiltersModal({
   open,
@@ -144,14 +150,6 @@ export function FiltersModal({
               selected={preferences.genders}
               onToggle={(value) =>
                 onChange({ ...preferences, genders: toggle(preferences.genders, value) })
-              }
-            />
-            <Chips
-              label="Vibe"
-              options={VIBE_OPTIONS}
-              selected={preferences.vibes}
-              onToggle={(value) =>
-                onChange({ ...preferences, vibes: toggle(preferences.vibes, value) })
               }
             />
 

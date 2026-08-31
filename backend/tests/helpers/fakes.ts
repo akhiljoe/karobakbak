@@ -211,6 +211,13 @@ export class FakeStore implements LifecycleStore {
   }
 
   /** Preferences, keyed by session, exactly as the real store holds them. */
+  readonly intents = new Map<string, string | null>();
+
+  async setIntent(sessionId: string, intent: string | null): Promise<void> {
+    if (intent === null) this.intents.delete(sessionId);
+    else this.intents.set(sessionId, intent);
+  }
+
   readonly preferences = new Map<string, MatchPreferences>();
 
   async setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void> {
@@ -246,12 +253,18 @@ export class FakeStore implements LifecycleStore {
     // are tracked together, longest-waiting wins inside each, and a preference
     // that finds nobody falls through on the same pass rather than waiting.
     // The fake models no sample size, so it never has cause to widen.
-    const scoreOf = (sessionId: string): number => {
-      const profile = this.profiles.get(sessionId);
+    //
+    // Intent is scored by EQUALITY against the searcher's own declaration
+    // rather than by membership in a preference list, because it is symmetric
+    // (D45, §30): there is one selector and it is satisfied by somebody who
+    // chose the same value.
+    const myIntent = this.intents.get(sessionId) ?? null;
+    const scoreOf = (candidateId: string): number => {
+      const profile = this.profiles.get(candidateId);
       let n = 0;
       if (profile?.gender && prefer.genders.includes(profile.gender)) n += 4;
       if (profile?.country && prefer.countries.includes(profile.country)) n += 2;
-      if (profile?.vibe && prefer.vibes.includes(profile.vibe)) n += 1;
+      if (myIntent !== null && this.intents.get(candidateId) === myIntent) n += 1;
       return n;
     };
 

@@ -119,6 +119,7 @@ export async function startPersona(
     origin: deps.origin,
     character,
     profile: surface.profile,
+    intent: surface.intent,
     voice,
     silenceTimeoutMs: deps.config.personas.silenceTimeoutSeconds * 1000,
     onEvent: (event) => {

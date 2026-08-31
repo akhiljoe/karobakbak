@@ -24,9 +24,21 @@ interface ProfileCardProps {
   profile: Profile;
   onChange: (profile: Profile) => void;
   onClear: () => void;
+  /**
+   * The declared match intent. Threaded through rather than read from storage
+   * here so both editors and the join frame see one value (D45, §30.1).
+   */
+  intent: string | null;
+  onIntentChange: (intent: string | null) => void;
 }
 
-export function ProfileCard({ profile, onChange, onClear }: ProfileCardProps): JSX.Element {
+export function ProfileCard({
+  profile,
+  onChange,
+  onClear,
+  intent,
+  onIntentChange,
+}: ProfileCardProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const empty = isEmptyProfile(profile);
 
@@ -56,7 +68,13 @@ export function ProfileCard({ profile, onChange, onClear }: ProfileCardProps): J
 
       {open && (
         <div className="border-t border-ink-800 px-4 py-4">
-          <ProfileFields profile={profile} onChange={onChange} onClear={onClear} />
+          <ProfileFields
+            profile={profile}
+            onChange={onChange}
+            onClear={onClear}
+            intent={intent}
+            onIntentChange={onIntentChange}
+          />
         </div>
       )}
     </div>

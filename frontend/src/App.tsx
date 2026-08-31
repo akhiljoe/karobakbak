@@ -23,8 +23,10 @@ import {
   clearProfile,
   loadPreferences,
   loadProfile,
+  loadMatchIntent,
   savePreferences,
   saveProfile,
+  saveMatchIntent,
 } from './profile';
 import type { MatchPreferences, Profile } from './protocol/types';
 import { AuthModal } from './components/AuthModal';
@@ -137,7 +139,7 @@ export function App(): JSX.Element {
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
       if (phase === 'idle' && state.screen === 'idle' && event.key === 'Enter' && !overlayOpen) {
         event.preventDefault();
-        chat.start(profile, matchPreferences);
+        chat.start(profile, matchPreferences, matchIntent);
       }
       if (phase === 'chatting' && event.key === 'Escape' && !overlayOpen) chat.skip();
     };
@@ -162,6 +164,10 @@ export function App(): JSX.Element {
   const [matchPreferences, setMatchPreferences] = useState<MatchPreferences>(() =>
     loadPreferences(),
   );
+  // A third thing riding the same join, and deliberately its own piece of state
+  // rather than a field on the profile: `Profile` is what the other side is
+  // shown, and this is the one declaration that is not (D45, §30.1).
+  const [matchIntent, setMatchIntent] = useState<string | null>(() => loadMatchIntent());
 
   const showShell = phase === 'searching' || phase === 'chatting';
 
@@ -183,8 +189,8 @@ export function App(): JSX.Element {
       return;
     }
     unlockSound();
-    chat.start(profile, matchPreferences);
-  }, [ageAcknowledged, chat, matchPreferences, profile]);
+    chat.start(profile, matchPreferences, matchIntent);
+  }, [ageAcknowledged, chat, matchIntent, matchPreferences, profile]);
 
   /**
    * Block this person and move on, in one action.
@@ -214,6 +220,11 @@ export function App(): JSX.Element {
   const updateProfile = useCallback((next: Profile) => {
     setProfile(next);
     saveProfile(next);
+  }, []);
+
+  const updateMatchIntent = useCallback((next: string | null) => {
+    setMatchIntent(next);
+    saveMatchIntent(next);
   }, []);
 
   /*
@@ -256,8 +267,8 @@ export function App(): JSX.Element {
     // Carry on into the search they asked for. Making them press "Start" a
     // second time would read as the gate having failed.
     unlockSound();
-    chat.start(profile, matchPreferences);
-  }, [chat, matchPreferences, profile]);
+    chat.start(profile, matchPreferences, matchIntent);
+  }, [chat, matchIntent, matchPreferences, profile]);
 
   const leaveFromGate = useCallback(() => {
     // `about:blank` rather than `window.close()`, which browsers refuse for a
@@ -265,6 +276,10 @@ export function App(): JSX.Element {
     window.location.href = 'about:blank';
   }, []);
 
+  // Clears the profile only. The intent is not part of it and is not shown to
+  // anybody, so "clear and stay anonymous" has nothing to clear here — wiping
+  // it too would silently turn off a matching control the button never
+  // mentioned.
   const resetProfile = useCallback(() => {
     setProfile(EMPTY_PROFILE);
     clearProfile();
@@ -366,6 +381,8 @@ export function App(): JSX.Element {
         onChange={setPreference}
         onProfileChange={updateProfile}
         onProfileClear={resetProfile}
+        intent={matchIntent}
+        onIntentChange={updateMatchIntent}
       />
 
       {/*

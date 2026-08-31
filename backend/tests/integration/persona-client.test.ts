@@ -68,6 +68,7 @@ async function startPersona(voice: PersonaVoice, seed = 1): Promise<Started> {
     origin: server.ctx.config.http.allowedOrigins[0] ?? 'http://localhost',
     character,
     profile: generateSurface(character, { seed }).profile,
+    intent: null,
     voice,
     // No artificial pause: these tests are about the socket, not the pacing,
     // and the pacing has its own unit tests.

@@ -19,7 +19,7 @@ import {
   isClientEventType,
   isCountryCode,
   isGender,
-  isVibe,
+  isIntent,
   isReaction,
   EMPTY_PREFERENCES,
   MAX_PREFERENCE_VALUES,
@@ -55,6 +55,7 @@ export type ValidatedCommand =
       clientId: string | null;
       profile: Profile;
       preferences: MatchPreferences;
+      intent: string | null;
     }
   | { type: 'leave_queue'; clientId: string | null }
   | { type: 'leave_chat'; clientId: string | null }
@@ -248,7 +249,6 @@ export function validateProfile(
     country?: unknown;
     age?: unknown;
     gender?: unknown;
-    vibe?: unknown;
   };
 
   let name: string | null = null;
@@ -317,19 +317,33 @@ export function validateProfile(
     gender = raw.gender;
   }
 
-  let vibe: string | null = null;
-  if (raw.vibe !== undefined && raw.vibe !== null && raw.vibe !== '') {
-    if (!isVibe(raw.vibe)) {
-      return {
-        ok: false,
-        code: 'VALIDATION_FAILED',
-        message: 'profile.vibe is not one of the accepted values',
-      };
-    }
-    vibe = raw.vibe;
-  }
+  return { ok: true, profile: { name, country, age, gender } };
+}
 
-  return { ok: true, profile: { name, country, age, gender, vibe } };
+/**
+ * Validate the declared intent (D45, §30).
+ *
+ * A sibling of the profile on the join frame rather than a field inside it, and
+ * validated by its own function for the same reason: `Profile` is what reaches
+ * the other side, and intent must not be able to arrive through the parser that
+ * builds one.
+ *
+ * Refused rather than dropped when unknown, the rule every closed list here
+ * follows. An empty string is "declined", because that is what a `<select>` set
+ * back to its placeholder sends.
+ */
+export function validateIntent(
+  value: unknown,
+): { ok: true; intent: string | null } | { ok: false; code: ProtocolErrorCode; message: string } {
+  if (value === undefined || value === null || value === '') return { ok: true, intent: null };
+  if (!isIntent(value)) {
+    return {
+      ok: false,
+      code: 'VALIDATION_FAILED',
+      message: 'payload.intent is not one of the accepted values',
+    };
+  }
+  return { ok: true, intent: value };
 }
 
 /**
@@ -361,7 +375,7 @@ export function validatePreferences(
     };
   }
 
-  const raw = value as { genders?: unknown; countries?: unknown; vibes?: unknown };
+  const raw = value as { genders?: unknown; countries?: unknown };
 
   const dimension = (
     input: unknown,
@@ -392,12 +406,9 @@ export function validatePreferences(
   if (!genders.ok) return { ok: false, code: 'VALIDATION_FAILED', message: genders.message };
   const countries = dimension(raw.countries, 'countries', isCountryCode);
   if (!countries.ok) return { ok: false, code: 'VALIDATION_FAILED', message: countries.message };
-  const vibes = dimension(raw.vibes, 'vibes', isVibe);
-  if (!vibes.ok) return { ok: false, code: 'VALIDATION_FAILED', message: vibes.message };
-
   return {
     ok: true,
-    preferences: { genders: genders.values, countries: countries.values, vibes: vibes.values },
+    preferences: { genders: genders.values, countries: countries.values },
   };
 }
 
@@ -513,9 +524,17 @@ export function parseClientFrame(
       if (!profile.ok) return fail(profile.code, profile.message);
       const preferences = validatePreferences((payload as { preference?: unknown }).preference);
       if (!preferences.ok) return fail(preferences.code, preferences.message);
+      const intent = validateIntent((payload as { intent?: unknown }).intent);
+      if (!intent.ok) return fail(intent.code, intent.message);
       return {
         ok: true,
-        command: { type, clientId, profile: profile.profile, preferences: preferences.preferences },
+        command: {
+          type,
+          clientId,
+          profile: profile.profile,
+          preferences: preferences.preferences,
+          intent: intent.intent,
+        },
       };
     }
     case 'leave_queue':

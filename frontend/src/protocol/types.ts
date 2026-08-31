@@ -270,8 +270,6 @@ export interface Profile {
   age: number | null;
   /** Self-declared, from `GENDERS`. */
   gender: string | null;
-  /** Self-declared, from `VIBES`. What they are in the mood for. */
-  vibe: string | null;
 }
 
 /** An empty profile — every field declined. */
@@ -280,7 +278,6 @@ export const EMPTY_PROFILE: Profile = {
   country: null,
   age: null,
   gender: null,
-  vibe: null,
 };
 
 /**
@@ -329,59 +326,93 @@ export interface MatchPreferences {
   genders: string[];
   /** Codes from `COUNTRY_CODES`. */
   countries: string[];
-  /** Values from `VIBES`. */
-  vibes: string[];
 }
 
 /** No preference at all, which is what every free session sends. */
-export const EMPTY_PREFERENCES: MatchPreferences = { genders: [], countries: [], vibes: [] };
+export const EMPTY_PREFERENCES: MatchPreferences = { genders: [], countries: [] };
 
 /**
  * How many values one dimension may carry.
  *
  * Bounded because the list becomes a comma-joined string on a Redis hash and is
  * substring-searched once per candidate per attempt. Four is already every
- * gender and every vibe, so this only binds on country — where asking for
- * fifty is not a preference, it is an absence of one expressed at length.
+ * gender, so this only binds on country — where asking for fifty is not a
+ * preference, it is an absence of one expressed at length.
  */
 export const MAX_PREFERENCE_VALUES = 8;
 
 /**
- * The vibes a user may declare.
+ * What a searcher is here for (D45, §30).
  *
- * A closed list for the same reason `GENDERS` is one: a free-text mood field is
+ * ---------------------------------------------------------------------------
+ * THIS IS NOT A PROFILE FIELD, AND THE SEPARATION IS THE FEATURE
+ * ---------------------------------------------------------------------------
+ * `Profile` is defined as the thing sent to the other side. Intent is declared
+ * by the same client on the same frame and is deliberately **not** a member of
+ * it, so there is no `matched` payload, no console column and no persona
+ * surface that can carry it by accident. `readProfiles` reads a fixed field
+ * list and `intent` is not in it — that read is the whole path from the session
+ * hash to a partner's screen, so a value outside the list cannot reach one.
+ *
+ * The honest limit, which the UI copy must not overstate away: not *shown* is
+ * not *unknowable*. Two people paired on `venting` are likelier than chance to
+ * share it, so the claim is that the value is never displayed, never that a
+ * partner cannot guess it.
+ *
+ * ---------------------------------------------------------------------------
+ * SYMMETRIC, AND THEREFORE FREE
+ * ---------------------------------------------------------------------------
+ * Unlike gender and country, intent is not a preference *list*: there is one
+ * selector and the score rewards a candidate who chose the **same** value.
+ * Wanting to be matched on it is wanting the same thing as the person you are
+ * matched with, so there is nothing for a second control to express.
+ *
+ * That symmetry is why it ships to everybody rather than behind
+ * `FILTERS_ENABLED`. The premium dimensions are asymmetric — one party gets
+ * what they asked for and the other is selected — which is what makes them
+ * worth charging for and what makes D37's warning apply to them. Intent has no
+ * selected party, so it carries neither property.
+ *
+ * It is scored at 1, below country at 2 and gender at 4, and it **does not
+ * trigger the wide sample** (§30.2). Escalation is the expensive half of D44
+ * and it stays paid for: a free dimension that widened every search would put
+ * `PREFERENCE_WIDE_SAMPLE` reads on the hot path for the whole population.
+ * Intent is scored in whatever sample is drawn and never asks for a bigger one.
+ *
+ * ---------------------------------------------------------------------------
+ * `flirty` IS DELIBERATELY ABSENT
+ * ---------------------------------------------------------------------------
+ * It was in the vibe list this replaces, where it was a declaration nothing
+ * read while `FILTERS_ENABLED` stayed false. Carrying it across would have made
+ * it something else entirely: intent is matched on, for free, for everyone, by
+ * default. That is the server pairing people on sexual intent with **no age
+ * assurance anywhere in the system** — a strictly larger step than the one
+ * §29.9 already refused to take without its own record, and it reaches the
+ * minor-safety policy, the s.79 argument, and the payment processor's and ad
+ * networks' terms on dating and adult content.
+ *
+ * Adding it back is a decision, not a list edit. The record §29.9 asks for is
+ * the prerequisite, and it now has to clear a higher bar than when §29.9 was
+ * written.
+ *
+ * ---------------------------------------------------------------------------
+ * The list is closed for the reason `GENDERS` is: a free-text mood field is
  * somewhere to write a sentence, a slur or a contact handle, and it would then
- * need moderating like a message body. Omitting the field *is* "no preference",
- * so there is no option for it.
+ * need moderating like a message body. Declining *is* "no intent", so there is
+ * no option for it.
  *
- * ---------------------------------------------------------------------------
- * `flirty` IS NOT THE SAME KIND OF VALUE AS THE OTHER THREE
- * ---------------------------------------------------------------------------
- * `chill`, `deep` and `funny` describe a tone. `flirty` declares an intent to
- * engage sexually or romantically, and once it is a matching signal the server
- * is actively pairing people on that intent.
- *
- * It does so with **no age assurance anywhere in the system**. The age gate is
- * the whole of the minor-safety enforcement (`minor-safety-policy.md` §3), and
- * `age` is a claim anyone can type — which is why D36 refuses a declared age
- * below 18 with its own protocol code, on the reasoning that broadcasting a
- * self-declared minor's age to strangers automates a grooming signal that
- * security §23 opens its list with.
- *
- * That makes enabling a `flirty` preference a different decision from enabling
- * the rest, and it needs its own record before `FILTERS_ENABLED` is ever true:
- * it changes what this product is, which reaches the minor-safety policy, the
- * s.79 safe-harbour argument, and the payment processor's and ad networks'
- * terms on dating and adult content.
- *
- * The value is accepted and stored today because a declaration is not a match.
- * Nothing reads it while the flag is off.
+ * `venting` is the one value that is not obviously symmetric — two people who
+ * both want to be heard is not two people listening. It ships because the
+ * alternative pairing is worse (somebody wanting to vent matched with somebody
+ * wanting jokes), and because a preference can only ever improve on the random
+ * partner it replaces. Worth revisiting against §30.4's numbers rather than
+ * assuming either way.
  */
-export const VIBES = ['chill', 'deep', 'funny', 'flirty'] as const;
-export type Vibe = (typeof VIBES)[number];
+export const INTENTS = ['chat', 'deep', 'funny', 'venting'] as const;
+export type Intent = (typeof INTENTS)[number];
 
-export function isVibe(value: unknown): value is Vibe {
-  return typeof value === 'string' && (VIBES as readonly string[]).includes(value);
+export function isIntent(value: unknown): value is Intent {
+  return typeof value === 'string' && (INTENTS as readonly string[]).includes(value);
 }
 
 export function isGender(value: unknown): value is Gender {
@@ -533,6 +564,18 @@ export function countryName(code: string | null): string | null {
  */
 export interface JoinQueuePayload {
   profile?: Profile;
+  /**
+   * What a searcher is looking for, and what they are here for.
+   *
+   * Both ride the join beside the profile and both are session-scoped (D34):
+   * the browser re-sends them every time, the server keeps neither between
+   * sessions, and a field the client stops sending is cleared rather than
+   * remembered. A join carries the whole of each — there is no partial update.
+   *
+   * `intent` is a single value from `INTENTS` and is never shown to a partner.
+   */
+  preference?: MatchPreferences;
+  intent?: string | null;
 }
 
 /** Leave matchmaking without disconnecting. Idempotent. Changes state. */
@@ -805,7 +848,7 @@ export interface MessageAckPayload {
 /**
  * The reactions a message may carry.
  *
- * A closed list for the same reason `GENDERS` and `VIBES` are closed: an open
+ * A closed list for the same reason `GENDERS` and `INTENTS` are closed: an open
  * set — an arbitrary emoji, or free text — is a content field arriving through
  * a path built to carry none, and it would need moderating like a message body.
  *

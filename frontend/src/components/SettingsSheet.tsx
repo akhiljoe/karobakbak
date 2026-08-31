@@ -28,6 +28,13 @@ interface SettingsSheetProps {
   onChange<K extends keyof Preferences>(key: K, value: Preferences[K]): void;
   onProfileChange(profile: Profile): void;
   onProfileClear(): void;
+  /**
+   * The declared match intent. Threaded through rather than read from storage
+   * here so both editors and the join frame see one value (D45, §30.1).
+   */
+  intent: string | null;
+  onIntentChange: (intent: string | null) => void;
+
 }
 
 export function SettingsSheet({
@@ -39,6 +46,8 @@ export function SettingsSheet({
   onChange,
   onProfileChange,
   onProfileClear,
+  intent,
+  onIntentChange,
 }: SettingsSheetProps): JSX.Element | null {
   useEffect(() => {
     if (!open) return;
@@ -87,6 +96,8 @@ export function SettingsSheet({
               onChange={onProfileChange}
               onClear={onProfileClear}
               appliesToNextMatch={inConversation}
+              intent={intent}
+              onIntentChange={onIntentChange}
             />
           </div>
         </section>

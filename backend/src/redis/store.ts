@@ -52,8 +52,14 @@ export type TryMatchAbortReason = 'session_gone' | 'already_matched' | 'not_sear
  */
 export interface PreferenceOutcome {
   /**
-   * How much of the preference the chosen candidate satisfied: gender 4,
-   * country 2, vibe 1, so 0 is an ordinary match and 7 is all three.
+   * How much of what was asked for the chosen candidate satisfied: gender 4,
+   * country 2, intent 1, so 0 is an ordinary match and 7 is all three.
+   *
+   * The three are not all the same kind of thing and the number does not say
+   * which contributed. Gender and country are premium preferences; intent is
+   * free and symmetric (D45). A score of 1 is therefore an ordinary user
+   * getting the one dimension everybody has, not a paying one getting almost
+   * nothing — read it beside `chat_matches_preferred_total` rather than alone.
    *
    * A number rather than a flag because the interesting question at three
    * dimensions is not "did it work" but "how much of it worked". A population
@@ -325,14 +331,13 @@ class UnexpectedScriptReplyError extends Error {
  */
 function profileFromFields(raw: unknown): Profile | null {
   if (!Array.isArray(raw)) return null;
-  const [name, country, age, gender, vibe] = raw as (string | null)[];
+  const [name, country, age, gender] = raw as (string | null)[];
   const parsedAge = typeof age === 'string' ? Number.parseInt(age, 10) : Number.NaN;
   const profile: Profile = {
     name: typeof name === 'string' && name.length > 0 ? name : null,
     country: typeof country === 'string' && country.length > 0 ? country : null,
     age: Number.isInteger(parsedAge) ? parsedAge : null,
     gender: typeof gender === 'string' && gender.length > 0 ? gender : null,
-    vibe: typeof vibe === 'string' && vibe.length > 0 ? vibe : null,
   };
   if (
     profile.name === null &&
@@ -854,8 +859,6 @@ export class RedisStore {
     else clear.push('pAge');
     if (profile.gender !== null) set.push('pGender', profile.gender);
     else clear.push('pGender');
-    if (profile.vibe !== null) set.push('pVibe', profile.vibe);
-    else clear.push('pVibe');
 
     const pipeline = this.client.pipeline();
     if (set.length > 0) pipeline.hset(key, ...set);
@@ -893,12 +896,30 @@ export class RedisStore {
     };
     put('prefG', preferences.genders);
     put('prefC', preferences.countries);
-    put('prefV', preferences.vibes);
 
     const pipeline = this.client.pipeline();
     if (set.length > 0) pipeline.hset(key, ...set);
     if (clear.length > 0) pipeline.hdel(key, ...clear);
     await pipeline.exec();
+  }
+
+  /**
+   * Store what a session is here for (D45, §30).
+   *
+   * A single value, written whole, cleared when declined — the same
+   * session-scoped rule the profile and the preference follow (D34).
+   *
+   * Separate from `setPreferences` because it is **not gated on
+   * `preference.enabled`**. Intent is symmetric and ships to everybody, while
+   * the premium dimensions are asymmetric and do not. Folding the two together
+   * would have put a free feature behind a paid flag with nothing in the types
+   * to notice, which is precisely the shape of failure this codebase keeps
+   * finding: configured, healthy, silently doing nothing.
+   */
+  async setIntent(sessionId: string, intent: string | null): Promise<void> {
+    const key = this.keys.session(sessionId);
+    if (intent === null) await this.client.hdel(key, 'intent');
+    else await this.client.hset(key, 'intent', intent);
   }
 
   /**
@@ -918,7 +939,12 @@ export class RedisStore {
     sessionA: string,
     sessionB: string,
   ): Promise<{ a: Profile | null; b: Profile | null }> {
-    const fields = ['pName', 'pCountry', 'pAge', 'pGender', 'pVibe'] as const;
+    // The field list is the entire path from the session hash to a partner's
+    // screen, and it is exhaustive rather than a projection of something wider.
+    // `intent` is deliberately not in it (D45, §30.1): a value that is never
+    // read here can never be displayed, which is a stronger guarantee than a
+    // renderer remembering to omit it.
+    const fields = ['pName', 'pCountry', 'pAge', 'pGender'] as const;
     const results = await this.client
       .pipeline()
       .hmget(this.keys.session(sessionA), ...fields)
