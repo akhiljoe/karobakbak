@@ -35,14 +35,26 @@ export const ACCOUNTS_ENABLED = false;
  * Matching filters. The modal renders read-only while this is false, so the
  * roadmap is visible without the controls promising anything.
  *
- * The option list is **gender, country and language**, all read from the
- * declared profile and none of them verified.
+ * The dimensions are **gender, country and vibe**, in the order the server
+ * weights them (§29.8). Language was on the earlier list and was never built.
+ *
+ * Only two of the three are declared. Country is resolved from the connection
+ * at the upgrade and whatever a client sends is discarded, so it is the one
+ * dimension that cannot be misdeclared without a VPN.
  *
  * Gender was excluded first and then included. The argument against it stands
  * on the record: filtering a self-declared field is nearer to targeting than to
- * preference, and D37 was written about exactly that. What follows is a
- * constraint on the copy rather than on the feature — nothing anywhere may
- * suggest a filter has checked anything, because none of them has.
+ * preference, and D37 was written about exactly that. D44 answers it by never
+ * filtering — a preference that finds nobody takes an ordinary partner on the
+ * same pass, so no seat is ever held for anyone.
+ *
+ * What follows is a constraint on the copy rather than on the feature: nothing
+ * anywhere may suggest a preference has checked anything, because none of them
+ * has, and nothing may promise a match rather than a higher chance of one.
+ *
+ * `flirty` is in the vibe list and preferring on it is a separate decision from
+ * this flag (§29.9). It declares an intent rather than a tone, and the server
+ * would be pairing people on that intent with no age assurance anywhere.
  */
 export const FILTERS_ENABLED = false;
 

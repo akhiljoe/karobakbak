@@ -18,7 +18,7 @@ import {
   MIN_DECLARED_AGE,
   type Profile,
 } from '../protocol/types';
-import { GENDER_OPTIONS, isEmptyProfile } from '../profile';
+import { GENDER_OPTIONS, VIBE_OPTIONS, isEmptyProfile } from '../profile';
 
 interface ProfileFieldsProps {
   profile: Profile;
@@ -106,6 +106,26 @@ export function ProfileFields({
             ))}
           </select>
         </Field>
+
+        {/*
+          Full width, unlike the four above it, because it is the one field that
+          says what you are here for rather than who you are — and because
+          pairing it with anything would put a mood next to an age.
+        */}
+        <Field label="Vibe" className="col-span-2">
+          <select
+            value={profile.vibe ?? ''}
+            onChange={(event) => onChange({ ...profile, vibe: orNull(event.target.value) })}
+            className={inputClass}
+          >
+            <option value="">—</option>
+            {VIBE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
 
 
@@ -143,13 +163,16 @@ function Field({
   label,
   hint,
   children,
+  className,
 }: {
   label: string;
   hint?: string;
   children: ReactNode;
+  /** Grid placement, for a field that should not sit in the two-column pair. */
+  className?: string;
 }): JSX.Element {
   return (
-    <label className="block">
+    <label className={`block${className ? ` ${className}` : ''}`}>
       <span className="mb-1 block text-xs font-medium text-ink-300">
         {label}
         {hint && <span className="ml-1.5 font-normal text-ink-600">{hint}</span>}
@@ -171,6 +194,9 @@ export function summariseProfile(profile: Profile): string {
   }
   if (profile.country) {
     parts.push(COUNTRY_NAMES[profile.country as keyof typeof COUNTRY_NAMES] ?? profile.country);
+  }
+  if (profile.vibe) {
+    parts.push(VIBE_OPTIONS.find((option) => option.value === profile.vibe)?.label ?? profile.vibe);
   }
   return parts.join(' · ');
 }

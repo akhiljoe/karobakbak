@@ -37,6 +37,10 @@ import {
   isCountryCode,
   isGender,
   isVibe,
+  VIBES,
+  EMPTY_PREFERENCES,
+  MAX_PREFERENCE_VALUES,
+  type MatchPreferences,
   type Profile,
 } from './protocol/types';
 
@@ -132,6 +136,102 @@ export const GENDER_OPTIONS = GENDERS.map((value) => ({
   value,
   label: GENDER_LABELS[value] ?? value,
 }));
+
+/**
+ * What each vibe is called on screen.
+ *
+ * Sentence case rather than the wire value, which stays lowercase so stored
+ * evidence reads unambiguously — the same split `GENDER_LABELS` makes.
+ */
+const VIBE_LABELS: Record<string, string> = {
+  chill: 'Chill',
+  deep: 'Deep',
+  funny: 'Funny',
+  flirty: 'Flirty',
+};
+
+export const VIBE_OPTIONS = VIBES.map((value) => ({
+  value,
+  label: VIBE_LABELS[value] ?? value,
+}));
+
+/* -------------------------------------------------------------------------- */
+/* Match preference                                                           */
+/* -------------------------------------------------------------------------- */
+
+const PREFERENCE_KEY = 'karobakbak.preference.v1';
+
+export { EMPTY_PREFERENCES };
+
+/**
+ * Read the stored preference, dropping anything that no longer validates.
+ *
+ * Same rule as the profile, and it matters more here: a value the server would
+ * refuse fails the **whole join**, not just that field. Filtering it out on the
+ * way in means a stale option cannot lock somebody out of searching entirely.
+ */
+export function loadPreferences(
+  storage: Storage | undefined = safeStorage(),
+): MatchPreferences {
+  if (!storage) return EMPTY_PREFERENCES;
+
+  let raw: string | null;
+  try {
+    raw = storage.getItem(PREFERENCE_KEY);
+  } catch {
+    return EMPTY_PREFERENCES;
+  }
+  if (raw === null) return EMPTY_PREFERENCES;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return EMPTY_PREFERENCES;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return EMPTY_PREFERENCES;
+  }
+
+  const value = parsed as Record<string, unknown>;
+  const clean = (input: unknown, accepts: (candidate: unknown) => boolean): string[] => {
+    if (!Array.isArray(input)) return [];
+    const kept: string[] = [];
+    for (const entry of input) {
+      if (accepts(entry) && !kept.includes(entry as string)) kept.push(entry as string);
+    }
+    return kept.slice(0, MAX_PREFERENCE_VALUES);
+  };
+
+  return {
+    genders: clean(value.genders, isGender),
+    countries: clean(value.countries, isCountryCode),
+    vibes: clean(value.vibes, isVibe),
+  };
+}
+
+/** Persist, or quietly do nothing when storage is unavailable. */
+export function savePreferences(
+  preferences: MatchPreferences,
+  storage: Storage | undefined = safeStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(PREFERENCE_KEY, JSON.stringify(preferences));
+  } catch {
+    // Same as the profile: it applies to this session and will not survive a
+    // reload, which is not worth failing anything over.
+  }
+}
+
+/** Whether anything at all is being asked for. */
+export function isEmptyPreferences(preferences: MatchPreferences): boolean {
+  return (
+    preferences.genders.length === 0 &&
+    preferences.countries.length === 0 &&
+    preferences.vibes.length === 0
+  );
+}
 
 function cleanName(value: unknown): string | null {
   if (typeof value !== 'string') return null;

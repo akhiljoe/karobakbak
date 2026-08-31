@@ -40,16 +40,37 @@ import { useEffect } from 'react';
 import { ArrowUpRight, Lock, SlidersHorizontal, X } from 'lucide-react';
 
 import { FILTERS_ENABLED } from '../features';
+import { COUNTRY_NAMES, GENDERS, VIBES, type MatchPreferences } from '../protocol/types';
+import { GENDER_OPTIONS, VIBE_OPTIONS, isEmptyPreferences } from '../profile';
 import { Button } from './Button';
+
+/**
+ * Toggle one value in one dimension.
+ *
+ * Additive rather than exclusive: asking for two genders is a wider search, not
+ * a contradictory one, and the server scores a candidate matching any of them.
+ */
+function toggle(values: string[], value: string): string[] {
+  return values.includes(value) ? values.filter((v) => v !== value) : [...values, value];
+}
 
 interface FiltersModalProps {
   open: boolean;
   onClose(): void;
+  /** What is currently being asked for. */
+  preferences: MatchPreferences;
+  onChange(preferences: MatchPreferences): void;
 }
 
-const PLANNED = ['Gender', 'Country', 'Language'] as const;
+/** The dimensions, in the order they are weighted server-side (§29.8). */
+const PLANNED = ['Gender', 'Country', 'Vibe'] as const;
 
-export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element | null {
+export function FiltersModal({
+  open,
+  onClose,
+  preferences,
+  onChange,
+}: FiltersModalProps): JSX.Element | null {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
@@ -115,25 +136,123 @@ export function FiltersModal({ open, onClose }: FiltersModalProps): JSX.Element 
           </div>
         )}
 
-        <ul className="flex flex-col gap-2">
-          {PLANNED.map((label) => (
-            <li
-              key={label}
-              className="flex items-center justify-between rounded-xl border border-ink-800 bg-ink-950 px-3.5 py-3 opacity-60"
-            >
-              <span className="text-sm text-ink-300">{label}</span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-ink-800 px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-ink-400">
-                <Lock className="h-2.5 w-2.5" aria-hidden="true" />
-                Premium
-              </span>
-            </li>
-          ))}
-        </ul>
+        {FILTERS_ENABLED ? (
+          <div className="flex flex-col gap-4">
+            <Chips
+              label="Gender"
+              options={GENDER_OPTIONS}
+              selected={preferences.genders}
+              onToggle={(value) =>
+                onChange({ ...preferences, genders: toggle(preferences.genders, value) })
+              }
+            />
+            <Chips
+              label="Vibe"
+              options={VIBE_OPTIONS}
+              selected={preferences.vibes}
+              onToggle={(value) =>
+                onChange({ ...preferences, vibes: toggle(preferences.vibes, value) })
+              }
+            />
 
+            {/*
+              One country, not a multi-select. There are 240 of them, and asking
+              for eight is not a preference — it is the absence of one, typed at
+              length. Anywhere is the default and stays the honest answer.
+            */}
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-ink-300">Country</span>
+              <select
+                value={preferences.countries[0] ?? ''}
+                onChange={(event) =>
+                  onChange({
+                    ...preferences,
+                    countries: event.target.value === '' ? [] : [event.target.value],
+                  })
+                }
+                className="w-full rounded-xl border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-100 outline-none transition-colors focus:border-amber-500/60"
+              >
+                <option value="">Anywhere</option>
+                {Object.entries(COUNTRY_NAMES).map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/*
+              The whole promise, in the words the server can actually keep. Not
+              "match me with" — the search prefers, and takes an ordinary
+              partner on the same pass when nobody fits (D44). Saying otherwise
+              would be selling something this cannot deliver, and every value
+              here is a claim a stranger typed anyway.
+            */}
+            <p className="text-xs leading-relaxed text-ink-500">
+              {isEmptyPreferences(preferences)
+                ? 'No preference set — you will be matched with anyone waiting.'
+                : 'A higher chance of being matched with what you picked. When nobody fits, you still get matched right away rather than waiting.'}
+            </p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {PLANNED.map((label) => (
+              <li
+                key={label}
+                className="flex items-center justify-between rounded-xl border border-ink-800 bg-ink-950 px-3.5 py-3 opacity-60"
+              >
+                <span className="text-sm text-ink-300">{label}</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-ink-800 px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-ink-400">
+                  <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                  Premium
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <Button variant="secondary" className="mt-4 w-full" onClick={onClose}>
           Close
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/** One dimension as a row of toggles. Small closed lists only. */
+function Chips({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: readonly { value: string; label: string }[];
+  selected: readonly string[];
+  onToggle(value: string): void;
+}): JSX.Element {
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-medium text-ink-300">{label}</span>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const on = selected.includes(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onToggle(option.value)}
+              className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                on
+                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
+                  : 'border-ink-700 bg-ink-950 text-ink-300 hover:border-ink-600 hover:text-ink-100'
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

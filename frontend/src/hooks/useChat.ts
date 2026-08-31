@@ -26,6 +26,7 @@ import {
   RESUME_PROTOCOL_PREFIX,
   type AnyServerEnvelope,
   type ClientEventType,
+  type MatchPreferences,
   type Profile,
   type ReportCategory,
 } from '../protocol/types';
@@ -70,7 +71,7 @@ function newClientMessageId(): string {
 
 export interface ChatApi {
   readonly state: ChatState;
-  start(profile?: Profile): void;
+  start(profile?: Profile, preferences?: MatchPreferences): void;
   stop(): void;
   skip(): void;
   /** End the conversation (or the search) and return to the landing screen. */
@@ -223,8 +224,13 @@ export function useChat(): ChatApi {
    * a stale value behind.
    */
   const start = useCallback(
-    (profile?: Profile) => {
-      const payload = profile === undefined ? {} : { profile };
+    (profile?: Profile, preferences?: MatchPreferences) => {
+      const payload: { profile?: Profile; preference?: MatchPreferences } = {};
+      if (profile !== undefined) payload.profile = profile;
+      // Sent whole, like the profile and for the same reason: a dimension the
+      // user cleared has to reach the server as cleared, because there is no
+      // partial update and a stale one would keep steering matches.
+      if (preferences !== undefined) payload.preference = preferences;
       if (sendCommand('join_queue', payload)) dispatch({ type: 'user_searching' });
     },
     [sendCommand],
