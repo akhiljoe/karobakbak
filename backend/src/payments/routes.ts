@@ -35,7 +35,7 @@ import { errorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
 import { hashIp, newPaymentReceipt } from '../util/ids';
 import { clientAddress } from '../ws/upgrade';
-import { bearerToken, resolveAccount } from './accounts';
+import { bearerToken, resolveAccount } from '../accounts/credentials';
 import type { PaymentGateway } from './gateway';
 import { findProduct, resolveAmountPaise } from './products';
 import type { PaymentRepository } from './repository';

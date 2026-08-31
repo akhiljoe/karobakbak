@@ -30,6 +30,7 @@ export const CLIENT_EVENTS = [
   'message',
   'typing',
   'react',
+  'save_connection',
   'skip',
   'report',
   'block',
@@ -46,6 +47,8 @@ export const SERVER_EVENTS = [
   'message_ack',
   'partner_typing',
   'partner_reacted',
+  'connection_state',
+  'connection_made',
   'partner_skipped',
   'partner_reconnecting',
   'partner_returned',
@@ -629,6 +632,66 @@ export type LeaveQueuePayload = Record<string, never>;
  */
 export type LeaveChatPayload = Record<string, never>;
 
+/**
+ * Save this stranger, so the two of you can talk again later (§31, D47).
+ *
+ * ---------------------------------------------------------------------------
+ * MUTUAL CONSENT, AND THE LEAK IT IS BUILT TO AVOID
+ * ---------------------------------------------------------------------------
+ * Saving alone does nothing and is **never revealed to the partner**. A
+ * connection exists only when both sides have saved, and the only frame that
+ * mentions the other person is `connection_made`, which is sent to both at the
+ * same moment and only when both have agreed.
+ *
+ * One-sided saving would make a stranger's future contactability something they
+ * did not agree to. Telling A that B saved them would be worse: it hands A a
+ * fact about B that B chose to disclose only on condition of reciprocity.
+ *
+ * The residual inference is real and is not fixable: a conversation that ends
+ * with no `connection_made` tells a saver that the other side did not save. That
+ * is inherent to mutual consent — every system of this shape has it — and it is
+ * bounded to "they did not", never to when or why. It is recorded here rather
+ * than left to be discovered.
+ *
+ * `active` is a toggle so a mis-tap is recoverable while the conversation is
+ * still running. It does **not** undo a connection that has already been made:
+ * once both sides agreed, the relationship exists and removing it is an action
+ * on the friend list, taken by one person, with the other not told.
+ *
+ * Requires an account. Without one the command is refused rather than queued —
+ * there is nothing to attach a connection to, and a silent no-op would show a
+ * saved state that could never become a connection.
+ *
+ * Idempotent. Changes state.
+ */
+export interface SaveConnectionPayload {
+  /** False withdraws it, while the conversation is still running. */
+  active: boolean;
+}
+
+/**
+ * Your own save state, echoed back.
+ *
+ * Deliberately carries nothing about the partner. It is the acknowledgement of
+ * *your* command, so the UI can show a pressed button without inventing local
+ * state that the server might disagree with.
+ */
+export interface ConnectionStatePayload {
+  matchId: string;
+  saved: boolean;
+}
+
+/**
+ * Both sides saved. Sent to both, at the same moment, and never otherwise.
+ *
+ * This is the only frame in the protocol that reveals anything about the
+ * partner's decision, and it can only be emitted when that decision was to
+ * agree — so there is no state in which it discloses a refusal.
+ */
+export interface ConnectionMadePayload {
+  matchId: string;
+}
+
 /** End the current match and immediately search again. Idempotent. Changes state. */
 export type SkipPayload = Record<string, never>;
 
@@ -702,6 +765,7 @@ export interface ClientEventPayloads {
   message: MessagePayload;
   typing: TypingPayload;
   react: ReactPayload;
+  save_connection: SaveConnectionPayload;
   skip: SkipPayload;
   report: ReportPayload;
   block: BlockPayload;
@@ -1018,6 +1082,8 @@ export interface ServerEventPayloads {
   message_ack: MessageAckPayload;
   partner_typing: PartnerTypingPayload;
   partner_reacted: PartnerReactedPayload;
+  connection_state: ConnectionStatePayload;
+  connection_made: ConnectionMadePayload;
   partner_skipped: PartnerSkippedPayload;
   partner_reconnecting: PartnerReconnectingPayload;
   partner_returned: PartnerReturnedPayload;
@@ -1105,6 +1171,15 @@ export const PROTOCOL_ERROR_CODES = [
   'RATE_LIMITED',
   /** Operation requires an active match and there is none. */
   'NOT_MATCHED',
+  /**
+   * `save_connection` from a session with no account (§31).
+   *
+   * Refused rather than accepted-and-ignored, because a saved state that can
+   * never become a connection is worse than a refusal: the user believes they
+   * have done the thing, and the absence of a connection afterwards reads as
+   * the other person declining.
+   */
+  'ACCOUNT_REQUIRED',
   /** join_queue while already MATCHED. */
   'ALREADY_MATCHED',
   /** Server-side session no longer exists (TTL, reaped, or Redis restarted). */

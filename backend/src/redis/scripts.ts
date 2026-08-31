@@ -645,6 +645,85 @@ return { 'MATCHED', mid, chosen, cleaned, blockedSkipped, preferred, widened }
 );
 
 /**
+ * Record one side's consent to save the other, and report whether that
+ * completed a mutual agreement. KEYS: user_match(sid).
+ * ARGV: prefix, sid, accountId, active, matchTtl.
+ *
+ * The two questions are answered in one script for the same reason routing and
+ * dedupe are (§10.17): as two round trips, both sides pressing save at the same
+ * moment could each read the other as not-yet-saved and neither would see the
+ * connection complete. One script makes the second presser the one that sees it,
+ * always, whichever order they arrive in.
+ *
+ * The field holds the caller's **account id rather than a boolean**. It costs
+ * nothing, and it means a completed pair carries both ids out of the script
+ * already — no second read of two session hashes, and no window in which a
+ * session expires between the agreement and the lookup of who agreed.
+ *
+ * Idempotent both ways (rule 4). Saving twice sets the same field to the same
+ * value; withdrawing twice deletes an absent field. A repeat of the completing
+ * press returns AGAIN rather than MADE, so the connection is announced once
+ * while the write it triggers stays safe to repeat.
+ */
+const saveConnection = define(
+  'saveConnection',
+  1,
+  5,
+  `
+local sid = ARGV[2]
+local account = ARGV[3]
+local active = ARGV[4] == '1'
+local matchTtl = tonumber(ARGV[5])
+
+local mid = redis.call('GET', KEYS[1])
+if not mid then return { 'NOT_MATCHED' } end
+
+local mk = kMatch(mid)
+local m = redis.call('HMGET', mk, 'a', 'b', 'saveA', 'saveB')
+-- I6 again: a match whose record is gone can never complete anything.
+if not m[1] then return { 'NOT_MATCHED' } end
+
+local mine, theirs
+if m[1] == sid then
+  mine, theirs = 'saveA', m[4]
+elseif m[2] == sid then
+  mine, theirs = 'saveB', m[3]
+else
+  return { 'NOT_MATCHED' }
+end
+
+if not active then
+  redis.call('HDEL', mk, mine)
+  return { 'WITHDRAWN', mid }
+end
+
+-- Read before the write, so a repeat of the completing press is distinguishable
+-- from the press that completed it. Without this the announcement fires on
+-- every retry and both sides are told they connected several times.
+local wasSet = redis.call('HGET', mk, mine)
+
+redis.call('HSET', mk, mine, account)
+-- The match TTL is refreshed rather than left alone: consent is an act of
+-- participation, and a conversation where somebody just pressed save is not one
+-- that should expire out from under them mid-decision.
+redis.call('EXPIRE', mk, matchTtl)
+
+if not theirs or theirs == '' then return { 'PENDING', mid } end
+if wasSet then return { 'AGAIN', mid } end
+
+-- Sorted here rather than in TypeScript, so the canonical order the primary key
+-- requires is decided in the one place that holds both ids at once.
+local lo, hi = account, theirs
+if lo > hi then lo, hi = hi, lo end
+-- Equal ids mean one account reached both sides of a conversation. That is not
+-- a connection, it is somebody talking to themselves in two tabs, and the
+-- check constraint on the table would refuse the row anyway.
+if lo == hi then return { 'SELF', mid } end
+return { 'MADE', mid, lo, hi }
+`,
+);
+
+/**
  * End a match, symmetrically. KEYS: match(mid). ARGV: prefix, mid, sessionTtl.
  *
  * The winner (the caller whose DEL removed the record) is the one that notifies
@@ -1171,6 +1250,7 @@ export const SCRIPTS = {
   leaveQueue,
   tryMatch,
   endMatch,
+  saveConnection,
   saveMatchIdentities,
   resolvePartner,
   resolveRoute,

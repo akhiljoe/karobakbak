@@ -45,6 +45,8 @@ export interface SocketConnectionDeps {
    * one moment the request headers exist.
    */
   country: string | null;
+  /** The signed-in account, resolved at the upgrade. Null on the anonymous path. */
+  accountId?: string | null;
   config: Config;
   logger: Logger;
   /** Handle one validated command. Must not throw. */
@@ -72,6 +74,19 @@ export class SocketConnection implements Connection {
   readonly clientHash: string;
   readonly country: string | null;
 
+  /**
+   * The signed-in account, or null for the anonymous path.
+   *
+   * Resolved at the upgrade from a presented credential and never from a frame
+   * (rule 3): a client that could name its own account would be able to connect
+   * itself to somebody it never spoke to.
+   *
+   * Null is the ordinary case and always will be — chatting never requires an
+   * account, and the anonymous path must keep working while sign-in is down
+   * (`010_accounts.sql`). Only `save_connection` reads it.
+   */
+  readonly accountId: string | null;
+
   private readonly socket: WebSocket;
   private readonly config: Config;
   private readonly logger: Logger;
@@ -88,6 +103,7 @@ export class SocketConnection implements Connection {
     this.socket = deps.socket;
     this.sessionId = deps.sessionId;
     this.country = deps.country;
+    this.accountId = deps.accountId ?? null;
     this.ipHash = deps.ipHash;
     this.clientHash = deps.clientHash;
     this.config = deps.config;

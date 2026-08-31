@@ -41,6 +41,8 @@ import { nowIso } from '../util/time';
 import { moderate } from '../moderation';
 import { newMessageId as newRecordId } from '../util/ids';
 import type { RetentionSink } from '../storage/sink';
+import type { ConnectionRepository } from '../accounts/connections';
+import type { SaveConnectionResult } from '../redis/store';
 import type { EventDispatcher } from './dispatch';
 import type { MessageAckStatus, MessageContentType } from '../protocol/types';
 
@@ -49,6 +51,11 @@ export interface MessageStore {
   rateLimit(command: RateLimitedCommand, sessionId: string, cost?: number): Promise<RateLimitResult>;
   resolvePartner(sessionId: string, clientMsgId: string): Promise<ResolvePartnerResult>;
   resolveRoute(sessionId: string): Promise<ResolveRouteResult>;
+  saveConnection(
+    sessionId: string,
+    accountId: string,
+    active: boolean,
+  ): Promise<SaveConnectionResult>;
 }
 
 export type MessageOutcome =
@@ -71,6 +78,28 @@ export type MessageOutcome =
   /** The replay-protection set is full. Refused rather than delivered undeduplicated. */
   | { kind: 'dedupe_full' };
 
+export type SaveConnectionOutcome =
+  /** The caller's own state, and nothing about the partner's. */
+  | { kind: 'state'; matchId: string; saved: boolean }
+  /** Both agreed. `created` is false when this call repeated the last one. */
+  | { kind: 'made'; matchId: string; created: boolean }
+  | { kind: 'rate_limited'; retryAfterMs: number }
+  | { kind: 'not_matched' };
+
+/**
+ * The repository a chat process gets when accounts are not wired up.
+ *
+ * It throws rather than returning a falsy success, because reaching it means a
+ * session carried an account id that this process cannot record — which is a
+ * configuration fault, not a user outcome, and the one thing that must not
+ * happen is telling two people they connected when nothing was written.
+ */
+const UNAVAILABLE_CONNECTIONS: ConnectionRepository = {
+  save: () => Promise.reject(new Error('connections repository is not configured')),
+  list: () => Promise.reject(new Error('connections repository is not configured')),
+  remove: () => Promise.reject(new Error('connections repository is not configured')),
+};
+
 export type TypingOutcome =
   | { kind: 'sent' }
   | { kind: 'rate_limited'; retryAfterMs: number }
@@ -85,6 +114,14 @@ export class MessagePipeline {
     private readonly config: Config,
     private readonly logger: Logger,
     private readonly retention: RetentionSink,
+    /**
+     * Null until sign-in ships, and the pipeline refuses the command rather
+     * than pretending in that state — see `ACCOUNT_REQUIRED`. Injected rather
+     * than imported so the chat process can run with no database reachable for
+     * accounts and still serve every other command (D16's sibling: `/ready`
+     * reflects Redis, not PostgreSQL).
+     */
+    private readonly connections: ConnectionRepository = UNAVAILABLE_CONNECTIONS,
   ) {}
 
   /**
@@ -299,6 +336,47 @@ export class MessagePipeline {
       nowIso(),
     );
     return { kind: 'sent' };
+  }
+
+  /**
+   * Record consent to save the partner, and report a completed pair (§31).
+   *
+   * The account is resolved by the caller from the socket, never from the
+   * frame. Nothing here reveals the partner's decision: `pending` and
+   * `withdrawn` are answers about the caller's own state, and `made` is only
+   * reachable when both sides agreed.
+   *
+   * The Redis half decides; the Postgres half records. They are separate on
+   * purpose — the agreement is a matchmaking-state transition and belongs in a
+   * script like every other one (D1), while the connection outlives the match
+   * and belongs in a table. If the write fails after the script succeeded, the
+   * two sides stay marked as having consented, so a retry of the same press
+   * completes it rather than starting over.
+   */
+  async saveConnection(
+    sessionId: string,
+    accountId: string,
+    active: boolean,
+  ): Promise<SaveConnectionOutcome> {
+    const limit = await this.store.rateLimit('save_connection', sessionId);
+    if (!limit.allowed) {
+      return { kind: 'rate_limited', retryAfterMs: limit.retryAfterMs };
+    }
+
+    const result = await this.store.saveConnection(sessionId, accountId, active);
+    if (result.status === 'not_matched') return { kind: 'not_matched' };
+    if (result.status === 'withdrawn') {
+      return { kind: 'state', matchId: result.matchId, saved: false };
+    }
+    // One account on both sides. Reported as saved-and-nothing-more rather than
+    // as an error: it is two tabs, the user did press the button, and there is
+    // no connection to make between an account and itself.
+    if (result.status === 'self' || result.status === 'pending' || result.status === 'already') {
+      return { kind: 'state', matchId: result.matchId, saved: true };
+    }
+
+    const created = await this.connections.save(result.accountLo, result.accountHi);
+    return { kind: 'made', matchId: result.matchId, created };
   }
 
   async typing(sessionId: string, active: boolean): Promise<TypingOutcome> {

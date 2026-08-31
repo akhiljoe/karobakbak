@@ -169,6 +169,16 @@ export interface Metrics {
   readonly skips: Counter<string>;
   /** Reactions delivered to a partner. Never stored, so this is the only trace. */
   readonly reactions: Counter<string>;
+  /**
+   * Connections created — both sides saved and a row was written (§31).
+   *
+   * Counted only on the call that created the row, never on a repeat, so it is
+   * a count of relationships rather than of button presses. Deliberately has no
+   * counterpart for one-sided saves: that number is a measure of how often
+   * somebody was not saved back, and publishing it would make a private refusal
+   * into an operational statistic.
+   */
+  readonly connectionsMade: Counter<string>;
   readonly matchmakingLatency: Histogram<string>;
 
   /* messages */
@@ -386,6 +396,7 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     activeMatches: gauge('chat_active_matches', 'Live conversations, cluster-wide'),
     matchAttempts: counter('chat_match_attempts_total', 'tryMatch invocations'),
     matchesCreated: counter('chat_matches_created_total', 'Conversations formed'),
+    connectionsMade: counter('chat_connections_made_total', 'Mutually saved connections created'),
     matchmakingFailures: counter('chat_matchmaking_failures_total', 'Match attempts that aborted', ['reason']),
     skips: counter('chat_skips_total', 'Conversations ended by a skip'),
     reactions: counter('chat_reactions_total', 'Message reactions delivered'),

@@ -185,6 +185,7 @@ describe('loadConfig — per-command rate limits (R7)', () => {
       'message',
       'react',
       'report',
+      'save_connection',
       'skip',
       'typing',
     ]);
@@ -827,5 +828,90 @@ describe('payments configuration', () => {
 
   it('does not police credentials while payments are off', () => {
     expect(() => loadConfig(baseEnv({ PAYMENTS_ENABLED: 'false' }))).not.toThrow();
+  });
+});
+
+/**
+ * Sign-in configuration (§32, D48).
+ *
+ * These are the "looks configured, silently does nothing" checks. A missing
+ * issuer produces a sign-in button that renders, navigates, and lands on a
+ * provider error page the user cannot act on — which reads as "sign-in is
+ * broken" rather than "sign-in is not configured".
+ */
+describe('loadConfig — sign-in', () => {
+  const COMPLETE = {
+    AUTH_ENABLED: 'true',
+    AUTH_ISSUER: 'https://cognito-idp.ap-south-1.amazonaws.com/pool_x',
+    AUTH_AUTHORIZE_URL: 'https://auth.example.com/oauth2/authorize',
+    AUTH_TOKEN_URL: 'https://auth.example.com/oauth2/token',
+    AUTH_JWKS_URL: 'https://auth.example.com/.well-known/jwks.json',
+    AUTH_CLIENT_ID: 'client_abc',
+    AUTH_REDIRECT_URI: 'https://karobakbak.example/auth/callback',
+    IP_HASH_SALT: 'test-salt-value-long-enough',
+  };
+
+  it('is off by default, and off needs no other value', () => {
+    const config = loadConfig({ IP_HASH_SALT: 'test-salt-value-long-enough' });
+    expect(config.auth.enabled).toBe(false);
+    expect(config.auth.issuer).toBe('');
+  });
+
+  it('accepts a complete configuration', () => {
+    expect(loadConfig(COMPLETE).auth.enabled).toBe(true);
+  });
+
+  it('refuses each half-specified configuration by name', () => {
+    // One at a time, so the message names the variable that is actually
+    // missing rather than the first one checked.
+    for (const key of [
+      'AUTH_ISSUER',
+      'AUTH_AUTHORIZE_URL',
+      'AUTH_TOKEN_URL',
+      'AUTH_JWKS_URL',
+      'AUTH_CLIENT_ID',
+      'AUTH_REDIRECT_URI',
+    ]) {
+      const env: Record<string, string> = { ...COMPLETE };
+      delete env[key];
+      expect(() => loadConfig(env)).toThrow(new RegExp(key));
+    }
+  });
+
+  it('does not require a client secret — PKCE alone is a valid public client', () => {
+    expect(() => loadConfig(COMPLETE)).not.toThrow();
+    expect(loadConfig(COMPLETE).auth.clientSecret).toBe('');
+  });
+
+  it('refuses an issuer that is not https, because it is compared to `iss`', () => {
+    expect(() =>
+      loadConfig({ ...COMPLETE, AUTH_ISSUER: 'http://cognito-idp.example/pool_x' }),
+    ).toThrow(/AUTH_ISSUER/);
+  });
+
+  it('refuses cleartext session cookies in production', () => {
+    // The session cookie is a bearer credential. Allowed off for local HTTP,
+    // refused where it would put one on the wire.
+    const prod = {
+      ...COMPLETE,
+      NODE_ENV: 'production',
+      ALLOWED_ORIGINS: 'https://karobakbak.example',
+      VITE_TERMS_URL: 'https://karobakbak.example/terms',
+      VITE_PRIVACY_URL: 'https://karobakbak.example/privacy',
+    };
+    expect(() => loadConfig({ ...prod, AUTH_SECURE_COOKIES: 'false' })).toThrow(
+      /AUTH_SECURE_COOKIES/,
+    );
+    // And the same configuration is fine with the default (secure) cookies.
+    expect(() => loadConfig(prod)).not.toThrow();
+  });
+
+  it('is independent of payments — signing in is free', () => {
+    // Connections, history and friend requests all need an account and none of
+    // them is sold. A sign-in coupled to PAYMENTS_ENABLED would gate three free
+    // features behind a subscription that does not exist yet.
+    const config = loadConfig(COMPLETE);
+    expect(config.auth.enabled).toBe(true);
+    expect(config.payments.enabled).toBe(false);
   });
 });

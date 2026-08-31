@@ -63,6 +63,7 @@ export type ValidatedCommand =
   | { type: 'block'; clientId: string | null }
   | { type: 'ping'; clientId: string | null }
   | { type: 'typing'; clientId: string | null; active: boolean }
+  | { type: 'save_connection'; clientId: string | null; active: boolean }
   | {
       type: 'react';
       clientId: string | null;
@@ -620,6 +621,17 @@ export function parseClientFrame(
           active: raw.active ?? true,
         },
       };
+    }
+    case 'save_connection': {
+      const raw = payload as { active?: unknown };
+      // Carries nothing but its own direction. No partner id, no account id and
+      // no match id: the server resolves all three from the session (rule 3),
+      // and a client that could name the account it was connecting to would be
+      // able to connect itself to somebody it never spoke to.
+      if (raw.active !== undefined && typeof raw.active !== 'boolean') {
+        return fail('VALIDATION_FAILED', 'payload.active must be a boolean');
+      }
+      return { ok: true, command: { type, clientId, active: raw.active ?? true } };
     }
     default: {
       // Exhaustiveness guard: adding a client event without handling it here

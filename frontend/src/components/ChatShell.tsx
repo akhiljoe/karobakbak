@@ -6,12 +6,22 @@
  * same shell rather than being a separate screen the layout jumps between.
  */
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Clock, Loader2, MoreVertical, ShieldX, SkipForward, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Clock,
+  Loader2,
+  MoreVertical,
+  ShieldX,
+  SkipForward,
+  UserPlus,
+  X,
+} from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
 import type { ChatState } from '../state/machine';
 import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
+import { ACCOUNTS_ENABLED } from '../features';
 import {
   colourFor,
   composerDisabled,
@@ -49,6 +59,8 @@ interface ChatShellProps {
   onSend(text: string): void;
   onTyping(active: boolean): void;
   onReact(messageId: string, reaction: string, active: boolean): void;
+  /** Save this stranger, or withdraw it while the conversation is still running. */
+  onSaveConnection(active: boolean): void;
   onSkip(): void;
   onCancelSearch(): void;
   onOpenSafety(): void;
@@ -66,6 +78,7 @@ export function ChatShell({
   onSend,
   onTyping,
   onReact,
+  onSaveConnection,
   onSkip,
   onCancelSearch,
   onOpenSafety,
@@ -279,6 +292,47 @@ export function ChatShell({
               <span className="ml-1 hidden text-ink-600 sm:inline">· never after you block</span>
             </span>
           </label>
+
+          {/*
+            Absent, not disabled, while accounts are off — the rule the filter
+            control and Premium already follow. A save button that renders and
+            refuses still takes focus and still announces itself to a screen
+            reader before saying no.
+
+            It sits with the conversation controls rather than beside Block: it
+            is the one *positive* thing you can do about a stranger, and putting
+            it next to the destructive control would be a strange pair of
+            neighbours. It is deliberately not near "Next stranger" either —
+            see the note above about reflexes and adjacency.
+          */}
+          {ACCOUNTS_ENABLED && (
+            <button
+              onClick={() => onSaveConnection(!state.connectionSaved)}
+              disabled={state.connectionMade}
+              aria-pressed={state.connectionSaved}
+              title={
+                state.connectionMade
+                  ? 'Connected'
+                  : state.connectionSaved
+                    ? 'Saved. Tap to undo.'
+                    : 'Save this stranger'
+              }
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
+                state.connectionSaved
+                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                  : 'border-ink-700 bg-ink-900 text-ink-200 hover:border-ink-600 hover:bg-ink-800'
+              } ${state.connectionMade ? 'cursor-default' : ''}`}
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              {/*
+                Three labels for three genuinely different states, and never a
+                fourth for "they saved you". That frame does not exist: a save
+                is disclosed only on reciprocity, so there is nothing between
+                "saved" and "connected" for the interface to show.
+              */}
+              {state.connectionMade ? 'Connected' : state.connectionSaved ? 'Saved' : 'Save'}
+            </button>
+          )}
 
           <button
             onClick={onSkip}

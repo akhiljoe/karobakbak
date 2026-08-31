@@ -325,6 +325,7 @@ export function App(): JSX.Element {
               onSend={chat.send}
               onTyping={chat.typing}
               onReact={chat.react}
+              onSaveConnection={chat.saveConnection}
               onSkip={chat.skip}
               onCancelSearch={chat.leave}
               onOpenSafety={() => setSafetyOpen(true)}

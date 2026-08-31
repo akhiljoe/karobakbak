@@ -770,3 +770,109 @@ describe('a held seat does not outlive its conversation', () => {
     expect(left.partnerAway).toBeNull();
   });
 });
+
+/**
+ * Saved connections, client side (§31).
+ *
+ * The clearing tests are the ones that matter most, and they exist because
+ * `partnerAway` taught this file a lesson: a per-conversation flag that is not
+ * reset in `clearedConversation` survives into the next conversation, nothing
+ * throws, every test passes, and the interface quietly lies about a stranger
+ * who was never involved.
+ */
+describe('saving a connection', () => {
+  function saved(): ChatState {
+    return reduce(matched(), { type: 'connection_state', matchId: 'm_1', saved: true });
+  }
+
+  it('starts unsaved and unconnected', () => {
+    const state = matched();
+    expect(state.connectionSaved).toBe(false);
+    expect(state.connectionMade).toBe(false);
+  });
+
+  it('records your own press without claiming a connection', () => {
+    // The whole privacy shape in one assertion: pressing save says nothing
+    // about the other person, so `connectionMade` must stay false.
+    expect(saved()).toMatchObject({ connectionSaved: true, connectionMade: false });
+  });
+
+  it('lets the press be withdrawn', () => {
+    const state = reduce(saved(), { type: 'connection_state', matchId: 'm_1', saved: false });
+    expect(state.connectionSaved).toBe(false);
+  });
+
+  it('marks both when the server says the pair completed', () => {
+    const state = reduce(saved(), { type: 'connection_made', matchId: 'm_1' });
+    expect(state).toMatchObject({ connectionSaved: true, connectionMade: true });
+    expect(state.notice).toMatch(/connected/i);
+  });
+
+  it('forces the saved flag true on connection_made, even if the ack was lost', () => {
+    // `connection_made` can only exist because both sides pressed. A client
+    // that never received its own `connection_state` must still render a
+    // coherent pair rather than "connected but not saved".
+    const state = reduce(matched(), { type: 'connection_made', matchId: 'm_1' });
+    expect(state).toMatchObject({ connectionSaved: true, connectionMade: true });
+  });
+
+  it('ignores a frame for a conversation that is not the live one', () => {
+    // A late ack for a conversation that already ended would otherwise light
+    // the button in the next one — the same shape of fault as the held seat
+    // that leaked across a skip.
+    const state = matched();
+    expect(reduce(state, { type: 'connection_state', matchId: 'm_old', saved: true })).toBe(state);
+    expect(reduce(state, { type: 'connection_made', matchId: 'm_old' })).toBe(state);
+  });
+
+  it('is cleared when the conversation ends', () => {
+    const state = reduce(saved(), { type: 'partner_left', matchId: 'm_1' });
+    expect(state.connectionSaved).toBe(false);
+    expect(state.connectionMade).toBe(false);
+  });
+
+  it('does not survive a skip into the next conversation', () => {
+    // The regression `partnerAway` already caused once. A saved flag carried
+    // across would show a pressed button for a stranger nobody saved, and a
+    // carried `connectionMade` would claim a connection that does not exist.
+    const after = reduce(saved(), { type: 'user_skipped' });
+    expect(after.connectionSaved).toBe(false);
+    expect(after.connectionMade).toBe(false);
+
+    const next = reduce(after, {
+      type: 'matched',
+      payload: {
+        matchId: 'm_2',
+        startedAt: '2026-08-19T10:05:00.000Z',
+        you: YOU,
+        partner: PARTNER,
+      },
+    });
+    expect(next.connectionSaved).toBe(false);
+    expect(next.connectionMade).toBe(false);
+  });
+
+  it('maps both server frames off the wire', () => {
+    // `toAction` is the boundary: a frame this does not translate is a feature
+    // that works in the reducer and never fires in the running app.
+    expect(
+      toAction({
+        type: 'connection_state',
+        version: 1,
+        id: 'f_1',
+        timestamp: '2026-08-19T10:00:02.000Z',
+        payload: { matchId: 'm_1', saved: true },
+      } as AnyServerEnvelope),
+    ).toEqual({ type: 'connection_state', matchId: 'm_1', saved: true });
+
+    expect(
+      toAction({
+        type: 'connection_made',
+        version: 1,
+        id: 'f_2',
+        timestamp: '2026-08-19T10:00:03.000Z',
+        payload: { matchId: 'm_1' },
+      } as AnyServerEnvelope),
+    ).toEqual({ type: 'connection_made', matchId: 'm_1' });
+  });
+});

@@ -97,10 +97,13 @@ describe('migrations', () => {
       [ctx.schema],
     );
     expect(tables.map((row) => row.table_name).sort()).toEqual([
+      'account_credentials',
+      'accounts',
       'admin_accounts',
       'admin_audit',
       'admin_sessions',
       'blocks',
+      'connections',
       'conversations',
       'enforcement',
       'legal_holds',

@@ -82,6 +82,8 @@ export interface ChatApi {
   typing(active: boolean): void;
   /** React to a message, or take it back. Fire-and-forget, applied locally at once. */
   react(messageId: string, reaction: string, active?: boolean): void;
+  /** Save the current stranger, or withdraw it. Requires an account (§31). */
+  saveConnection(active: boolean): void;
   dismissNotice(): void;
 }
 
@@ -198,6 +200,23 @@ export function useChat(): ChatApi {
     (messageId: string, reaction: string, active = true) => {
       if (!sendCommand('react', { messageId, reaction, active })) return;
       dispatch({ type: 'user_reacted', messageId, reaction, active });
+    },
+    [sendCommand],
+  );
+
+  /**
+   * Save this stranger, or withdraw it.
+   *
+   * Deliberately **not** optimistic, unlike `react`. A reaction is advisory and
+   * the worst case of guessing wrong is a glyph that disappears; this is a
+   * claim about a relationship, and showing it saved before the server agreed
+   * would leave a pressed button on a conversation where the command was
+   * refused — for want of an account, or a rate limit. The button waits for
+   * `connection_state`.
+   */
+  const saveConnection = useCallback(
+    (active: boolean) => {
+      sendCommand('save_connection', { active });
     },
     [sendCommand],
   );
@@ -332,7 +351,20 @@ export function useChat(): ChatApi {
 
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
 
-  return { state, start, stop, skip, leave, block, report, send, typing, react, dismissNotice };
+  return {
+    state,
+    start,
+    stop,
+    skip,
+    leave,
+    block,
+    report,
+    send,
+    typing,
+    react,
+    saveConnection,
+    dismissNotice,
+  };
 }
 
 /**
@@ -373,6 +405,14 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
       // The same outcome for the user, and deliberately indistinguishable from
       // a block (security §32).
       return { type: 'partner_left', matchId: frame.payload.matchId };
+    case 'connection_state':
+      return {
+        type: 'connection_state',
+        matchId: frame.payload.matchId,
+        saved: frame.payload.saved,
+      };
+    case 'connection_made':
+      return { type: 'connection_made', matchId: frame.payload.matchId };
     case 'report_ack':
       return { type: 'report_ack' };
     case 'error':
