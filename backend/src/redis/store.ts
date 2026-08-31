@@ -42,6 +42,21 @@ export type LeaveQueueResult =
 
 export type TryMatchAbortReason = 'session_gone' | 'already_matched' | 'not_searching';
 
+/**
+ * What the preference did on one attempt (D44, §29.6).
+ *
+ * Reported on both outcomes because the interesting question is not only "did
+ * the buyer get their preference" but "how hard did we have to look" — the
+ * number that decides whether the sample size is right, and the one nobody has
+ * because this service has never recorded what its pool is made of.
+ */
+export interface PreferenceOutcome {
+  /** A preferred candidate was found and taken. False means an ordinary match. */
+  preferred: boolean;
+  /** The ordinary sample held nobody preferred, so the wider look was taken. */
+  widened: boolean;
+}
+
 export type TryMatchResult =
   | {
       status: 'matched';
@@ -51,8 +66,15 @@ export type TryMatchResult =
       cleaned: number;
       /** Candidates left in the queue because a block applies to this searcher. */
       blockedSkipped: number;
+      preference: PreferenceOutcome;
     }
-  | { status: 'waiting'; cleaned: number; blockedSkipped: number; queueDepth: number }
+  | {
+      status: 'waiting';
+      cleaned: number;
+      blockedSkipped: number;
+      queueDepth: number;
+      preference: PreferenceOutcome;
+    }
   | { status: 'abort'; reason: TryMatchAbortReason };
 
 /**
@@ -492,8 +514,29 @@ export class RedisStore {
     }
   }
 
-  /** Preserves I2, I3, I4, I5 and I12. */
-  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
+  /**
+   * Preserves I2, I3, I4, I5 and I12.
+   *
+   * `preferGenders` is a **preference and never a filter** (D44): if nobody in
+   * view matches it, this returns an ordinary match on the same pass. An empty
+   * list is the ordinary path and costs nothing — the script skips both the
+   * membership test and the wider sample.
+   *
+   * The list is comma-wrapped here rather than in Lua so the script's test can
+   * be a plain substring find with no pattern semantics: `,male,` must not be
+   * found inside `,female,`.
+   */
+  async tryMatch(
+    sessionId: string,
+    segment: string,
+    matchId: string,
+    preferGenders: readonly string[] = [],
+  ): Promise<TryMatchResult> {
+    const wanted =
+      this.config.preference.enabled && preferGenders.length > 0
+        ? `,${preferGenders.join(',')},`
+        : '';
+
     const reply = await this.runner.run(
       'tryMatch',
       [
@@ -513,6 +556,8 @@ export class RedisStore {
         this.sessionTtl,
         this.config.blocks.ipDimensionEnabled ? '1' : '0',
         this.config.blocks.clientDimensionEnabled ? '1' : '0',
+        wanted,
+        this.config.preference.wideSample,
       ],
     );
     const status = str(reply, 0);
@@ -524,6 +569,7 @@ export class RedisStore {
           partnerSessionId: str(reply, 2),
           cleaned: num(reply, 3),
           blockedSkipped: num(reply, 4),
+          preference: { preferred: num(reply, 5) === 1, widened: num(reply, 6) === 1 },
         };
       case 'WAITING':
         return {
@@ -531,6 +577,7 @@ export class RedisStore {
           cleaned: num(reply, 1),
           blockedSkipped: num(reply, 2),
           queueDepth: num(reply, 3),
+          preference: { preferred: num(reply, 4) === 1, widened: num(reply, 5) === 1 },
         };
       case 'ABORT':
         return { status: 'abort', reason: abortReason(str(reply, 1)) };

@@ -209,7 +209,12 @@ export class FakeStore implements LifecycleStore {
     return { status: 'ok' };
   }
 
-  async tryMatch(sessionId: string, segment: string, matchId: string): Promise<TryMatchResult> {
+  async tryMatch(
+    sessionId: string,
+    segment: string,
+    matchId: string,
+    preferGenders: readonly string[] = [],
+  ): Promise<TryMatchResult> {
     this.tryMatchCalls.push(matchId);
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -233,13 +238,28 @@ export class FakeStore implements LifecycleStore {
       .filter((candidate) => !this.isBlocked(session, candidate))
       .sort((left, right) => left.enqueuedAt - right.enqueuedAt);
 
-    const best = candidates[0];
+    // Mirrors the script (D44, §29.2): the preferred pool and the ordinary one
+    // are tracked together, longest-waiting wins inside each, and a preference
+    // that finds nobody falls through on the same pass rather than waiting.
+    // The fake models no sample size, so it never has cause to widen.
+    const preferredPool =
+      preferGenders.length > 0
+        ? candidates.filter((candidate) => {
+            const gender = this.profiles.get(candidate.sessionId)?.gender ?? null;
+            return gender !== null && preferGenders.includes(gender);
+          })
+        : [];
+
+    const best = preferredPool[0] ?? candidates[0];
+    const preference = { preferred: preferredPool.length > 0, widened: false };
+
     if (!best) {
       return {
         status: 'waiting',
         cleaned: this.nextWaitingCleaned,
         blockedSkipped: this.nextWaitingBlockedSkipped,
         queueDepth: this.queue.size,
+        preference,
       };
     }
 
@@ -250,6 +270,7 @@ export class FakeStore implements LifecycleStore {
       partnerSessionId: best.sessionId,
       cleaned: 0,
       blockedSkipped: 0,
+      preference,
     };
   }
 

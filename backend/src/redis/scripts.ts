@@ -417,16 +417,26 @@ return { 'OK' }
  * Attempt to pair the caller with someone already waiting.
  * KEYS: queue, session, user_match, matches, match(mid).
  * ARGV: prefix, sid, segment, mid, sampleK, matchTtl, sessionTtl,
- *       ipDimension, clientDimension.
+ *       ipDimension, clientDimension, prefGender, wideSample.
  *
  * Preserves I2, I3, I4, I5 and I12. Every branch that decides the caller is not
  * matchable removes it from the queue first, so an ABORT never leaves a stale
  * entry behind for the next searcher to trip over.
+ *
+ * The preference (D44, §29) changes **which** candidate is selected and nothing
+ * about what selecting one does: no new key, no new state, no extra round trip
+ * beyond the one wider sample, and one more field on a HMGET that was already
+ * being issued. The interleavings this script must be correct under are the
+ * same ones as before, which is the property the "never widen tryMatch" rule
+ * exists to protect.
+ *
+ * The reply is parsed positionally, so the two preference counters are appended
+ * at the end of both shapes rather than inserted.
  */
 const tryMatch = define(
   'tryMatch',
   5,
-  9,
+  11,
   `
 local sid = ARGV[2]
 local seg = ARGV[3]
@@ -467,53 +477,112 @@ local function isBlocked(cIp, cClient)
   return false
 end
 
-local cands = redis.call('SRANDMEMBER', KEYS[1], sample + 1)
 local cleaned = 0
 local blockedSkipped = 0
 local best = nil
 local bestAt = nil
-for i = 1, #cands do
-  local c = cands[i]
-  if c ~= sid then
-    local ch = redis.call('HMGET', kSession(c), 'state', 'ipHash', 'clientHash', 'enqueuedAt')
-    if (not ch[1]) or ch[1] ~= 'SEARCHING' or redis.call('GET', kUserMatch(c)) then
-      -- Stale entry GC (§10.11): the queue is repaired by every scan that
-      -- walks over it, so a crashed instance's entries do not accumulate.
-      redis.call('SREM', KEYS[1], c)
-      cleaned = cleaned + 1
-    elseif isBlocked(ch[2], ch[3]) then
-      -- Skipped, NOT removed: this candidate is blocked relative to the caller
-      -- only, and must stay matchable for everyone else.
-      blockedSkipped = blockedSkipped + 1
-    else
-      local at = tonumber(ch[4]) or 0
-      if (not best) or at < bestAt then
-        best = c
-        bestAt = at
+-- The preferred candidate, tracked beside the ordinary one rather than instead
+-- of it. Keeping both is what makes the fallback free: the ordinary pick is
+-- already computed by the time we know the preference missed (D44, §29.2).
+local pBest = nil
+local pBestAt = nil
+
+-- Comma-wrapped by the caller, so a plain substring test cannot match a partial
+-- value. ',other,' must not be found inside a preference for something else,
+-- and an unwrapped 'male' would match inside 'female'.
+local pref = ARGV[10]
+local wide = tonumber(ARGV[11]) or 0
+
+local function wanted(g)
+  if pref == '' or not g or g == '' then return false end
+  return string.find(pref, ',' .. g .. ',', 1, true) ~= nil
+end
+
+-- Candidates already considered, so the wider pass does not walk them twice.
+--
+-- SRANDMEMBER draws independently, so the second sample overlaps the first.
+-- Without this the diagnostic counters double-count -- a blocked candidate seen
+-- by both passes is reported as two -- and those counters are exactly the
+-- numbers §29.6 uses to decide whether the sample size is right. It also saves
+-- the redundant HMGETs.
+local seen = {}
+
+local function scan(cands)
+  for i = 1, #cands do
+    local c = cands[i]
+    if c ~= sid and not seen[c] then
+      seen[c] = true
+      local ch = redis.call('HMGET', kSession(c),
+        'state', 'ipHash', 'clientHash', 'enqueuedAt', 'pGender')
+      if (not ch[1]) or ch[1] ~= 'SEARCHING' or redis.call('GET', kUserMatch(c)) then
+        -- Stale entry GC (§10.11): the queue is repaired by every scan that
+        -- walks over it, so a crashed instance's entries do not accumulate.
+        redis.call('SREM', KEYS[1], c)
+        cleaned = cleaned + 1
+      elseif isBlocked(ch[2], ch[3]) then
+        -- Skipped, NOT removed: this candidate is blocked relative to the caller
+        -- only, and must stay matchable for everyone else.
+        blockedSkipped = blockedSkipped + 1
+      else
+        local at = tonumber(ch[4]) or 0
+        -- Longest-waiting wins, within each of the two pools independently.
+        -- The fairness rule (D2/D3) is not weakened by the preference; it is
+        -- applied twice.
+        if (not best) or at < bestAt then
+          best = c
+          bestAt = at
+        end
+        if wanted(ch[5]) then
+          if (not pBest) or at < pBestAt then
+            pBest = c
+            pBestAt = at
+          end
+        end
       end
     end
   end
 end
 
-if not best then
-  return { 'WAITING', cleaned, blockedSkipped, redis.call('SCARD', KEYS[1]) }
+scan(redis.call('SRANDMEMBER', KEYS[1], sample + 1))
+
+-- One wider look, taken only when the ordinary sample held nobody preferred.
+--
+-- Escalation rather than a sample sized from the pool's composition (§29.3): a
+-- pool rich in the preferred gender never reaches this, and a poor one always
+-- does, which is exactly when the extra reads are worth paying for. SRANDMEMBER
+-- returns the whole set when asked for more than it holds, so a small pool
+-- degrades to considering everyone.
+local widened = 0
+if pref ~= '' and not pBest and wide > sample then
+  widened = 1
+  scan(redis.call('SRANDMEMBER', KEYS[1], wide + 1))
+end
+
+-- The whole of the fallback. A preference that missed costs the searcher
+-- nothing: the ordinary candidate was found on the same pass.
+local chosen = pBest or best
+local preferred = 0
+if pBest then preferred = 1 end
+
+if not chosen then
+  return { 'WAITING', cleaned, blockedSkipped, redis.call('SCARD', KEYS[1]), preferred, widened }
 end
 
 local now = nowMs()
-redis.call('SREM', KEYS[1], sid, best)
+redis.call('SREM', KEYS[1], sid, chosen)
 redis.call('SET', KEYS[3], mid, 'EX', matchTtl)
-redis.call('SET', kUserMatch(best), mid, 'EX', matchTtl)
-redis.call('HSET', KEYS[5], 'a', sid, 'b', best, 'segment', seg, 'createdAt', now)
+redis.call('SET', kUserMatch(chosen), mid, 'EX', matchTtl)
+redis.call('HSET', KEYS[5], 'a', sid, 'b', chosen, 'segment', seg, 'createdAt', now)
 redis.call('EXPIRE', KEYS[5], matchTtl)
 redis.call('SADD', KEYS[4], mid)
-local sides = { sid, best }
+local sides = { sid, chosen }
 for i = 1, #sides do
   local sk = kSession(sides[i])
   redis.call('HSET', sk, 'state', 'MATCHED', 'matchId', mid)
   redis.call('HDEL', sk, 'enqueuedAt')
   redis.call('EXPIRE', sk, sessionTtl)
 end
-return { 'MATCHED', mid, best, cleaned, blockedSkipped }
+return { 'MATCHED', mid, chosen, cleaned, blockedSkipped, preferred, widened }
 `,
 );
 

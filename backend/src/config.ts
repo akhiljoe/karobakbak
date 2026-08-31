@@ -139,6 +139,44 @@ export interface Config {
     readonly defaultSegment: string;
   };
 
+  /**
+   * Preference matching (§29, D44). A **preference**, never a filter: a
+   * matching candidate is taken if one is in view and an ordinary match is
+   * taken in the same pass if none is, so no seat is ever held and pool
+   * throughput is unchanged.
+   *
+   * Ships off. The client's own `FILTERS_AVAILABLE` is this **and**
+   * `PAYMENTS_ENABLED`, so neither half can be switched on alone.
+   */
+  readonly preference: {
+    readonly enabled: boolean;
+    /**
+     * The one wider look taken when the ordinary sample held no match.
+     *
+     * Escalation rather than a sample sized from the pool's composition: the
+     * queue is a set of session ids with no per-gender breakdown, so
+     * composition would be a maintained counter, and a session hash reaching
+     * its TTL removes a member with nothing to decrement it. A sample sized
+     * from a counter that is quietly wrong is worse than a fixed one, because
+     * it looks adaptive (§29.3).
+     */
+    readonly wideSample: number;
+    /**
+     * Between a match ending and rejoining *with* a preference.
+     *
+     * The targeting objection in D37 is about rate, not about matching: a
+     * preference plus fast re-rolling is a scan, and `join_queue` at 12/min
+     * bounds flooding rather than hunting.
+     */
+    readonly cooldownMs: number;
+    /**
+     * Preference-carrying searches per hour. Beyond it searches continue
+     * **without** the preference — degraded to an ordinary match, never to an
+     * error (§29.4).
+     */
+    readonly hourlyBudget: number;
+  };
+
   readonly blocks: {
     readonly ttlSeconds: number;
     /** Coarse, evadable by VPN, can catch bystanders behind CGNAT (D18). */
@@ -828,6 +866,13 @@ export function loadConfig(env: Env = process.env): Config {
       defaultSegment: segment(env, 'DEFAULT_QUEUE_SEGMENT', 'default'),
     },
 
+    preference: {
+      enabled: bool(env, 'FILTERS_ENABLED', false),
+      wideSample: int(env, 'PREFERENCE_WIDE_SAMPLE', 32, 1, 1000),
+      cooldownMs: int(env, 'PREFERENCE_COOLDOWN_MS', 10_000, 0, 600_000),
+      hourlyBudget: int(env, 'PREFERENCE_HOURLY_BUDGET', 120, 1, 100_000),
+    },
+
     blocks: {
       ttlSeconds: int(env, 'BLOCK_TTL_SECONDS', 2_592_000, 60, 31_536_000),
       ipDimensionEnabled: bool(env, 'BLOCK_DIMENSION_IP_ENABLED', true),
@@ -1229,6 +1274,20 @@ function assertCoherent(config: Config): void {
     throw new ConfigError(
       `JANITOR_LOCK_TTL_SECONDS (${config.timers.janitorLockTtlSeconds}s) must cover ` +
         `JANITOR_INTERVAL_MS (${config.timers.janitorIntervalMs}ms)`,
+    );
+  }
+
+  // The wider look has to actually be wider. Set below the ordinary sample it
+  // reads as configured and silently does the opposite of its name: the
+  // escalation pass would consider *fewer* candidates than the one that just
+  // failed, so a preference would get harder to satisfy the more the operator
+  // "tuned" it. Equal is refused too — an escalation that changes nothing is a
+  // second round trip through the pool for no reason (§29.3).
+  if (config.preference.wideSample <= config.matchmaking.candidateSample) {
+    throw new ConfigError(
+      `PREFERENCE_WIDE_SAMPLE (${config.preference.wideSample}) must be greater than ` +
+        `MATCH_CANDIDATE_SAMPLE (${config.matchmaking.candidateSample}); the escalation ` +
+        'pass exists to look at more candidates than the pass that already missed',
     );
   }
 
