@@ -26,10 +26,18 @@
  * abandonments would exhaust the bucket and the next join would be refused.
  *
  * Raising the limit was the wrong fix — a cheaper way to cycle through
- * strangers is precisely what a spammer wants. So the countdown starts at three
- * seconds, and after a refusal it waits longer instead of retrying into the
- * same refusal. The user sees a longer countdown rather than an error, and the
- * limiter keeps meaning what it says.
+ * strangers is precisely what a spammer wants. So the countdown starts short
+ * and, after a refusal, waits longer instead of retrying into the same refusal.
+ * The user sees a longer countdown rather than an error, and the limiter keeps
+ * meaning what it says.
+ *
+ * The nominal pause was three seconds and is two. Both are faster than the
+ * refill, so neither is "within the limit" — what changes is how quickly a run
+ * of abandonments reaches the backoff. The burst is five either way; at two
+ * seconds the fifth advance simply arrives sooner, and the countdowns after it
+ * are the same six seconds they always were. The ordinary case, where somebody
+ * leaves now and then, is the one this is tuned for, and there it is one second
+ * less of staring at a countdown.
  *
  * Skipping does not spend a token, so the ordinary rhythm of "skip, skip, skip"
  * never touches this at all.
@@ -39,7 +47,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatState } from '../state/machine';
 
 /** The nominal pause: long enough to read "the stranger left", short enough to feel automatic. */
-export const AUTO_SEARCH_DELAY_MS = 3000;
+export const AUTO_SEARCH_DELAY_MS = 2000;
 
 /**
  * How long to wait after the server refused a join.
