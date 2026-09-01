@@ -114,6 +114,18 @@ export interface RedisKeys {
    * failed are all the same to the interface.
    */
   avatar(accountId: string): string;
+  /**
+   * Whether an account is online *right now*.
+   *
+   * A key with a short TTL, refreshed while a session carrying that account is
+   * connected. There is deliberately no last-seen and there will not be one:
+   * "when were they last here" is a far more revealing claim than "are they
+   * here", and only the second is offered.
+   *
+   * Redis is the right home precisely because it forgets. Presence that
+   * survived a restart would be presence that was wrong.
+   */
+  presence(accountId: string): string;
   /** STRING — liveness beacon for one backend instance. */
   instance(iid: string): string;
   /** SET — known instance ids. */
@@ -152,6 +164,7 @@ export function createKeys(prefix: string): RedisKeys {
     ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,
     resume: (tokenHash) => `${prefix}:resume:${assertComponent(tokenHash, 'resume hash')}`,
     avatar: (accountId) => `${prefix}:avatar:${assertComponent(accountId, 'account id')}`,
+    presence: (accountId) => `${prefix}:online:${assertComponent(accountId, 'account id')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,

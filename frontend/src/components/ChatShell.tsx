@@ -26,7 +26,12 @@ import { ACCOUNTS_ENABLED } from '../features';
 import { HistoryPanel } from './HistoryPanel';
 import { FriendsPanel } from './FriendsPanel';
 import type { HistoryEntry } from '../history';
-import { readConnections, removeConnection, type Connection } from '../connections';
+import {
+  labelConnection,
+  readConnections,
+  removeConnection,
+  type Connection,
+} from '../connections';
 import {
   colourFor,
   composerDisabled,
@@ -509,6 +514,14 @@ export function ChatShell({
               connections={connections}
               failed={connectionsFailed}
               onClose={() => setFriendsOpen(false)}
+              onRename={async (handle, label) => {
+                const saved = await labelConnection(handle, label);
+                // Applied only on confirmation, so a failed save leaves the old
+                // name on screen rather than a new one that was never stored.
+                setConnections((was) =>
+                  (was ?? []).map((c) => (c.handle === handle ? { ...c, label: saved } : c)),
+                );
+              }}
               onRemove={async (handle) => {
                 const done = await removeConnection(handle);
                 // Only drop the row once the server confirmed it, or the panel

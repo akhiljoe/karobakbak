@@ -32,10 +32,16 @@
  * broken-image icon.
  */
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, ShieldOff, User } from 'lucide-react';
+import { Eye, EyeOff, LogOut, ShieldOff, User } from 'lucide-react';
 
 import { AVATAR_URL } from '../auth';
-import { readBlocks, removeBlock, type Block } from '../connections';
+import {
+  readBlocks,
+  readPresenceSharing,
+  removeBlock,
+  setPresenceSharing,
+  type Block,
+} from '../connections';
 import type { Session } from '../hooks/useSession';
 
 interface AccountMenuProps {
@@ -51,6 +57,20 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
   const [blocks, setBlocks] = useState<readonly Block[] | null>(null);
   const [showBlocks, setShowBlocks] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<boolean | null>(null);
+
+  // Read when the menu opens, because that is the only time it is shown, and
+  // the answer can have been changed on another device since.
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void readPresenceSharing().then((value) => {
+      if (live) setSharing(value);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   /*
     Fetched when the list is opened, not when the menu is. Most people have
@@ -198,6 +218,44 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
             <p className="px-3 pb-2 pt-1 text-xs leading-relaxed text-amber-300">
               Still signed in — we could not reach the server.
             </p>
+          )}
+
+          {/*
+            Appearing online.
+
+            Off is the honest state to offer, not a "hidden" that others can
+            see: to a connection, somebody who turned this off is
+            indistinguishable from somebody who is away. Only shown once the
+            server has answered — a toggle rendered before its value is known
+            would show a state nobody chose, and the first tap would fight it.
+
+            It hides being here *now*. There is no last-seen to hide, and there
+            will not be one: when somebody was last here is a history of their
+            habits, which is a much larger disclosure wearing the same words.
+          */}
+          {sharing !== null && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                const next = !sharing;
+                setSharing(next);
+                void setPresenceSharing(next).then((saved) => {
+                  // Reverted if the server disagreed, rather than left showing
+                  // a privacy setting that was never applied.
+                  if (saved !== null) setSharing(saved);
+                  else setSharing(!next);
+                });
+              }}
+              aria-pressed={sharing}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50"
+            >
+              {sharing ? (
+                <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              ) : (
+                <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              )}
+              {sharing ? 'Friends can see you online' : 'You appear offline'}
+            </button>
           )}
 
           {/*
