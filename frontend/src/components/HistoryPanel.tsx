@@ -122,8 +122,26 @@ export function HistoryPanel({
         content it is not part of. The ring and the deeper ground do the
         separating; the shadow alone was not enough on a dark surface.
       */
-      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw_-_1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 ${
-        placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
+      /*
+        Two different things, and the phone one is not a narrower version of the
+        desktop one.
+
+        On a wide screen it hangs off its button: centred, 288px, pointing at
+        what opened it.
+
+        On a phone it does not anchor to the button at all. Anchoring clamps the
+        *width* and does nothing about the *position*, so a panel centred on a
+        control in the middle of a narrow row still hangs off the edge — and the
+        half that hangs off is the right-hand one, which is where each row's
+        button lives. That is why it read as truncated and why the icon was
+        missing: it was off-screen, not absent.
+
+        So below `sm` it is fixed to the viewport with a margin on both sides,
+        which is the shape the rest of the product already uses for anything
+        that has to fit a phone.
+      */
+      className={`fixed inset-x-3 bottom-24 z-40 max-h-[60vh] overflow-y-auto animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 sm:absolute sm:inset-x-auto sm:left-1/2 sm:w-72 sm:-translate-x-1/2 ${
+        placement === 'up' ? 'sm:bottom-full sm:mb-2' : 'sm:bottom-auto sm:top-full sm:mt-2'
       }`}
     >
       <div className="flex items-center justify-between gap-2 border-b border-ink-800 px-3 py-2.5">
