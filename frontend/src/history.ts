@@ -39,7 +39,8 @@
  * WHAT AN ENTRY MAY CONTAIN
  * ---------------------------------------------------------------------------
  * Only what was already on screen: when, the colour and nickname the server
- * generated for that conversation, and the country the stranger declared. No
+ * generated for that conversation, the name the stranger declared if they
+ * declared one, and the country. No
  * message content — that is rule 1, and it applies to browser storage as much
  * as to a log line. No session id, no match id: they identify a conversation on
  * the server, and keeping them here would be the beginning of the reconnect
@@ -52,6 +53,20 @@ export interface HistoryEntry {
   readonly at: number;
   /** The server-generated nickname for that conversation. Not a name. */
   readonly nickname: string;
+  /**
+   * The name the stranger declared, or null when they declared none.
+   *
+   * Kept beside the nickname rather than instead of it, because they answer
+   * different questions: the nickname is what the server called them and is
+   * always present, so it stays the stable half of the row key and the
+   * fallback. This is what was actually on screen during the conversation -
+   * `ChatShell` titles the chat `profile?.name ?? nickname` - and a list that
+   * showed the other half is a list of people you cannot recognise.
+   *
+   * Declared, never verified, like every other field of a profile (§26.4). It
+   * is a claim this tab already displayed, not a new fact about anybody.
+   */
+  readonly name: string | null;
   /** The accent colour that conversation used, so the row looks familiar. */
   readonly colour: string;
   /** ISO country code the stranger declared, or null. Declared, never verified. */
@@ -238,6 +253,11 @@ function isEntry(value: unknown): value is HistoryEntry {
   return (
     typeof row.at === 'number' &&
     typeof row.nickname === 'string' &&
+    // Absent on rows written before the name was recorded. `sessionStorage`
+    // outlives a reload, so a deploy mid-session leaves exactly those rows in
+    // a tab that is still open; rejecting them would empty somebody's list at
+    // the moment they are least able to explain why.
+    (row.name === undefined || row.name === null || typeof row.name === 'string') &&
     typeof row.colour === 'string' &&
     (row.country === null || typeof row.country === 'string')
   );
