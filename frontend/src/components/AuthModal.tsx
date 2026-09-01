@@ -71,8 +71,31 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   // A modal that is reopened after a failed sign-out should not still be
   // showing the failure from last time.
   useEffect(() => {
-    if (!open) setSignOutFailed(false);
+    if (!open) {
+      setSignOutFailed(false);
+      // Reset too, or the next deliberate open — from the header avatar, while
+      // already signed in — would satisfy the auto-close below on its first
+      // render and shut immediately.
+      setLeaving(false);
+    }
   }, [open]);
+
+  /*
+   * Close as soon as the sign-in this dialog started has succeeded.
+   *
+   * Without this the dialog stays open across the whole flow and silently
+   * becomes the account panel: you press "Sign in to continue", finish in the
+   * popup, the popup closes — and you are left looking at "Your account" and a
+   * Sign out button you did not ask for. The correct end of a successful
+   * sign-in is the page you were on, with the toast saying it worked.
+   *
+   * Gated on `leaving` so it only fires for a flow this dialog began. Opening
+   * it deliberately from the header avatar while already signed in is the other
+   * case, and that one must stay open — it is the only route to Sign out.
+   */
+  useEffect(() => {
+    if (open && leaving && session.signedIn) onClose();
+  }, [open, leaving, session.signedIn, onClose]);
 
   if (!open) return null;
 
