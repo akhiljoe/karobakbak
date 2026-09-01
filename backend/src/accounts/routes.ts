@@ -52,6 +52,8 @@ import { errorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
 import { accountForSubject, bearerToken, mintCredential, resolveAccount, revokeCredential } from './credentials';
 import { fetchAvatar } from './avatar';
+import { createHash } from 'node:crypto';
+import type { ConnectionRepository } from './connections';
 import { createKeys } from '../redis/keys';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
@@ -90,6 +92,8 @@ export interface AuthRoutesDeps {
    * provider that returned no picture.
    */
   readonly redis?: Redis;
+  /** Saved connections. Absent means the routes answer as if there are none. */
+  readonly connections?: ConnectionRepository;
 }
 
 export interface AuthRoutes {
@@ -98,6 +102,10 @@ export interface AuthRoutes {
   session(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Relays the provider's profile image from this origin. */
   avatar(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** The caller's saved connections. */
+  connections(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Removes one of them, addressed by its per-account handle. */
+  removeConnection(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -143,7 +151,7 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc, redis } = deps;
+  const { config, logger, db, oidc, redis, connections } = deps;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
 
@@ -155,6 +163,56 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
    * PostgreSQL in reverse: a subsystem that is not on the critical path may not
    * be allowed onto it by an error handler.
    */
+  /**
+   * A stable, per-viewer handle for the other side of a connection.
+   *
+   * The browser never receives another person's account id. `/auth/session`
+   * already refuses to hand over the caller's *own* id — an opaque identifier
+   * in a page is one more thing that can be copied into a screenshot or a bug
+   * report — and somebody else's is worse by that argument, not better.
+   *
+   * Salted with the viewer's own id, so the same person appears under a
+   * different handle to each of their connections and two people comparing
+   * pages cannot discover that they share one. Truncated to 128 bits, which is
+   * far past collision concerns for a list this size.
+   *
+   * It is derived rather than stored: nothing new goes in the database, and a
+   * handle is meaningless outside the account it was minted for.
+   */
+  /**
+   * The handle from a small JSON body, or null.
+   *
+   * Bounded before it is parsed: this route is authenticated, but a body is
+   * read into memory before anything about it is known, and "authenticated" is
+   * not "trusted with an unbounded upload". The same reasoning as
+   * `PAYMENTS_MAX_BODY_BYTES`.
+   */
+  async function readHandle(req: IncomingMessage): Promise<string | null> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      const buf = chunk as Buffer;
+      size += buf.byteLength;
+      if (size > 1024) return null;
+      chunks.push(buf);
+    }
+
+    try {
+      const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (typeof body !== 'object' || body === null) return null;
+      const handle = (body as { handle?: unknown }).handle;
+      // Exactly the shape this server mints. Anything else is not a handle it
+      // could have issued, so there is nothing to look up.
+      return typeof handle === 'string' && /^[0-9a-f]{32}$/.test(handle) ? handle : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function connectionHandle(viewer: string, other: string): string {
+    return createHash('sha256').update(`${viewer}:${other}`).digest('hex').slice(0, 32);
+  }
+
   /** Whether there is a cached URL to serve. Any failure answers false. */
   async function avatarUrl(accountId: string): Promise<string | null> {
     if (redis === undefined || !auth.avatars) return null;
@@ -413,6 +471,87 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // recompresses an avatar is a proxy that has read it.
       res.setHeader('cache-control', 'private, max-age=86400, no-transform');
       res.end(image.body);
+    },
+
+    /**
+     * The caller's saved connections, newest first.
+     *
+     * Each carries only a handle and a date, because that is all the table
+     * holds and all that can be shown honestly. Nothing durable describes
+     * another account — the server keeps no profile between sessions (D34) —
+     * so a name or a picture here would mean storing one, which is a decision
+     * about what people learn about each other rather than a display detail.
+     */
+    async connections(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (connections === undefined) {
+        json(res, 200, { connections: [] });
+        return;
+      }
+
+      try {
+        const rows = await connections.list(resolved.accountId);
+        json(res, 200, {
+          connections: rows.map((row) => ({
+            handle: connectionHandle(resolved.accountId, row.other),
+            since: row.since.toISOString(),
+          })),
+        });
+      } catch (err) {
+        logger.error('could not list connections', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * Remove one connection.
+     *
+     * The body names a handle, never an account id, so a caller cannot address
+     * a pair it is not part of even by guessing — the handle is salted with the
+     * caller's own id, and the only way to turn one back into an account is to
+     * be the account it was minted for. The server resolves it by re-listing
+     * the caller's own connections, which is the same shape as the rule that no
+     * console route may accept an identity hash (§25.3).
+     *
+     * Removal is unilateral and a hard delete: consent to connect is mutual,
+     * consent to stay connected is not.
+     */
+    async removeConnection(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (connections === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const handle = await readHandle(req);
+      if (handle === null) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      try {
+        const rows = await connections.list(resolved.accountId);
+        const match = rows.find(
+          (row) => connectionHandle(resolved.accountId, row.other) === handle,
+        );
+        if (match === undefined) {
+          json(res, 404, { error: 'not_found' });
+          return;
+        }
+        await connections.remove(resolved.accountId, match.other);
+        json(res, 200, { removed: true });
+      } catch (err) {
+        logger.error('could not remove a connection', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
     },
 
     async signout(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -379,6 +379,7 @@ export function App(): JSX.Element {
               onSend={chat.send}
               history={history}
               onClearHistory={() => setHistory(clearHistory())}
+              signedIn={session.signedIn}
               onTyping={chat.typing}
               onReact={chat.react}
               onSaveConnection={chat.saveConnection}

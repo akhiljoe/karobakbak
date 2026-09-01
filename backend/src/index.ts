@@ -155,6 +155,7 @@ async function main(): Promise<void> {
   let auth: AuthRoutes | null = null;
   let connections: ConnectionRepository | undefined;
   if (config.auth.enabled && database !== null) {
+    connections = createConnectionRepository(database, logger);
     auth = createAuthRoutes({
       config,
       logger,
@@ -164,8 +165,8 @@ async function main(): Promise<void> {
       // works without Redis; an unavailable Redis costs a picture, never a
       // session.
       redis: clients.command,
+      connections,
     });
-    connections = createConnectionRepository(database, logger);
     logger.info('sign-in enabled');
   }
 
