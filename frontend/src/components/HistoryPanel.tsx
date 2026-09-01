@@ -118,7 +118,7 @@ export function HistoryPanel({
         content it is not part of. The ring and the deeper ground do the
         separating; the shadow alone was not enough on a dark surface.
       */
-      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw-1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 ${
+      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw_-_1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 ${
         placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
       }`}
     >
