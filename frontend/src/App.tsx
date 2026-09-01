@@ -44,6 +44,7 @@ import { clientConfig } from './config';
 import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
+import { useSession } from './hooks/useSession';
 import type { ReportCategory } from './protocol/types';
 import { connectionOf, phaseOf } from './view/presentation';
 
@@ -51,6 +52,23 @@ export function App(): JSX.Element {
   const chat = useChat();
   const { state } = chat;
   const { preferences, set: setPreference } = usePreferences();
+  const session = useSession();
+
+  /**
+   * What to say about a sign-in that has just come back from the provider.
+   *
+   * The failed case says *nothing was changed*, deliberately. The natural
+   * reading of a silent failure is that something half-happened — an account
+   * made, an address kept — and none of it is true: a refused exchange leaves
+   * the server exactly as it was, and saying so is cheaper than the support
+   * question that follows from not saying it.
+   */
+  const signinNotice =
+    session.outcome === 'ok'
+      ? 'Signed in.'
+      : session.outcome === 'failed'
+        ? 'Sign-in did not finish. Nothing was changed.'
+        : null;
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -309,6 +327,7 @@ export function App(): JSX.Element {
         onOpenFilters={() => setFiltersOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
+        session={session}
       />
 
       <main className="flex flex-1 overflow-hidden">
@@ -387,11 +406,14 @@ export function App(): JSX.Element {
       />
 
       {/*
-        Mounted only when accounts are enabled, which they are not. The modal
-        guards itself as well, but a credential form that is never rendered is
-        the stronger of the two controls.
+        Mounted only when accounts are enabled. There is no credential form
+        behind this any more — the modal's only action is a navigation to the
+        provider — but the mount guard stays, because the flag is what says the
+        server has the four routes registered at all.
       */}
-      {ACCOUNTS_ENABLED && <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />}
+      {ACCOUNTS_ENABLED && (
+        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} session={session} />
+      )}
 
       <SafetySheet
         open={safetyOpen}
@@ -409,7 +431,19 @@ export function App(): JSX.Element {
         />
       )}
 
-      <Toast message={state.notice} onDismiss={chat.dismissNotice} />
+      {/*
+        One toast, and the sign-in outcome wins the tie.
+
+        It is reported exactly once per return from the provider and it is the
+        only feedback that a redirect the user just watched actually finished;
+        a chat notice will still be there afterwards, while this one has no
+        second chance to be shown. `useSession` strips the marker from the URL
+        as it reads it, so a refresh does not re-announce it.
+      */}
+      <Toast
+        message={signinNotice ?? state.notice}
+        onDismiss={signinNotice === null ? chat.dismissNotice : session.dismissOutcome}
+      />
     </div>
   );
 }

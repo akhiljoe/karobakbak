@@ -19,8 +19,9 @@
  *
  * Note the asymmetry, which is deliberate:
  *
- *  * `ACCOUNTS` hides the surface completely. A sign-in button that does
- *    nothing is worse than no button.
+ *  * `ACCOUNTS` hides the surface completely when off. A sign-in button that
+ *    does nothing is worse than no button — which is why turning it on means
+ *    the server side has to be configured in the same change.
  *  * `FILTERS` shows the surface, disabled and labelled, because "we know you
  *    want this" is honest and a hidden feature teaches the user nothing.
  *
@@ -28,8 +29,30 @@
  * behind them can be reached by other means.
  */
 
-/** Anonymous accounts, profiles and premium entitlements (`DESIGN.md` §24). */
-export const ACCOUNTS_ENABLED = false;
+/**
+ * Sign-in, saved connections and recent history (`DESIGN.md` §31, §32, D48).
+ *
+ * ON, and the reasoning changed rather than being overruled. The deferral was
+ * written against §24's *anonymous accounts with premium entitlements*, where
+ * the account was the thing being sold. §31 rebuilt it as the opposite: signing
+ * in is **free**, it is OIDC against a hosted provider so no credential is ever
+ * held here, and what it gates is saved connections and recent history —
+ * things a person opts into one at a time about somebody they already met.
+ *
+ * The minor-safety position is unchanged and is not answered by this flag. The
+ * age gate remains the whole of that enforcement (`minor-safety-policy.md` §3),
+ * there is still no age assurance anywhere, and an account does not add any:
+ * the provider tells us a subject identifier and nothing about who it belongs
+ * to. What it does not do is create a durable profile of a stranger — the
+ * server keeps no profile between sessions (D34), and `connections` carries no
+ * `conversation_id` and no `created_by` for exactly that reason.
+ *
+ * Turning it on requires the backend's `AUTH_ENABLED` and a configured
+ * provider. With this true and the server unconfigured the four routes are
+ * never registered and the header offers a button into a 404 — the failure the
+ * asymmetry below exists to avoid, so the two ship together.
+ */
+export const ACCOUNTS_ENABLED = true;
 
 /**
  * Matching filters. The modal renders read-only while this is false, so the
