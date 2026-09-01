@@ -25,6 +25,7 @@ import { createAuthRoutes, type AuthRoutes } from './accounts/routes';
 import { createOidcClient } from './accounts/oidc';
 import { createConnectionRepository, type ConnectionRepository } from './accounts/connections';
 import { createBlockRepository, type BlockRepository } from './accounts/blocks';
+import { createPresenceService, type PresenceService } from './accounts/presence';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
@@ -156,6 +157,7 @@ async function main(): Promise<void> {
   let auth: AuthRoutes | null = null;
   let connections: ConnectionRepository | undefined;
   let accountBlocks: BlockRepository | undefined;
+  let presence: PresenceService | undefined;
   if (config.auth.enabled && database !== null) {
     connections = createConnectionRepository(database, logger);
     accountBlocks = createBlockRepository(
@@ -165,6 +167,7 @@ async function main(): Promise<void> {
       config.redis.keyPrefix,
       config.blocks.ttlSeconds,
     );
+    presence = createPresenceService(database, clients.command, logger, config.redis.keyPrefix);
     auth = createAuthRoutes({
       config,
       logger,
@@ -176,6 +179,7 @@ async function main(): Promise<void> {
       redis: clients.command,
       connections,
       blocks: accountBlocks,
+      presence,
     });
     logger.info('sign-in enabled');
   }
@@ -188,6 +192,7 @@ async function main(): Promise<void> {
     retention,
     metrics,
     payments,
+    accountPresence: presence ?? null,
     auth,
     connections,
     // The backup job reports inward; nothing here reaches out to look.

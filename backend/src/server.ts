@@ -52,6 +52,7 @@ import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
+import type { PresenceService } from './accounts/presence';
 import type { AuthRoutes } from './accounts/routes';
 import type { RetentionSink } from './storage/sink';
 import type { ConnectionRepository } from './accounts/connections';
@@ -113,6 +114,8 @@ export interface ChatServerDeps {
    * it lazily, so a process with payments off never loads it.
    */
   payments?: PaymentRoutes | null;
+  /** Publishes who is online, for their connections. Optional. */
+  accountPresence?: PresenceService | null;
   /**
    * The sign-in routes, or null when `AUTH_ENABLED` is false.
    *
@@ -151,6 +154,7 @@ const FEATURES: ServerFeatures = {
 export function createChatServer(deps: ChatServerDeps): ChatServer {
   const { config, logger, store, clients, retention, metrics } = deps;
   const payments = deps.payments ?? null;
+  const accountPresence = deps.accountPresence ?? null;
   const auth = deps.auth ?? null;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
@@ -415,6 +419,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
                       ? auth.blocks
                       : req.method === 'POST' && path === '/auth/blocks/remove'
                         ? auth.removeBlock
+                        : req.method === 'POST' && path === '/auth/connections/label'
+                          ? auth.labelConnection
+                          : (req.method === 'GET' || req.method === 'POST') &&
+                              path === '/auth/presence'
+                            ? auth.presence
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;
@@ -1299,6 +1308,13 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       try {
         const beat = await lifecycle.heartbeat(connection.sessionId);
         if (beat.kind === 'session_gone') sessionGone(connection);
+        // Presence rides the beat that already exists rather than a timer of
+        // its own: it is true only while this socket is, and a socket that dies
+        // takes the refresh with it, so the key lapses without anybody having
+        // to notice. Signed-out connections publish nothing.
+        if (accountPresence != null && connection.accountId !== null) {
+          await accountPresence.announce(connection.accountId);
+        }
       } catch (err) {
         // A Redis blip must not take the socket down: /ready has already gone
         // red, and the next sweep will retry.

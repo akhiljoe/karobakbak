@@ -40,12 +40,22 @@ export interface Connection {
   readonly other: string;
   /** When the pair connected. */
   readonly since: Date;
+  /**
+   * What *this* viewer calls them, or null.
+   *
+   * One-sided by construction: it lives in its own table keyed by owner, so the
+   * other side has their own and neither can see the other's. Never shown to
+   * the person it names.
+   */
+  readonly label: string | null;
 }
 
 export interface ConnectionRepository {
   save(accountLo: string, accountHi: string): Promise<boolean>;
   list(accountId: string): Promise<Connection[]>;
   remove(accountId: string, otherId: string): Promise<boolean>;
+  /** Set or clear this viewer's name for somebody. Empty clears it. */
+  setLabel(accountId: string, otherId: string, label: string): Promise<void>;
 }
 
 export function createConnectionRepository(
@@ -95,14 +105,22 @@ export function createConnectionRepository(
         // thing a list can honestly show. Ordered newest first, which is the
         // order somebody reads such a list in; the previous ordering by id was
         // ordering by a random string.
-        const { rows } = await db.query<{ other: string; since: Date }>(
-          `select account_hi as other, created_at as since from connections where account_lo = $1
-           union all
-           select account_lo as other, created_at as since from connections where account_hi = $1
-           order by since desc, other`,
+        // The label joins from the viewer's side only, so two people looking at
+        // the same connection see their own word for each other and never the
+        // other's.
+        const { rows } = await db.query<{ other: string; since: Date; label: string | null }>(
+          `select p.other, p.since, l.label
+             from (
+               select account_hi as other, created_at as since from connections where account_lo = $1
+               union all
+               select account_lo as other, created_at as since from connections where account_hi = $1
+             ) p
+             left join connection_labels l
+               on l.owner_account_id = $1 and l.other_account_id = p.other
+            order by p.since desc, p.other`,
           [accountId],
         );
-        return rows.map((row) => ({ other: row.other, since: row.since }));
+        return rows.map((row) => ({ other: row.other, since: row.since, label: row.label }));
       } catch (err) {
         logger.error('failed to list connections', dbErrorFields(err));
         throw new Error('connections could not be listed');
@@ -122,6 +140,38 @@ export function createConnectionRepository(
      * The asymmetry with saving is intentional: consent to connect is mutual,
      * consent to stay connected is not.
      */
+    /**
+     * Name somebody, or stop naming them.
+     *
+     * Trimmed and bounded here as well as by the column check: the constraint
+     * is the guarantee, this is the error message. An empty label is a delete
+     * rather than an empty string — "no name" and "a name that is blank" are
+     * the same thing to a reader and should be the same thing in the table.
+     */
+    async setLabel(accountId: string, otherId: string, label: string): Promise<void> {
+      const trimmed = label.trim().slice(0, 40);
+      try {
+        if (trimmed === '') {
+          await db.query(
+            `delete from connection_labels
+              where owner_account_id = $1 and other_account_id = $2`,
+            [accountId, otherId],
+          );
+          return;
+        }
+        await db.query(
+          `insert into connection_labels (owner_account_id, other_account_id, label)
+           values ($1, $2, $3)
+           on conflict (owner_account_id, other_account_id)
+           do update set label = excluded.label, updated_at = now()`,
+          [accountId, otherId, trimmed],
+        );
+      } catch (err) {
+        logger.error('failed to set a connection label', dbErrorFields(err));
+        throw new Error('label could not be saved');
+      }
+    },
+
     async remove(accountId: string, otherId: string): Promise<boolean> {
       const [lo, hi] = accountId < otherId ? [accountId, otherId] : [otherId, accountId];
       try {

@@ -27,7 +27,7 @@
  * making it harder to withdraw is not a safety feature.
  */
 import { useEffect, useRef, useState } from 'react';
-import { UserMinus, Users, X } from 'lucide-react';
+import { Check, Pencil, UserMinus, Users, X } from 'lucide-react';
 
 import type { Connection } from '../connections';
 
@@ -38,6 +38,8 @@ interface FriendsPanelProps {
   failed: boolean;
   onClose(): void;
   onRemove(handle: string): Promise<boolean>;
+  /** Rename one, for this viewer only. Empty clears the name. */
+  onRename(handle: string, label: string): Promise<void>;
 }
 
 export function FriendsPanel({
@@ -46,9 +48,12 @@ export function FriendsPanel({
   failed,
   onClose,
   onRemove,
+  onRename,
 }: FriendsPanelProps): JSX.Element | null {
   const container = useRef<HTMLDivElement>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -116,16 +121,81 @@ export function FriendsPanel({
           {connections.map((connection) => (
             <li key={connection.handle} className="px-1">
               <div className="flex items-center gap-2 rounded-lg px-2 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-ink-200">Connected</p>
-                  <p className="text-xs text-ink-500">
-                    {new Date(connection.since).toLocaleDateString([], {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </p>
-                </div>
+                {/*
+                  Online, or not. There is no third state: somebody who turned
+                  presence off looks exactly like somebody who is away, which is
+                  the point — a distinguishable "hidden" would disclose the very
+                  thing the setting exists to hide.
+                */}
+                <span
+                  aria-hidden="true"
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    connection.online ? 'bg-green-400' : 'bg-ink-700'
+                  }`}
+                />
+
+                {editing === connection.handle ? (
+                  <input
+                    autoFocus
+                    value={draft}
+                    maxLength={40}
+                    placeholder="Their name, for you"
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        void onRename(connection.handle, draft);
+                        setEditing(null);
+                      }
+                      // Escape abandons rather than saving a half-typed name,
+                      // which is what pressing it means everywhere else.
+                      if (event.key === 'Escape') setEditing(null);
+                    }}
+                    onBlur={() => setEditing(null)}
+                    className="min-w-0 flex-1 rounded-lg border border-ink-700 bg-ink-950 px-2 py-1 text-sm text-ink-100 focus:border-amber-400 focus:outline-none"
+                  />
+                ) : (
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-ink-200">
+                      {connection.label ?? 'Connected'}
+                    </p>
+                    <p className="text-xs text-ink-500">
+                      {connection.online
+                        ? 'Online'
+                        : new Date(connection.since).toLocaleDateString([], {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })}
+                    </p>
+                  </div>
+                )}
+
+                {editing === connection.handle ? (
+                  <button
+                    onMouseDown={(event) => {
+                      // `onMouseDown`, because the input's `onBlur` fires first
+                      // on a click and would close the editor before this ran.
+                      event.preventDefault();
+                      void onRename(connection.handle, draft);
+                      setEditing(null);
+                    }}
+                    aria-label="Save this name"
+                    className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-green-300"
+                  >
+                    <Check className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditing(connection.handle);
+                      setDraft(connection.label ?? '');
+                    }}
+                    aria-label="Rename this connection"
+                    className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-amber-300"
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                )}
                 <button
                   onClick={() => remove(connection.handle)}
                   disabled={removing === connection.handle}
@@ -141,7 +211,7 @@ export function FriendsPanel({
       )}
 
       <p className="border-t border-ink-800 px-3 py-2 text-xs leading-relaxed text-ink-500">
-        Removing is immediate and does not ask them.
+        Names are yours alone — they never see them. Removing is immediate and does not ask them.
       </p>
     </div>
   );

@@ -55,6 +55,7 @@ import { fetchAvatar } from './avatar';
 import { createHash } from 'node:crypto';
 import type { ConnectionRepository } from './connections';
 import type { BlockRepository } from './blocks';
+import type { PresenceService } from './presence';
 import { createKeys } from '../redis/keys';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
@@ -97,6 +98,8 @@ export interface AuthRoutesDeps {
   readonly connections?: ConnectionRepository;
   /** Account-scoped blocks. Absent means the routes answer as if there are none. */
   readonly blocks?: BlockRepository;
+  /** Who is online. Absent means nobody is reported online, ever. */
+  readonly presence?: PresenceService;
 }
 
 export interface AuthRoutes {
@@ -113,6 +116,10 @@ export interface AuthRoutes {
   blocks(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Lifts one of them. */
   removeBlock(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Renames one connection, for this viewer only. */
+  labelConnection(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Reads or changes whether this account appears online. */
+  presence(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -158,7 +165,7 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc, redis, connections, blocks } = deps;
+  const { config, logger, db, oidc, redis, connections, blocks, presence } = deps;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
 
@@ -211,6 +218,24 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // Exactly the shape this server mints. Anything else is not a handle it
       // could have issued, so there is nothing to look up.
       return typeof handle === 'string' && shape.test(handle) ? handle : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A small JSON object body, or null. Bounded before parsing, like `readHandle`. */
+  async function readBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      const buf = chunk as Buffer;
+      size += buf.byteLength;
+      if (size > 1024) return null;
+      chunks.push(buf);
+    }
+    try {
+      const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null;
     } catch {
       return null;
     }
@@ -502,10 +527,22 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
 
       try {
         const rows = await connections.list(resolved.accountId);
+        // One round trip for the whole list rather than a lookup per row.
+        const here =
+          presence === undefined
+            ? new Set<string>()
+            : await presence.online(rows.map((row) => row.other));
         json(res, 200, {
           connections: rows.map((row) => ({
             handle: connectionHandle(resolved.accountId, row.other),
             since: row.since.toISOString(),
+            // The viewer's own word for them, never the other side's.
+            label: row.label,
+            // False for somebody who turned presence off, which is
+            // indistinguishable from being away — deliberately, since a
+            // distinguishable "hidden" would disclose the very thing the
+            // setting exists to hide.
+            online: here.has(row.other),
           })),
         });
       } catch (err) {
@@ -619,6 +656,86 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         json(res, removed ? 200 : 404, removed ? { removed: true } : { error: 'not_found' });
       } catch (err) {
         logger.error('could not remove a block', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * Rename a connection, for the caller only.
+     *
+     * The handle names a pair and is resolved against the caller's own rows, so
+     * it cannot address somebody else's connection. The label is never sent to
+     * the person it names and never leaves this account's view.
+     */
+    async labelConnection(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (connections === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const handle = typeof body?.handle === 'string' ? body.handle : '';
+      const label = typeof body?.label === 'string' ? body.label : '';
+      if (!/^[0-9a-f]{32}$/.test(handle) || label.length > 200) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      try {
+        const rows = await connections.list(resolved.accountId);
+        const match = rows.find(
+          (row) => connectionHandle(resolved.accountId, row.other) === handle,
+        );
+        if (match === undefined) {
+          json(res, 404, { error: 'not_found' });
+          return;
+        }
+        await connections.setLabel(resolved.accountId, match.other, label);
+        json(res, 200, { label: label.trim().slice(0, 40) || null });
+      } catch (err) {
+        logger.error('could not label a connection', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * Read the presence setting, or change it.
+     *
+     * `GET` answers whether this account currently appears online to its
+     * connections; `POST` sets it. Turning it off withdraws immediately rather
+     * than waiting out the TTL — somebody asking to stop being visible means
+     * now.
+     */
+    async presence(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (presence === undefined) {
+        json(res, 200, { share: false });
+        return;
+      }
+
+      try {
+        if (req.method === 'GET') {
+          json(res, 200, { share: await presence.sharing(resolved.accountId) });
+          return;
+        }
+        const body = await readBody(req);
+        if (typeof body?.share !== 'boolean') {
+          json(res, 400, { error: 'bad_request' });
+          return;
+        }
+        await presence.setSharing(resolved.accountId, body.share);
+        json(res, 200, { share: body.share });
+      } catch (err) {
+        logger.error('could not read or change presence sharing', errorFields(err));
         json(res, 500, { error: 'internal_error' });
       }
     },

@@ -98,6 +98,7 @@ const UNAVAILABLE_CONNECTIONS: ConnectionRepository = {
   save: () => Promise.reject(new Error('connections repository is not configured')),
   list: () => Promise.reject(new Error('connections repository is not configured')),
   remove: () => Promise.reject(new Error('connections repository is not configured')),
+  setLabel: () => Promise.reject(new Error('connections repository is not configured')),
 };
 
 export type TypingOutcome =

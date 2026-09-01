@@ -25,6 +25,21 @@ export interface Connection {
   readonly handle: string;
   /** ISO timestamp of when the two of you connected. */
   readonly since: string;
+  /**
+   * What you call them, or null.
+   *
+   * Yours alone: they have their own word for you and neither of you sees the
+   * other's. It is never sent to the person it names.
+   */
+  readonly label: string | null;
+  /**
+   * Whether they are here right now.
+   *
+   * False also covers somebody who turned presence off, and that is
+   * deliberate — a distinguishable "hidden" would disclose exactly what the
+   * setting exists to hide.
+   */
+  readonly online: boolean;
 }
 
 /**
@@ -54,7 +69,15 @@ export async function readConnections(): Promise<Connection[] | null> {
     if (typeof body !== 'object' || body === null) return null;
     const rows = (body as { connections?: unknown }).connections;
     if (!Array.isArray(rows)) return null;
-    return rows.filter(isConnection);
+    // Normalised rather than trusted: the guard proves handle and since, and
+    // the two newer fields are filled in here so a row from an older server
+    // renders as unnamed and offline instead of `undefined`.
+    return rows.filter(isConnection).map((row) => ({
+      handle: row.handle,
+      since: row.since,
+      label: typeof row.label === 'string' && row.label !== '' ? row.label : null,
+      online: row.online === true,
+    }));
   } catch {
     return null;
   }
@@ -81,7 +104,64 @@ export async function removeConnection(handle: string): Promise<boolean> {
 function isConnection(value: unknown): value is Connection {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Partial<Connection>;
+  // `label` and `online` are read leniently: an older server answering this
+  // page would simply omit them, and a friends list is not the place to fail
+  // closed over a missing nickname.
   return typeof row.handle === 'string' && typeof row.since === 'string';
+}
+
+/** Rename a connection, for you only. An empty label clears it. */
+export async function labelConnection(handle: string, label: string): Promise<string | null> {
+  try {
+    const response = await fetch('/auth/connections/label', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ handle, label }),
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    const saved = (body as { label?: unknown }).label;
+    return typeof saved === 'string' ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether you appear online to your connections. Null when it could not be read. */
+export async function readPresenceSharing(): Promise<boolean | null> {
+  try {
+    const response = await fetch('/auth/presence', {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    const share = (body as { share?: unknown }).share;
+    return typeof share === 'boolean' ? share : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Change it. Answers the value the server confirmed, or null on failure. */
+export async function setPresenceSharing(share: boolean): Promise<boolean | null> {
+  try {
+    const response = await fetch('/auth/presence', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ share }),
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    const saved = (body as { share?: unknown }).share;
+    return typeof saved === 'boolean' ? saved : null;
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------------ *
