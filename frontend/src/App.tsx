@@ -363,8 +363,6 @@ export function App(): JSX.Element {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
         session={session}
-        history={history}
-        onClearHistory={() => setHistory(clearHistory())}
       />
 
       <main className="flex flex-1 overflow-hidden">
@@ -379,6 +377,8 @@ export function App(): JSX.Element {
               onToggleAutoSearch={(value) => setPreference('autoSearch', value)}
               onBlockAndNext={blockAndNext}
               onSend={chat.send}
+              history={history}
+              onClearHistory={() => setHistory(clearHistory())}
               onTyping={chat.typing}
               onReact={chat.react}
               onSaveConnection={chat.saveConnection}

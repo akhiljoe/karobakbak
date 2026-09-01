@@ -22,6 +22,8 @@ import type { ChatState } from '../state/machine';
 import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
 import { ACCOUNTS_ENABLED } from '../features';
+import { HistoryPanel } from './HistoryPanel';
+import type { HistoryEntry } from '../history';
 import {
   colourFor,
   composerDisabled,
@@ -57,6 +59,9 @@ interface ChatShellProps {
   /** Block the current partner and move on, in one action. */
   onBlockAndNext(): void;
   onSend(text: string): void;
+  /** Strangers met in this session. Client-side only; see `history.ts`. */
+  history: readonly HistoryEntry[];
+  onClearHistory(): void;
   onTyping(active: boolean): void;
   onReact(messageId: string, reaction: string, active: boolean): void;
   /** Save this stranger, or withdraw it while the conversation is still running. */
@@ -76,6 +81,8 @@ export function ChatShell({
   onToggleAutoSearch,
   onBlockAndNext,
   onSend,
+  history,
+  onClearHistory,
   onTyping,
   onReact,
   onSaveConnection,
@@ -84,6 +91,7 @@ export function ChatShell({
   onOpenSafety,
   onBack,
 }: ChatShellProps): JSX.Element {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const chatting = state.screen === 'chatting';
   const duration = useDuration(chatting ? state.matchStartedAt : null);
   // What they said about themselves, as a subtitle. Null when they declared
@@ -364,6 +372,46 @@ export function ChatShell({
           </span>
         </div>
       )}
+
+      {/*
+        Recent strangers, as a link rather than a header icon.
+
+        It belongs to the conversation surface: it is a list of people you met
+        while chatting, it is empty until you have chatted, and on the landing
+        screen it would be a control for something that has not happened yet.
+        Beside the composer it sits where somebody already is.
+
+        A link and not a button, because it opens a list rather than performing
+        an action, and the row above the composer is not a place for another
+        piece of chrome competing with Skip and Block.
+
+        The panel opens upward — this is near the bottom of the viewport, and a
+        panel dropping from here would open off-screen on a phone.
+      */}
+      <div className="mx-auto flex w-full max-w-3xl justify-end px-1 pb-1">
+        <div className="relative">
+          <button
+            onClick={() => setHistoryOpen((was) => !was)}
+            aria-haspopup="dialog"
+            aria-expanded={historyOpen}
+            className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
+              historyOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
+            }`}
+          >
+            <Clock className="h-3 w-3" aria-hidden="true" />
+            Recent
+            {history.length > 0 && <span className="no-underline">({history.length})</span>}
+          </button>
+
+          <HistoryPanel
+            open={historyOpen}
+            entries={history}
+            placement="up"
+            onClose={() => setHistoryOpen(false)}
+            onClear={onClearHistory}
+          />
+        </div>
+      </div>
 
       <MessageInput
         maxLength={state.limits?.maxMessageLength ?? 500}
