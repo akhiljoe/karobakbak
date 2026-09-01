@@ -40,6 +40,8 @@ let close: () => Promise<void>;
 const paired: Array<[string, string]> = [];
 /** Events the routes tried to deliver, and to whom. */
 const delivered: Array<{ to: string; event: Record<string, unknown> }> = [];
+/** Pairs the routes were told to block. */
+const blocked: Array<[string, string]> = [];
 /** Sessions that are not reachable, so `notify` reports failure for them. */
 const unreachable = new Set<string>();
 
@@ -70,6 +72,10 @@ beforeAll(async () => {
         delivered.push({ to: sessionId, event: { ...event } });
         return !unreachable.has(sessionId);
       },
+      async block(asker, target) {
+        blocked.push([asker, target]);
+        return true;
+      },
       async pair(a, b) {
         paired.push([a, b]);
         await Promise.all([ctx.store.setSegment(a, 'pair-test'), ctx.store.setSegment(b, 'pair-test')]);
@@ -82,6 +88,8 @@ beforeAll(async () => {
     if (req.method === 'POST' && path === '/auth/reconnect/ask') void auth.reconnectAsk(req, res);
     else if (req.method === 'POST' && path === '/auth/reconnect/accept')
       void auth.reconnectAccept(req, res);
+    else if (req.method === 'POST' && path === '/auth/reconnect/block')
+      void auth.reconnectBlock(req, res);
     else {
       res.statusCode = 404;
       res.end();
@@ -103,6 +111,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   paired.length = 0;
+  blocked.length = 0;
   delivered.length = 0;
   unreachable.clear();
   await ctx.flush();
@@ -309,6 +318,58 @@ describe('answering', () => {
     const target = await signedIn('sub_target', await ctx.session());
     const accept = await post('/auth/reconnect/accept', { offer: 'not-an-offer' }, target.cookie);
     expect(accept.status).toBe(400);
+  });
+});
+
+describe('blocking from the prompt', () => {
+  it('spends the offer and blocks the pair, telling the asker nothing', async () => {
+    const asker = await signedIn('sub_asker', await ctx.session());
+    const target = await signedIn('sub_target', await ctx.session());
+    const token = await presence.mintToken(target.accountId);
+
+    await post('/auth/reconnect/ask', { token }, asker.cookie);
+    const offer = delivered[0]?.event.offer as string;
+    delivered.length = 0;
+
+    const block = await post('/auth/reconnect/block', { offer }, target.cookie);
+    expect(block.status).toBe(200);
+    expect(block.body.blocked).toBe(true);
+    expect(blocked).toEqual([[asker.sessionId, target.sessionId]]);
+
+    // Nothing goes back. A refusal is never disclosed, and blocking is the
+    // strongest refusal there is — announcing it would be worse than the
+    // ordinary decline, not better.
+    expect(delivered).toHaveLength(0);
+  });
+
+  it('needs no account', async () => {
+    // Refusing somebody is not a capability to gate behind signing in, and the
+    // person pressing it is often the one who never did.
+    const asker = await signedIn('sub_asker', await ctx.session());
+    const strangerSession = await ctx.session();
+    const token = await presence.mintSessionToken(strangerSession);
+
+    await post('/auth/reconnect/ask', { token }, asker.cookie);
+    const offer = delivered[0]?.event.offer as string;
+
+    const block = await post('/auth/reconnect/block', { offer });
+    expect(block.status).toBe(200);
+    expect(blocked).toHaveLength(1);
+  });
+
+  it('cannot be answered again after being blocked', async () => {
+    const asker = await signedIn('sub_asker', await ctx.session());
+    const target = await signedIn('sub_target', await ctx.session());
+    const token = await presence.mintToken(target.accountId);
+
+    await post('/auth/reconnect/ask', { token }, asker.cookie);
+    const offer = delivered[0]?.event.offer as string;
+
+    await post('/auth/reconnect/block', { offer }, target.cookie);
+    // Spent by the block, or whoever still held the offer could accept the
+    // request that was just refused.
+    expect((await post('/auth/reconnect/accept', { offer }, target.cookie)).status).toBe(404);
+    expect(paired).toHaveLength(0);
   });
 });
 

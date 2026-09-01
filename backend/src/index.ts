@@ -28,6 +28,8 @@ import { createBlockRepository, type BlockRepository } from './accounts/blocks';
 import { createPresenceService, type PresenceService } from './accounts/presence';
 import { randomBytes } from 'node:crypto';
 
+import { newMessageId } from './util/ids';
+
 import { encodeSessionEvent } from './ws/events';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
@@ -214,6 +216,43 @@ async function main(): Promise<void> {
           );
           return receivers > 0;
         },
+        /**
+         * Write the block, and record it the way every other block is recorded.
+         *
+         * The durable row goes through the same retention queue the in-chat
+         * block uses, so this appears in the same place, expires on the same
+         * schedule, and shows up in a signed-in person's block list without a
+         * second code path deciding what a block is.
+         */
+        async block(asker, target) {
+          const keysFor = await store.readBlockKeys(target, asker);
+          if (keysFor.a === null || keysFor.b === null) return false;
+
+          const written = await store.blockPair(keysFor.a, keysFor.b, config.blocks.ttlSeconds);
+          if (written.length === 0) return false;
+
+          const expiresAt = new Date(
+            Date.now() + config.blocks.ttlSeconds * 1000,
+          ).toISOString();
+          const accounts = await store.readAccounts(target, asker);
+          for (const entry of written) {
+            retention.enqueue({
+              kind: 'block',
+              blockId: newMessageId(),
+              blockerKey: entry.blockerKey,
+              blockedKey: entry.blockedKey,
+              dimension: entry.dimension,
+              blockerAccountId: accounts.a,
+              // There is no conversation: this refuses one rather than ending
+              // one, and a null says so honestly.
+              conversationId: null,
+              createdAt: new Date().toISOString(),
+              expiresAt,
+            });
+          }
+          return true;
+        },
+
         async pair(sessionA, sessionB) {
           // Random rather than derived from the two session ids: a derived
           // lane would be identical every time the same two people reconnect,

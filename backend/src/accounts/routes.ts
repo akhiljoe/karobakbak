@@ -108,6 +108,8 @@ export interface AuthRoutesDeps {
    * matchmaking surface should be reachable from an HTTP handler.
    */
   readonly reconnect?: {
+    /** Both sides' block keys, and a way to write a block between them. */
+    block(offerAsker: string, offerTarget: string): Promise<boolean>;
     /** The session behind a request, if it is still attached here or anywhere. */
     notify(sessionId: string, event: { offer: string } | { startedAt: string }): Promise<boolean>;
     /** Put a session into a private lane so ordinary matchmaking pairs the two. */
@@ -139,6 +141,8 @@ export interface AuthRoutes {
   reconnectAsk(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Accept such a request. Declining sends nothing and needs no route. */
   reconnectAccept(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Refuse it and never be reachable by them again. */
+  reconnectBlock(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -962,6 +966,59 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         reconnect.notify(accepter, { startedAt }),
       ]);
       json(res, 200, { paired: true });
+    },
+
+    /**
+     * Decline, and make sure they cannot reach you again.
+     *
+     * A separate route from accepting rather than a flag on it, because the two
+     * are opposite in every way that matters: one is an agreement and answers
+     * the asker, the other is a refusal and must not. Nothing is sent back
+     * here — the asker learns exactly what an ignore tells them, which is
+     * nothing, and that is the point. Somebody blocking should not have to
+     * announce it to the person they are blocking.
+     *
+     * Needs no account. Being able to refuse somebody is not a feature to gate
+     * behind signing in, and the person doing it may well be the one who never
+     * signed in.
+     */
+    async reconnectBlock(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      if (reconnect === undefined || redis === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const offer = typeof body?.offer === 'string' ? body.offer : '';
+      if (!/^[0-9a-f]{32}$/.test(offer)) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      const key = `${config.redis.keyPrefix}:offer:${offer}`;
+      let stored: string | null = null;
+      try {
+        stored = await redis.get(key);
+        // Spent either way. An offer that survived a block would let the same
+        // request be answered again by whoever still held it.
+        if (stored !== null) await redis.del(key);
+      } catch (err) {
+        logger.warn('could not redeem a reconnect offer for a block', errorFields(err));
+      }
+      if (stored === null) {
+        // Already answered, or expired. Answered as success: the caller's goal
+        // is that this person cannot reach them, and an expired offer cannot.
+        json(res, 200, { blocked: false });
+        return;
+      }
+
+      const [asker, target] = stored.split(':');
+      if (asker === undefined || target === undefined) {
+        json(res, 200, { blocked: false });
+        return;
+      }
+
+      json(res, 200, { blocked: await reconnect.block(asker, target) });
     },
 
     async signout(req: IncomingMessage, res: ServerResponse): Promise<void> {

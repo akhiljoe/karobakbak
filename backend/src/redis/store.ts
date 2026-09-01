@@ -1065,6 +1065,65 @@ export class RedisStore {
     return typeof value === 'string' && value !== '' ? value : fallback;
   }
 
+  /** Both sides' block keys, for a pair that is not in a conversation. */
+  async readBlockKeys(
+    sessionA: string,
+    sessionB: string,
+  ): Promise<{
+    a: { ipHash: string; clientHash: string } | null;
+    b: { ipHash: string; clientHash: string } | null;
+  }> {
+    const fields = ['ipHash', 'clientHash'] as const;
+    const results = await this.client
+      .pipeline()
+      .hmget(this.keys.session(sessionA), ...fields)
+      .hmget(this.keys.session(sessionB), ...fields)
+      .exec();
+    const read = (i: number): { ipHash: string; clientHash: string } | null => {
+      const row = results?.[i]?.[1] as (string | null)[] | undefined;
+      const ipHash = row?.[0] ?? '';
+      const clientHash = row?.[1] ?? '';
+      // A session that has expired has no hashes, and blocking nothing is not
+      // an error — it is the person already being gone.
+      return ipHash === '' && clientHash === '' ? null : { ipHash, clientHash };
+    };
+    return { a: read(0), b: read(1) };
+  }
+
+  /**
+   * Block a pair who are not in a conversation together.
+   *
+   * Plain `SADD`s, and that is not an exception to the Lua rule. `blockPartner`
+   * is a script because it *ends a match* as well — a state transition that
+   * must not interleave. This ends nothing: it writes the same two sets that
+   * script writes, for two sessions that were never matched here, and
+   * `tryMatch` reads them the same way afterwards.
+   *
+   * Both dimensions and one direction: the block belongs to the person pressing
+   * it. `tryMatch` already checks both directions, so writing one is enough for
+   * neither to reach the other (D18).
+   */
+  async blockPair(
+    mine: { ipHash: string; clientHash: string },
+    theirs: { ipHash: string; clientHash: string },
+    ttlSeconds: number,
+  ): Promise<Array<{ dimension: 'ip' | 'client'; blockerKey: string; blockedKey: string }>> {
+    const written: Array<{ dimension: 'ip' | 'client'; blockerKey: string; blockedKey: string }> = [];
+    const pipeline = this.client.pipeline();
+    const pairs = [
+      { dimension: 'ip' as const, blockerKey: mine.ipHash, blockedKey: theirs.ipHash },
+      { dimension: 'client' as const, blockerKey: mine.clientHash, blockedKey: theirs.clientHash },
+    ];
+    for (const pair of pairs) {
+      if (pair.blockerKey === '' || pair.blockedKey === '') continue;
+      pipeline.sadd(this.keys.blocks(pair.blockerKey), pair.blockedKey);
+      pipeline.expire(this.keys.blocks(pair.blockerKey), ttlSeconds);
+      written.push(pair);
+    }
+    if (written.length > 0) await pipeline.exec();
+    return written;
+  }
+
   /** Each side's account, or null where that side is signed out. */
   async readAccounts(
     sessionA: string,

@@ -434,6 +434,8 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
                                 ? auth.reconnectAsk
                                 : req.method === 'POST' && path === '/auth/reconnect/accept'
                                   ? auth.reconnectAccept
+                                  : req.method === 'POST' && path === '/auth/reconnect/block'
+                                    ? auth.reconnectBlock
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;

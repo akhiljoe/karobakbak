@@ -47,6 +47,7 @@ import { usePreferences } from './hooks/usePreferences';
 import { useSession } from './hooks/useSession';
 import {
   acceptReconnect,
+  blockReconnect,
   clearHistory,
   readHistory,
   recordHistory,
@@ -577,6 +578,25 @@ export function App(): JSX.Element {
               className="rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 transition-colors hover:bg-ink-800"
             >
               Ignore
+            </button>
+            {/*
+              Block, beside Ignore rather than hidden behind it. The difference
+              between the two is whether this can happen again, and somebody
+              deciding that should not have to find the option.
+
+              It needs no account: being able to refuse somebody is not a thing
+              to gate behind signing in, and the person pressing it may well be
+              the one who never signed in.
+            */}
+            <button
+              onClick={() => {
+                const offer = state.reconnectOffer;
+                chat.dismissReconnect();
+                if (offer !== null) void blockReconnect(offer);
+              }}
+              className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs text-rose-300 transition-colors hover:bg-rose-500/10"
+            >
+              Block
             </button>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
