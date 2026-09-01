@@ -18,8 +18,8 @@
  * the first half of the reconnect feature above. Reporting stays where it
  * already works: during the conversation, and inside the late-block window.
  *
- * So a row is exactly what was on screen at the time — when, the colour and
- * nickname that conversation used, and the country the stranger declared. It is
+ * So a row is exactly what was on screen at the time — the colour and the name
+ * that conversation used, and the country the stranger declared. It is
  * a memory aid, and being only that is what keeps it free of every question the
  * durable version would have to answer.
  */
@@ -188,169 +188,202 @@ export function HistoryPanel({
           Recent
           {entries.length > 0 && <span className="text-ink-500">— {entries.length}</span>}
         </span>
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          className="rounded-lg p-1 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <span className="inline-flex items-center gap-0.5">
+          {/*
+            Clear sits here rather than in a row of its own at the foot of the
+            list. A full-width row reads as a list item - the last one, and the
+            one nearest the thumb - for an action that throws the list away.
+            Up here it is panel chrome, which is what it is.
+
+            It keeps its words. A bin on its own is read as "delete" and leaves
+            the scope to be guessed: this row, or all of them? "Clear all" says
+            which, before it is pressed rather than after, and this action has
+            no undo - the list is in sessionStorage and nothing else holds it.
+
+            Hidden when there is nothing to clear, rather than disabled:
+            absent beats present-and-disabled.
+          */}
+          {entries.length > 0 && (
+            <button
+              onClick={onClear}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Clear all
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </span>
       </div>
 
       {entries.length === 0 ? (
         <p className="px-3 py-4 text-sm leading-relaxed text-ink-500">
-          Nobody yet. Strangers you talk to appear here for this session only.
+          {/*
+            Just the state. Where the list lives and how long it lasts is the
+            privacy page's job, not an empty panel's - said here it reads as a
+            warning about a list that does not exist yet.
+          */}
+          Nobody yet.
         </p>
       ) : (
-        <>
-          <ul className="max-h-72 overflow-y-auto py-1">
-            {entries.map((entry) => (
-              // `at` is this client's clock and two conversations can share a
-              // millisecond only if the same person was met twice in one tick,
-              // so the nickname joins it to keep the key stable.
-              <li key={`${entry.at}-${entry.nickname}`} className="px-1">
-                <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
-                  {/* The accent that conversation used, so the row is recognisable. */}
+        <ul className="max-h-72 overflow-y-auto py-1">
+          {entries.map((entry) => (
+            // `at` is this client's clock and two conversations can share a
+            // millisecond only if the same person was met twice in one tick,
+            // so the nickname joins it to keep the key stable.
+            <li key={`${entry.at}-${entry.nickname}`} className="px-1">
+              <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
+                {/* The accent that conversation used, so the row is recognisable. */}
+                {/*
+                  The conversation's own accent, and a ring when they are here
+                  now. A second dot would be two circles saying different
+                  things side by side; the ring keeps one mark meaning one
+                  person and adds the state to it.
+                */}
+                <span
+                  aria-hidden="true"
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    entry.presence !== null && online.has(entry.presence)
+                      ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-ink-900'
+                      : ''
+                  }`}
+                  style={{ backgroundColor: entry.colour }}
+                />
+                <div className="min-w-0 flex-1">
                   {/*
-                    The conversation's own accent, and a ring when they are here
-                    now. A second dot would be two circles saying different
-                    things side by side; the ring keeps one mark meaning one
-                    person and adds the state to it.
+                    The same thing the chat header showed, by the same rule -
+                    the declared name when there was one, the generated
+                    nickname otherwise. Recent used to show the nickname
+                    unconditionally, so somebody who introduced themselves in
+                    Settings appeared here under a name their partner never
+                    saw, and the row was unrecognisable to the one person it
+                    was for.
+
+                    `??` and not `||`: an empty string is not a declared name,
+                    but it is not what reaches here either - a blank field is
+                    stored as null (`orNull`), so the two agree.
                   */}
-                  <span
-                    aria-hidden="true"
-                    className={`h-2 w-2 shrink-0 rounded-full ${
-                      entry.presence !== null && online.has(entry.presence)
-                        ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-ink-900'
-                        : ''
-                    }`}
-                    style={{ backgroundColor: entry.colour }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-ink-200">{entry.nickname}</p>
-                    {/*
-                      Where they said they were from, and nothing else.
-
-                      The time was here and is gone: it answered a question
-                      nobody asked, and a list of timestamps reads as a log of
-                      your evening rather than a list of people.
-
-                      There is deliberately no online dot. Presence is keyed to
-                      an account, and this list holds no account — only what was
-                      on screen during the conversation. Knowing whether a past
-                      stranger is here now would mean keeping a durable handle
-                      for them, which is the thing `history.ts` does not do and
-                      `minor-safety-policy.md` §6 is written about.
-                    */}
-                    <p className="text-xs text-ink-500">
-                      {entry.presence !== null && online.has(entry.presence) ? (
-                        <span className="text-green-400">Online</span>
-                      ) : entry.country === null ? (
-                        'Somewhere'
-                      ) : (
-                        <>
-                          <span aria-hidden="true">{flagOf(entry.country)}</span>{' '}
-                          {COUNTRY_NAMES[entry.country as keyof typeof COUNTRY_NAMES] ??
-                            entry.country}
-                        </>
-                      )}
-                    </p>
-                  </div>
+                  <p className="truncate text-sm text-ink-200">{entry.name ?? entry.nickname}</p>
                   {/*
-                    On every row, not only the people who are here.
+                    Where they said they were from, and nothing else.
 
-                    The earlier version hid it for anybody offline, on the
-                    grounds that a button which mostly fails is worse than none.
-                    Overruled deliberately: a row you cannot act on reads as a
-                    dead list, and "they are not around" is a better answer than
-                    a control that silently is not there. Pressing it for
-                    somebody absent says Away and costs one request.
+                    The time was here and is gone: it answered a question
+                    nobody asked, and a list of timestamps reads as a log of
+                    your evening rather than a list of people.
 
-                    An icon rather than a word, sized to fill the right of the
-                    row: it is the only action a row has, so it does not need a
-                    label to disambiguate it from anything.
+                    There is deliberately no online dot. Presence is keyed to
+                    an account, and this list holds no account — only what was
+                    on screen during the conversation. Knowing whether a past
+                    stranger is here now would mean keeping a durable handle
+                    for them, which is the thing `history.ts` does not do and
+                    `minor-safety-policy.md` §6 is written about.
                   */}
-                  <button
-                    onClick={() => {
-                      /*
-                        Signed out, this asks rather than fails. The route
-                        refuses without a credential and always will — that
-                        check stays, because a client is not where a rule lives
-                        — but a person pressing a button should not have to
-                        deduce the rule from nothing happening.
-
-                        A `title` was the first attempt and is invisible on a
-                        phone, which is where this was reported.
-                      */
-                      if (!signedIn) {
-                        onClose();
-                        onSignIn('Sign in to chat with someone again. Your place here is kept.');
-                        return;
-                      }
-                      const token = entry.presence;
-                      if (token === null) {
-                        const key = String(entry.at);
-                        setAsked((was) => ({ ...was, [key]: 'away' }));
-                        clearSoon(key);
-                        return;
-                      }
-                      setAsked((was) => ({ ...was, [token]: 'asked' }));
-                      void askToReconnect(token).then((result) => {
-                        setAsked((was) => ({ ...was, [token]: result }));
-                        clearSoon(token);
-                      });
-                    }}
-                    disabled={askedFor(entry) === 'asked'}
-                    aria-label={signedIn ? 'Ask to chat again' : 'Sign in to chat again'}
-                    title={
-                      askedFor(entry) === 'asked'
-                        ? 'Asked'
-                        : askedFor(entry) === 'signin'
-                          ? 'Sign in to chat again'
-                          : askedFor(entry) === 'away'
-                            ? 'Not around right now'
-                            : 'Ask to chat again'
-                    }
-                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
-                      !signedIn
-                        ? 'border-ink-600 text-ink-300 hover:border-amber-400/60 hover:text-amber-300'
-                        : askedFor(entry) === 'away' || askedFor(entry) === 'signin'
-                          ? 'border-ink-700 text-ink-600'
-                        : askedFor(entry) === 'asked'
-                          ? 'border-green-500/50 bg-green-500/10 text-green-300'
-                          : 'border-ink-600 text-ink-300 hover:border-green-500/50 hover:bg-green-500/10 hover:text-green-300'
-                    }`}
-                  >
-                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
-                  </button>
+                  <p className="text-xs text-ink-500">
+                    {entry.presence !== null && online.has(entry.presence) ? (
+                      <span className="text-green-400">Online</span>
+                    ) : entry.country === null ? (
+                      'Somewhere'
+                    ) : (
+                      <>
+                        <span aria-hidden="true">{flagOf(entry.country)}</span>{' '}
+                        {COUNTRY_NAMES[entry.country as keyof typeof COUNTRY_NAMES] ??
+                          entry.country}
+                      </>
+                    )}
+                  </p>
                 </div>
-              </li>
-            ))}
-          </ul>
+                {/*
+                  On every row, not only the people who are here.
 
-          <div className="border-t border-ink-800 p-1">
-            <button
-              onClick={onClear}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-300 transition-colors hover:bg-ink-800 hover:text-ink-100"
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Clear
-            </button>
-          </div>
-        </>
+                  The earlier version hid it for anybody offline, on the
+                  grounds that a button which mostly fails is worse than none.
+                  Overruled deliberately: a row you cannot act on reads as a
+                  dead list, and "they are not around" is a better answer than
+                  a control that silently is not there. Pressing it for
+                  somebody absent says Away and costs one request.
+
+                  An icon rather than a word, sized to fill the right of the
+                  row: it is the only action a row has, so it does not need a
+                  label to disambiguate it from anything.
+                */}
+                <button
+                  onClick={() => {
+                    /*
+                      Signed out, this asks rather than fails. The route
+                      refuses without a credential and always will — that
+                      check stays, because a client is not where a rule lives
+                      — but a person pressing a button should not have to
+                      deduce the rule from nothing happening.
+
+                      A `title` was the first attempt and is invisible on a
+                      phone, which is where this was reported.
+                    */
+                    if (!signedIn) {
+                      onClose();
+                      onSignIn('To talk to them again. Your place here is kept.');
+                      return;
+                    }
+                    const token = entry.presence;
+                    if (token === null) {
+                      const key = String(entry.at);
+                      setAsked((was) => ({ ...was, [key]: 'away' }));
+                      clearSoon(key);
+                      return;
+                    }
+                    setAsked((was) => ({ ...was, [token]: 'asked' }));
+                    void askToReconnect(token).then((result) => {
+                      setAsked((was) => ({ ...was, [token]: result }));
+                      clearSoon(token);
+                    });
+                  }}
+                  disabled={askedFor(entry) === 'asked'}
+                  aria-label={signedIn ? 'Ask to chat again' : 'Sign in to chat again'}
+                  title={
+                    askedFor(entry) === 'asked'
+                      ? 'Asked'
+                      : askedFor(entry) === 'signin'
+                        ? 'Sign in to chat again'
+                        : askedFor(entry) === 'away'
+                          ? 'Not around right now'
+                          : 'Ask to chat again'
+                  }
+                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+                    !signedIn
+                      ? 'border-ink-600 text-ink-300 hover:border-amber-400/60 hover:text-amber-300'
+                      : askedFor(entry) === 'away' || askedFor(entry) === 'signin'
+                        ? 'border-ink-700 text-ink-600'
+                      : askedFor(entry) === 'asked'
+                        ? 'border-green-500/50 bg-green-500/10 text-green-300'
+                        : 'border-ink-600 text-ink-300 hover:border-green-500/50 hover:bg-green-500/10 hover:text-green-300'
+                  }`}
+                >
+                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
 
-      <p className="border-t border-ink-800 px-3 py-2 text-xs leading-relaxed text-ink-500">
-        {/*
-          Said before anything is pressed, not only after. A control whose
-          requirement is discoverable solely by failing it is a control people
-          learn by being refused.
-        */}
-        {!signedIn && (
-          <span className="mb-1 block text-ink-400">Sign in to chat with someone again.</span>
-        )}
-        Kept in this tab only, and gone when you close it. Never sent to us.
-      </p>
+      {/*
+        Said before anything is pressed, not only after. A control whose
+        requirement is discoverable solely by failing it is a control people
+        learn by being refused.
+
+        This is the whole footer now, so it renders only when there is something
+        to say - signed in, the border and padding would frame nothing.
+      */}
+      {!signedIn && (
+        <p className="border-t border-ink-800 px-3 py-2 text-xs leading-relaxed text-ink-400">
+          Sign in to chat with someone again.
+        </p>
+      )}
     </div>
   );
 }

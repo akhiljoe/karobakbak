@@ -29,7 +29,14 @@ function fakeStorage(initial: Record<string, string> = {}) {
 }
 
 function entry(n: number): HistoryEntry {
-  return { at: n, nickname: `Stranger ${n}`, colour: '#ffb420', country: 'IN', presence: null };
+  return {
+    at: n,
+    nickname: `Stranger ${n}`,
+    name: null,
+    colour: '#ffb420',
+    country: 'IN',
+    presence: null,
+  };
 }
 
 beforeEach(() => {
@@ -106,6 +113,35 @@ describe('readHistory', () => {
       }),
     });
     expect(readHistory().map((e) => e.nickname)).toEqual(['Stranger 1', 'ok']);
+  });
+
+  it('keeps a row written before the declared name was recorded', () => {
+    /*
+     * `sessionStorage` outlives a reload, so a deploy mid-session leaves rows
+     * from the previous build in a tab that is still open. Those rows have no
+     * `name`, and dropping them would empty somebody's list for a reason they
+     * could not possibly work out. The panel falls back to the nickname, which
+     * is what the row held all along.
+     */
+    vi.stubGlobal('window', {
+      sessionStorage: fakeStorage({
+        kbb_recent: JSON.stringify([
+          { at: 1, nickname: 'Older row', colour: '#fff', country: null, presence: null },
+        ]),
+      }),
+    });
+    const [row] = readHistory();
+    expect(row?.nickname).toBe('Older row');
+    expect(row?.name ?? row?.nickname).toBe('Older row');
+  });
+
+  it('keeps the declared name when there is one', () => {
+    vi.stubGlobal('window', {
+      sessionStorage: fakeStorage({
+        kbb_recent: JSON.stringify([{ ...entry(1), name: 'Asha' }]),
+      }),
+    });
+    expect(readHistory()[0]?.name).toBe('Asha');
   });
 
   it('is empty for storage that is not JSON, or not an array', () => {

@@ -43,7 +43,7 @@ import type { RetentionSink } from '../storage/sink';
 import { hashResumeToken, newMatchId, newMessageId, newResumeToken, newSessionId } from '../util/ids';
 import { nowIso } from '../util/time';
 import type { DeliveryRoute, EventDispatcher } from './dispatch';
-import { newIdentityPair } from './identity';
+import { newIdentityPair, newNickname } from './identity';
 import type { Connection, ConnectionRegistry } from './registry';
 
 /**
@@ -67,6 +67,8 @@ export interface LifecycleStore {
   setSegment(sessionId: string, segment: string): Promise<void>;
   readSegment(sessionId: string, fallback: string): Promise<string>;
   joinQueue(sessionId: string, segment: string): Promise<JoinQueueResult>;
+  setNickname(sessionId: string, nickname: string): Promise<void>;
+  readNicknames(a: string, b: string): Promise<{ a: string | null; b: string | null }>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
   setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void>;
   setIntent(sessionId: string, intent: string | null): Promise<void>;
@@ -278,6 +280,20 @@ export class SessionLifecycle {
       this.segment,
       resumeToken === '' ? '' : hashResumeToken(resumeToken),
     );
+
+    /*
+      The display nickname, drawn once and kept for the life of the session.
+
+      Here rather than at match time because "the same name all visit" is the
+      whole point: drawing it on the first match would leave a session that has
+      not matched yet with no name to be stable about, and drawing it again on
+      the second would defeat it entirely.
+
+      Not part of `createSession`'s Lua. Nothing races for this — no other
+      instance has heard of the session yet — and adding an argument to that
+      script means bumping its arity for a value no transition reads.
+    */
+    await this.store.setNickname(sessionId, newNickname());
 
     const slot = await this.store.acquireConnectionSlot(ipHash, sessionId);
     if (!slot.allowed) {
@@ -699,10 +715,12 @@ export class SessionLifecycle {
   /**
    * Generate the pair of per-match identities and tell the partner.
    *
-   * Both identities are created here, by the instance that won the match, and
-   * shipped to the partner in the event. Neither side derives them, so nothing
-   * about an identity is a function of a session id — anything stable across
-   * matches would be a correlation handle (§24.3).
+   * Both identities are assembled here, by the instance that won the match, and
+   * shipped to the partner in the event. Neither side *derives* them: nothing
+   * about an identity is a function of a session id, which is the property
+   * §24.3 is about. The nickname half is read from each session rather than
+   * drawn, so it is the same for every match that session has — see
+   * `identity.ts` for what that trades and what it does not.
    */
   private async announceMatch(
     sessionId: string,
@@ -714,7 +732,13 @@ export class SessionLifecycle {
     // won the match, but either side may have joined through a different
     // connection, so Redis is the only place that knows both declarations.
     const profiles = await this.store.readProfiles(sessionId, partnerSessionId);
-    const identities = newIdentityPair({ you: profiles.a, partner: profiles.b });
+    // `you` is the session that just matched and `partner` the one that was
+    // waiting, which is what decides who redraws if the two names collide.
+    const nicknames = await this.store.readNicknames(sessionId, partnerSessionId);
+    const identities = newIdentityPair(
+      { you: profiles.a, partner: profiles.b },
+      { you: nicknames.a, partner: nicknames.b },
+    );
 
     // The conversation row is P0: the server generated it, and every message
     // and report that follows carries a foreign key into it.

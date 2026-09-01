@@ -60,6 +60,19 @@ interface ChatShellProps {
   state: ChatState;
   connection: ConnectionView;
   searching: boolean;
+  /**
+   * Seconds until auto-search starts the next conversation, or null.
+   *
+   * Non-null means the last conversation has ended and the next one is coming
+   * on its own. The shell stays mounted through it rather than handing back to
+   * the landing screen: somebody who asked for the next stranger automatically
+   * has said they are staying, and bouncing them out to the front door between
+   * every pair - marketing copy, footer and all - is the product forgetting
+   * what they just told it.
+   */
+  autoSearchIn?: number | null;
+  /** Stop the countdown and stay put. */
+  onCancelAutoSearch?: () => void;
   /** The person asked for conversation starters. Off unless they did. */
   icebreakersEnabled: boolean;
   /** Auto-find the next stranger when this one leaves. Same preference as Settings. */
@@ -91,6 +104,8 @@ export function ChatShell({
   state,
   connection,
   searching,
+  autoSearchIn = null,
+  onCancelAutoSearch,
   icebreakersEnabled,
   autoSearch,
   onToggleAutoSearch,
@@ -111,6 +126,38 @@ export function ChatShell({
 }: ChatShellProps): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+
+  /*
+    An open menu closes on a tap anywhere else, and on Escape.
+
+    Requiring a second tap on the same three dots is the behaviour of a menu
+    that has trapped you: every other dismissable surface in this product goes
+    away when you look elsewhere, and a person who has decided against the menu
+    has already moved their thumb.
+
+    `pointerdown`, not `mousedown` — this is used on a phone, and pointer events
+    cover touch without waiting for the synthesised mouse event. The ref wraps
+    the button *and* the menu, so tapping the button is never "outside": the
+    close and the toggle would otherwise both fire and the menu would reopen.
+  */
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointer = (event: PointerEvent): void => {
+      if (moreRef.current !== null && !moreRef.current.contains(event.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [moreOpen]);
 
   // The overflow menu closes on Escape and on any click outside the header, the
   // same as every other menu here. It also closes when the conversation ends,
@@ -156,6 +203,10 @@ export function ChatShell({
     };
   }, [friendsOpen]);
   const chatting = state.screen === 'chatting';
+  // The gap between two conversations, with the next one already on its way.
+  // The transcript is cleared by the time this is true, so there is nothing to
+  // preserve behind the overlay - only somewhere to stand.
+  const advancing = autoSearchIn !== null;
 
   // A menu about a stranger who has gone should not still be open.
   useEffect(() => {
@@ -204,7 +255,7 @@ export function ChatShell({
             glyph={glyphFor(state.partner)}
             colour={colourFor(state.partner)}
             size="sm"
-            pulsing={searching}
+            pulsing={searching || advancing}
           />
 
           <div className="min-w-0 flex-1">
@@ -212,13 +263,17 @@ export function ChatShell({
               <h2 className="truncate text-sm font-semibold text-ink-50">
                 {searching
                   ? 'Finding someone…'
-                  : (state.partner?.profile?.name ?? state.partner?.nickname ?? 'Stranger')}
+                  : advancing
+                    ? 'Up next'
+                    : (state.partner?.profile?.name ?? state.partner?.nickname ?? 'Stranger')}
               </h2>
               <ConnectionStatus state={connection} />
             </div>
             <div className="flex h-4 items-center gap-2 text-xs text-ink-400">
               {searching ? (
                 'Looking for a stranger'
+              ) : advancing ? (
+                'That conversation ended'
               ) : reconnecting ? (
                 <span className="text-amber-300">
                   Reconnecting{selfCountdown === null ? '…' : ` — ${selfCountdown}s`}
@@ -272,7 +327,7 @@ export function ChatShell({
             the opposite reason — see the note above.
           */}
           {chatting && (
-            <div className="relative shrink-0">
+            <div className="relative shrink-0" ref={moreRef}>
               <button
                 onClick={() => setMoreOpen((was) => !was)}
                 aria-label="More about this stranger"
@@ -311,7 +366,7 @@ export function ChatShell({
                         press again.
                       */
                       if (!signedIn) {
-                        onOpenAuth('Sign in to add people you meet. Your chat stays open.');
+                        onOpenAuth('To add people you meet. Your chat stays open.');
                         return;
                       }
                       onSaveConnection(!state.connectionSaved);
@@ -347,21 +402,25 @@ export function ChatShell({
                   )}
 
                   {/*
-                    Said here because here is where it is asked. A request that
-                    produces no visible effect reads as a broken button, and the
-                    silence is the whole point: telling them you asked would
-                    disclose it without the reciprocity it was conditional on.
-                  */}
-                  {ACCOUNTS_ENABLED && !state.connectionMade && (
-                    <p className="px-3 pb-2 pt-0.5 text-[11px] leading-relaxed text-ink-500">
-                      {!signedIn
-                        ? 'Needs an account. Signing in keeps this chat open.'
-                        : state.connectionSaved
-                          ? 'Sent. They are told only if they add you too.'
-                          : 'They are told only if they add you back.'}
-                    </p>
-                  )}
+                    No explanatory note under the button, in any state.
 
+                    Three of them lived here in turn: a precondition for signed-
+                    out visitors, a description of what asking does, and a
+                    confirmation after asking. All three were prose inside a
+                    menu, which is a list of actions - somebody opens it to
+                    press something, not to read.
+
+                    What each was carrying is still carried, somewhere it works
+                    better. The precondition is the sign-in dialog that the tap
+                    opens. The confirmation is the button itself, which reads
+                    "Cancel request" once a request is out and "Friends" once it
+                    is mutual - a control that states its own state, rather than
+                    a sentence beside it that has to agree.
+
+                    The reciprocity rule is unchanged and is still the reason
+                    nothing is announced: telling somebody you asked would
+                    disclose it without the agreement it was conditional on.
+                  */}
                   {/*
                     Block and Report, in the same menu as Add friend rather than
                     beside it in the header. One control about this person, not
@@ -386,7 +445,7 @@ export function ChatShell({
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
                     >
                       <ShieldX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      Block and find someone else
+                      Block
                     </button>
                   )}
 
@@ -443,13 +502,21 @@ export function ChatShell({
             />
           )}
 
+          {advancing && autoSearchIn !== null && (
+            <AdvancingOverlay
+              seconds={autoSearchIn}
+              notice={state.notice}
+              onCancel={onCancelAutoSearch}
+            />
+          )}
+
           {showIcebreaker && (
             <IcebreakerBar onUse={onSend} onDismiss={() => setIcebreakerDismissed(true)} />
           )}
 
           <div
             className={`flex-1 overflow-hidden transition-opacity duration-300 ${
-              searching ? 'pointer-events-none opacity-0' : 'opacity-100'
+              searching || advancing ? 'pointer-events-none opacity-0' : 'opacity-100'
             }`}
           >
             <MessageList
@@ -699,6 +766,57 @@ export function ChatShell({
         onTyping={onTyping}
       />
 
+    </div>
+  );
+}
+
+/**
+ * The pause between two conversations, when the next one is automatic.
+ *
+ * Deliberately quieter than `SearchingOverlay`. Nothing is happening yet - the
+ * countdown exists so the next stranger does not arrive before somebody has
+ * registered that the last one left, and an animation would say "working" when
+ * the honest state is "waiting a moment on purpose".
+ *
+ * Cancel is always offered and always visible. A countdown that cannot be
+ * stopped is not a convenience, and this one starts on its own: somebody who
+ * wants to stop and read what was said, or simply stop, must not have to race
+ * it.
+ */
+function AdvancingOverlay({
+  seconds,
+  notice,
+  onCancel,
+}: {
+  seconds: number;
+  notice: string | null;
+  onCancel?: (() => void) | undefined;
+}): JSX.Element {
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-ink-950 px-6 text-center">
+      <span className="flex h-16 w-16 items-center justify-center rounded-full border border-ink-700 bg-ink-900 font-display text-2xl font-semibold text-amber-300">
+        {seconds}
+      </span>
+
+      {/*
+        The reducer's notice, which already says what happened and says it
+        differently for a stranger leaving and for a block. Re-writing it here
+        would be a second place to keep that distinction correct.
+      */}
+      {notice !== null && <p className="mt-4 text-sm text-ink-300">{notice}</p>}
+
+      <p className="mt-1 text-sm text-ink-500">
+        Finding someone new in {seconds}s
+      </p>
+
+      {onCancel && (
+        <button
+          onClick={onCancel}
+          className="mt-5 rounded-xl border border-ink-700 px-4 py-2 text-sm text-ink-300 transition-colors hover:border-ink-600 hover:bg-ink-800 hover:text-ink-50"
+        >
+          Stay here
+        </button>
+      )}
     </div>
   );
 }
