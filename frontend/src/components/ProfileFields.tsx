@@ -123,22 +123,33 @@ export function ProfileFields({
       </div>
 
 
-      <p className="text-xs leading-relaxed text-ink-500">
-        Everyone you match with sees this. None of it is checked.
-        {appliesToNextMatch && (
-          <>
-            {' '}
-            <span className="text-amber-300/90">
-              Changes apply to your next conversation, not this one.
-            </span>
-          </>
-        )}
-      </p>
+      {/*
+        What is left of the disclosure paragraph.
+
+        It opened with "Everyone you match with sees this. None of it is
+        checked." Both surfaces that render these fields already say it in the
+        place somebody reads before deciding to type: the landing card's own
+        header carries "Shown to everyone you match with", and Settings sits
+        under an "About you" heading reached by opening a panel about yourself.
+        Said again under the inputs it was a third statement of the same fact,
+        after the point where it could change what anybody typed.
+
+        The timing note stays and is the whole element now, so there is nothing
+        to render when it does not apply - an empty bordered line is worse than
+        the sentence that was here.
+      */}
+      {appliesToNextMatch && (
+        <p className="text-xs leading-relaxed text-amber-300/90">
+          Changes apply to your next conversation, not this one.
+        </p>
+      )}
 
       {/*
-        Separated by a rule, and below the disclosure paragraph rather than
-        above it, because that paragraph says everything here is shown to a
-        stranger and this control is the one thing that is not.
+        Separated by a rule, and last, because everything above it is shown to a
+        stranger and this control is the one thing that is not. The paragraph
+        that used to say so out loud is gone; the line under this select is what
+        carries the distinction now, which is why it names the guarantee rather
+        than gesturing at it.
       */}
       <div className="space-y-2 border-t border-ink-800 pt-3">
         <Field label="What are you here for?">

@@ -34,7 +34,7 @@
  * Likewise "completely anonymous" — anonymous to the person you are talking to,
  * yes; to us, not entirely, and the FAQ says so in those words.
  */
-import { Lock, Sparkles } from 'lucide-react';
+import { Dices, Lock, Sparkles } from 'lucide-react';
 
 import type { ChatState } from '../state/machine';
 import type { Profile } from '../protocol/types';
@@ -168,22 +168,51 @@ export function LandingScreen({
           which wasted the most reassuring line on the page. It is the answer to
           "what is this going to cost me", and it should be legible at a glance.
 
-          Both halves are claims about this system and are checked against it,
-          the same rule the policy documents follow. The declared variant used
-          to read "your profile stays on this device" and that was simply false:
-          the profile rides on `join_queue`, is shown to the partner, and is
-          written to `conversations.profile_a`/`_b` for the retention period,
-          where the console can read it. What IS true is the §24.3 property —
-          the server keeps no profile between sessions, the browser re-sends it
-          every time, and nothing links one conversation to the next.
+          The declared half is a **tagline**, and the two before it were both
+          claims that did not survive being checked. "Your profile stays on this
+          device" was plainly false: the profile rides on `join_queue`, is shown
+          to the partner, and is written to `conversations.profile_a`/`_b` for
+          the retention period, where the console can read it. Its replacement,
+          "nothing you declare follows you from one conversation to the next",
+          overstated in a quieter way — the browser re-sends the same
+          declaration to every stranger, so what does not follow you is anything
+          the *server* keeps, which is not what the sentence said.
+
+          A tagline makes no claim, so there is nothing left to be wrong. The
+          privacy properties are true and belong where they can be stated in
+          full, not compressed into one line under a padlock.
+
+          The padlock stays, and it is worth knowing what it is doing so nobody
+          later reads it as a promise about the sentence beside it. An icon
+          labels a category, and this row is the reassurance strip under the
+          button - the place the page says "this is safe and costs nothing".
+          That is what the lock marks, and it marks the row rather than either
+          branch: one of them is a tagline, the other is the practical fact that
+          there is nothing to sign up for. Neither is a security guarantee, and
+          the lock must not be allowed to grow into one - if a claim is ever put
+          back in this slot it has to be true on its own, with the icon adding
+          nothing to it.
 
           The other half avoids "no profile", which stopped being the whole
           story once there was a profile editor and an intent selector to reach.
+          It is kept for somebody who has declared nothing, because "nothing to
+          set up" is the practical fact a first-time visitor wants; the tagline
+          is for somebody who has already done the setting up.
         */}
         <div className="mt-4 flex items-center justify-center gap-2 text-sm text-ink-400 short:mt-3">
-          <Lock className="h-3.5 w-3.5 shrink-0 text-ink-500" />
+          {/*
+            The icon follows the branch, because the two sentences are not the
+            same kind of thing. One is a privacy fact and takes the padlock; the
+            other is a tagline about random pairing and takes the dice. A single
+            glyph for both was always wrong for one of them.
+          */}
+          {declaredAnything ? (
+            <Dices className="h-3.5 w-3.5 shrink-0 text-ink-500" />
+          ) : (
+            <Lock className="h-3.5 w-3.5 shrink-0 text-ink-500" />
+          )}
           {declaredAnything
-            ? 'Nothing you declare follows you from one conversation to the next'
+            ? 'Somebody new, every time.'
             : 'Free, anonymous, and nothing to set up'}
         </div>
 
