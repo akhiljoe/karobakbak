@@ -83,6 +83,16 @@ export interface PresenceService {
    * store, nothing to ask.
    */
   mintToken(accountId: string): Promise<string | null>;
+  /**
+   * A token for somebody who is not signed in.
+   *
+   * It resolves straight to a session rather than to an account, which is the
+   * whole of the difference: it stops working when that session ends. Somebody
+   * signed out never chose to be findable, so what they get is the narrowest
+   * version of it — reachable while they are still in the tab you met them in,
+   * and not one moment past it.
+   */
+  mintSessionToken(sessionId: string): Promise<string | null>;
   /** Which of these tokens point at somebody who is online right now. */
   resolveTokens(tokens: readonly string[]): Promise<Set<string>>;
   /**
@@ -174,9 +184,12 @@ export function createPresenceService(
         // same two people met, which is a stable identifier for a pair — the
         // thing this is careful not to be.
         const token = randomBytes(16).toString('hex');
+        // Prefixed, because the two kinds resolve differently and a bare id
+        // would make them indistinguishable — an account token that outlived
+        // its account would otherwise be read as a session id.
         await redis.set(
           keys.presenceToken(token),
-          accountId,
+          `a:${accountId}`,
           'EX',
           PRESENCE_TOKEN_TTL_SECONDS,
         );
@@ -189,19 +202,48 @@ export function createPresenceService(
       }
     },
 
+    async mintSessionToken(sessionId) {
+      try {
+        const token = randomBytes(16).toString('hex');
+        /*
+          The session's own lifetime, not the twelve hours an account token
+          gets. There is no setting to consult and nobody agreed to anything, so
+          this is bounded by the only consent that exists: they are still here,
+          in the conversation you met them in.
+        */
+        await redis.set(keys.presenceToken(token), `s:${sessionId}`, 'EX', PRESENCE_TTL_SECONDS);
+        return token;
+      } catch (err) {
+        logger.warn('could not mint a session presence token', errorFields(err));
+        return null;
+      }
+    },
+
     async resolveTokens(tokens) {
       const here = new Set<string>();
       if (tokens.length === 0) return here;
       try {
-        const accounts = await redis.mget(...tokens.map((t) => keys.presenceToken(t)));
+        const values = await redis.mget(...tokens.map((t) => keys.presenceToken(t)));
         const pairs = tokens
-          .map((token, i) => ({ token, account: accounts[i] }))
-          .filter((pair): pair is { token: string; account: string } => typeof pair.account === 'string');
+          .map((token, i) => ({ token, value: values[i] }))
+          .filter((pair): pair is { token: string; value: string } => typeof pair.value === 'string');
         if (pairs.length === 0) return here;
 
-        // Two round trips for the whole list rather than two per row.
-        const live = await redis.mget(...pairs.map((pair) => keys.presence(pair.account)));
-        pairs.forEach((pair, i) => {
+        /*
+          A session token is its own answer: the key exists only while that
+          session's heartbeat keeps it alive, so resolving it *is* the liveness
+          check. An account token needs the second lookup, because an account
+          can exist while nobody is connected to it.
+        */
+        const accountPairs = pairs.filter((pair) => pair.value.startsWith('a:'));
+        pairs.filter((pair) => pair.value.startsWith('s:')).forEach((pair) => here.add(pair.token));
+        if (accountPairs.length === 0) return here;
+
+        // One round trip for the whole list rather than one per row.
+        const live = await redis.mget(
+          ...accountPairs.map((pair) => keys.presence(pair.value.slice(2))),
+        );
+        accountPairs.forEach((pair, i) => {
           if (live[i] !== null && live[i] !== undefined) here.add(pair.token);
         });
       } catch (err) {
@@ -224,9 +266,12 @@ export function createPresenceService(
 
     async sessionForToken(token) {
       try {
-        const accountId = await redis.get(keys.presenceToken(token));
-        if (accountId === null) return null;
-        const sessionId = await redis.get(keys.presence(accountId));
+        const value = await redis.get(keys.presenceToken(token));
+        if (value === null) return null;
+        // A session token points at a session already; it expires with the
+        // heartbeat that keeps it, so there is nothing further to check.
+        if (value.startsWith('s:')) return value.slice(2) || null;
+        const sessionId = await redis.get(keys.presence(value.slice(2)));
         return sessionId === null || sessionId === '' ? null : sessionId;
       } catch (err) {
         logger.warn('could not resolve a presence token to a session', errorFields(err));

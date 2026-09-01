@@ -233,7 +233,10 @@ export class SessionLifecycle {
      * conversation carries one, which is exactly how it behaves for a partner
      * who is signed out.
      */
-    private readonly presence?: { mintToken(accountId: string): Promise<string | null> },
+    private readonly presence?: {
+      mintToken(accountId: string): Promise<string | null>;
+      mintSessionToken(sessionId: string): Promise<string | null>;
+    },
   ) {
     this.segment = config.matchmaking.defaultSegment;
     this.resumeEnabled = config.resume.graceSeconds > 0;
@@ -768,9 +771,22 @@ export class SessionLifecycle {
       remembered by the people they meet. No token, nothing stored, no dot.
     */
     const accounts = await this.store.readAccounts(sessionId, partnerSessionId);
+    const tokenFor = async (
+      account: string | null,
+      session: string,
+    ): Promise<string | null> => {
+      if (this.presence === undefined) return null;
+      // Signed in: an account token, twelve hours, refused outright if they
+      // turned presence off. Signed out: a session token, which stops working
+      // when that session does, because nobody signed out agreed to be findable
+      // and the narrowest version of it is the only defensible one.
+      return account === null
+        ? this.presence.mintSessionToken(session)
+        : this.presence.mintToken(account);
+    };
     const [tokenForMe, tokenForThem] = await Promise.all([
-      accounts.b === null ? null : (this.presence?.mintToken(accounts.b) ?? null),
-      accounts.a === null ? null : (this.presence?.mintToken(accounts.a) ?? null),
+      tokenFor(accounts.b, partnerSessionId),
+      tokenFor(accounts.a, sessionId),
     ]);
 
     const partnerRoute = await this.notify(partnerSessionId, {
