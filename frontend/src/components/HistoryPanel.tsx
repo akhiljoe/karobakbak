@@ -91,6 +91,10 @@ export function HistoryPanel({
     };
   }, [open, onClose]);
 
+  /** What happened when this row was last asked. Rows with no token key by time. */
+  const askedFor = (entry: HistoryEntry): AskResult | undefined =>
+    asked[entry.presence ?? String(entry.at)];
+
   if (!open) return null;
 
   return (
@@ -197,32 +201,50 @@ export function HistoryPanel({
                     </p>
                   </div>
                   {/*
-                    Only for somebody who is here. A button that could be
-                    pressed for an absent person would be a button that mostly
-                    fails, and the honest version of "they are not around" is
-                    not offering it.
+                    On every row, not only the people who are here.
+
+                    The earlier version hid it for anybody offline, on the
+                    grounds that a button which mostly fails is worse than none.
+                    Overruled deliberately: a row you cannot act on reads as a
+                    dead list, and "they are not around" is a better answer than
+                    a control that silently is not there. Pressing it for
+                    somebody absent says Away and costs one request.
+
+                    An icon rather than a word, sized to fill the right of the
+                    row: it is the only action a row has, so it does not need a
+                    label to disambiguate it from anything.
                   */}
-                  {entry.presence !== null && online.has(entry.presence) && (
-                    <button
-                      onClick={() => {
-                        const token = entry.presence;
-                        if (token === null) return;
-                        setAsked((was) => ({ ...was, [token]: 'asked' }));
-                        void askToReconnect(token).then((result) =>
-                          setAsked((was) => ({ ...was, [token]: result })),
-                        );
-                      }}
-                      disabled={asked[entry.presence] === 'asked'}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-green-500/40 px-2 py-1 text-[11px] font-medium text-green-300 transition-colors hover:bg-green-500/10 disabled:opacity-60"
-                    >
-                      <MessageCircle className="h-3 w-3" aria-hidden="true" />
-                      {asked[entry.presence] === 'asked'
+                  <button
+                    onClick={() => {
+                      const token = entry.presence;
+                      if (token === null) {
+                        setAsked((was) => ({ ...was, [String(entry.at)]: 'away' }));
+                        return;
+                      }
+                      setAsked((was) => ({ ...was, [token]: 'asked' }));
+                      void askToReconnect(token).then((result) =>
+                        setAsked((was) => ({ ...was, [token]: result })),
+                      );
+                    }}
+                    disabled={askedFor(entry) === 'asked'}
+                    aria-label="Ask to chat again"
+                    title={
+                      askedFor(entry) === 'asked'
                         ? 'Asked'
-                        : asked[entry.presence] === 'away'
-                          ? 'Away'
-                          : 'Chat'}
-                    </button>
-                  )}
+                        : askedFor(entry) === 'away'
+                          ? 'Not around right now'
+                          : 'Ask to chat again'
+                    }
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+                      askedFor(entry) === 'away'
+                        ? 'border-ink-700 text-ink-600'
+                        : askedFor(entry) === 'asked'
+                          ? 'border-green-500/50 bg-green-500/10 text-green-300'
+                          : 'border-ink-600 text-ink-300 hover:border-green-500/50 hover:bg-green-500/10 hover:text-green-300'
+                    }`}
+                  >
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  </button>
                 </div>
               </li>
             ))}
