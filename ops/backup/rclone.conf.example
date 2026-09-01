@@ -11,6 +11,26 @@
 # knows each provider's required fields and will obtain tokens where they are
 # needed. What follows is only the shape.
 
+# Cloudflare R2 is the chosen destination. S3-compatible, 10 GB free with no
+# egress charge -- which matters on the day you restore, because that is already
+# a bad day and a bill is not what it needs.
+#
+# `endpoint` is account-specific: R2 dashboard -> the bucket -> Settings, or the
+# S3 API address shown when the API token is created. `region = auto` is what R2
+# expects; it is not a placeholder to fill in.
+#
+# The token needs **Object Read & Write on one bucket**, nothing wider. A token
+# with account-level permissions could delete the bucket it is meant to fill.
+
+# [r2]
+# type = s3
+# provider = Cloudflare
+# access_key_id = <R2 access key id>
+# secret_access_key = <R2 secret access key>
+# endpoint = https://<account id>.r2.cloudflarestorage.com
+# region = auto
+# no_check_bucket = true
+
 # [b2]
 # type = b2
 # account = <application key id>
@@ -26,3 +46,9 @@
 # A destination in a different failure domain from the database host is the
 # whole point. Object storage in the same provider and region is better than the
 # same machine, and a different provider is better again.
+#
+# A machine in your own home is a legitimate destination and a poor primary one.
+# It is free, it is a genuinely different failure domain, and it can only be
+# reached while it is switched on -- so the run fails on the nights it is not,
+# and an alert that cries wolf is one nobody reads on the night it is right. Keep
+# it as an occasional second copy, pulled down, rather than as `BACKUP_REMOTE`.
