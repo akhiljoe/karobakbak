@@ -63,10 +63,25 @@ interface AuthModalProps {
   open: boolean;
   onClose(): void;
   session: Session;
+  /**
+   * Why this opened, when something asked for it.
+   *
+   * Shown above the button. A dialog that appears because somebody pressed
+   * "Add friend" should say so — otherwise it reads as the product interrupting
+   * them, and the connection between what they did and what they are being
+   * asked for is left to them to make.
+   */
+  reason?: string | null;
 }
 
-export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Element | null {
+export function AuthModal({
+  open,
+  onClose,
+  session,
+  reason = null,
+}: AuthModalProps): JSX.Element | null {
   const [leaving, setLeaving] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +95,10 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   // A dialog reopened after an abandoned sign-in should offer the button
   // again, not the "waiting" label from the attempt nobody finished.
   useEffect(() => {
-    if (!open) setLeaving(false);
+    if (!open) {
+      setLeaving(false);
+      setPopupBlocked(false);
+    }
   }, [open]);
 
   /*
@@ -109,7 +127,18 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
     // and one `await` in between is enough to lose that and have the popup
     // blocked.
     setLeaving(true);
-    session.signIn();
+    /*
+      `reason` is only set when something in the app asked for this — today,
+      pressing Add friend mid-conversation. There a full-page redirect would end
+      the chat, so it is suppressed and the blocked popup is explained instead.
+      Opened from the header, with nothing to lose, the redirect stays the
+      fallback that always works.
+    */
+    const opened = session.signIn(reason === null);
+    if (!opened) {
+      setLeaving(false);
+      setPopupBlocked(true);
+    }
   };
 
   // The popup leaves this dialog on screen behind it, so the button has to stop
@@ -172,6 +201,10 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
             <LogoMark size={14} />
             karobakbak
           </span>
+
+          {reason !== null && (
+            <p className="mt-3 max-w-[16rem] text-sm leading-relaxed text-ink-400">{reason}</p>
+          )}
         </div>
 
         {SIGNIN_PROVIDER === 'google' ? (
@@ -210,6 +243,14 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
             the in-app /terms route is the fallback; a link to nothing would
             be worse than no link, which is the same rule the age gate follows.
           */}
+          {popupBlocked && (
+            <p className="mt-3 rounded-lg border border-dashed border-amber-400/40 bg-amber-400/5 px-3 py-2.5 text-sm leading-relaxed text-ink-400">
+              <span className="font-medium text-amber-300">Your browser blocked the window.</span>{' '}
+              Allow pop-ups for this site and try again — we did not send you away, because that
+              would end the conversation you are in.
+            </p>
+          )}
+
           <p className="mt-4 text-center text-xs leading-relaxed text-ink-500">
             By continuing you agree to our{' '}
             <a

@@ -73,6 +73,8 @@ interface ChatShellProps {
   onClearHistory(): void;
   /** Whether an account exists to have connections. */
   signedIn: boolean;
+  /** Opens the sign-in dialog, saying why. */
+  onOpenAuth(reason: string): void;
   onTyping(active: boolean): void;
   onReact(messageId: string, reaction: string, active: boolean): void;
   /** Save this stranger, or withdraw it while the conversation is still running. */
@@ -97,6 +99,7 @@ export function ChatShell({
   history,
   onClearHistory,
   signedIn,
+  onOpenAuth,
   onTyping,
   onReact,
   onSaveConnection,
@@ -294,8 +297,24 @@ export function ChatShell({
                   <button
                     role="menuitem"
                     onClick={() => {
-                      onSaveConnection(!state.connectionSaved);
                       setMoreOpen(false);
+                      /*
+                        Signed out, this asks rather than fails. The server
+                        answers ACCOUNT_REQUIRED and always will — that check
+                        stays, because a client is not where a rule lives — but
+                        somebody pressing a button should not have to learn the
+                        rule from an error.
+
+                        The conversation survives the detour: signing in happens
+                        in a popup, so this page never navigates and the socket
+                        it holds stays open. They come back to the same chat and
+                        press again.
+                      */
+                      if (!signedIn) {
+                        onOpenAuth('Sign in to add people you meet. Your chat stays open.');
+                        return;
+                      }
+                      onSaveConnection(!state.connectionSaved);
                     }}
                     disabled={state.connectionMade}
                     aria-pressed={state.connectionSaved}
@@ -335,9 +354,11 @@ export function ChatShell({
                   */}
                   {ACCOUNTS_ENABLED && !state.connectionMade && (
                     <p className="px-3 pb-2 pt-0.5 text-[11px] leading-relaxed text-ink-500">
-                      {state.connectionSaved
-                        ? 'Sent. They are told only if they add you too.'
-                        : 'They are told only if they add you back.'}
+                      {!signedIn
+                        ? 'Needs an account. Signing in keeps this chat open.'
+                        : state.connectionSaved
+                          ? 'Sent. They are told only if they add you too.'
+                          : 'They are told only if they add you back.'}
                     </p>
                   )}
 
