@@ -23,18 +23,24 @@
  * does. The button navigates; it does not submit, fetch or validate.
  *
  * ---------------------------------------------------------------------------
- * WHAT IT PROMISES IS BOUNDED BY WHAT IS BUILT
+ * IT MAKES NO CLAIMS AT ALL
  * ---------------------------------------------------------------------------
- * Saved connections and history are what an account gates (§31). The copy says
- * exactly those and does not mention friend requests, which are specified and
- * not yet built — a list of benefits is a claim, and one item of it being
- * aspirational makes the whole list untrustworthy.
+ * It listed what an account gates and warned about checking the address bar on
+ * the provider's page. Both are gone, deliberately: this dialog is opened by
+ * somebody who already decided to sign in, and a sales pitch plus a security
+ * lecture in front of a single button is a wall of text between a person and
+ * the thing they clicked for.
+ *
+ * Nothing was traded away to shorten it. The benefits belong on the pages that
+ * describe the product, and the address-bar advice is now carried by the thing
+ * that actually demonstrates it — a real browser window with its own visible
+ * address bar, which is more convincing than a sentence saying to look at one.
  *
  * It closes on Escape and on the backdrop, unlike the age gate, which
  * deliberately does neither. This one is a choice somebody can decline.
  */
 import { useEffect, useState } from 'react';
-import { LogIn, ShieldCheck, X } from 'lucide-react';
+import { LogIn, X } from 'lucide-react';
 
 import { SIGNIN_PROVIDER } from '../features';
 import type { Session } from '../hooks/useSession';
@@ -106,7 +112,7 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
       <div className="relative w-full max-w-sm animate-fade-in rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl sm:p-5">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
 
-        <div className="mb-1 flex items-start justify-between gap-4">
+        <div className="mb-4 flex items-start justify-between gap-4">
           <div className="flex items-center gap-2.5">
             {/*
               The mark, at the size the header uses. The dialog is the one place
@@ -132,11 +138,6 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
 
         {session.signedIn ? (
           <>
-            <p className="mb-4 text-sm leading-relaxed text-ink-400">
-              You are signed in. Saved connections and recent conversations are kept on this
-              account.
-            </p>
-
             <Button size="lg" className="w-full" onClick={signOut}>
               Sign out
             </Button>
@@ -150,11 +151,6 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
           </>
         ) : (
           <>
-            <p className="mb-4 text-sm leading-relaxed text-ink-400">
-              Signing in is free. It keeps the strangers you saved and your recent conversations,
-              so they survive closing the tab.
-            </p>
-
             {SIGNIN_PROVIDER === 'google' ? (
               /*
                 Google's own button, not ours. The light plate and the
@@ -180,15 +176,6 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
                 {busyLabel ?? 'Continue to sign in'}
               </Button>
             )}
-
-            <p className="mt-4 flex gap-2 text-xs leading-relaxed text-ink-500">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ink-600" aria-hidden="true" />
-              <span>
-                A {SIGNIN_PROVIDER === 'google' ? 'Google' : 'sign-in'} window opens on top of this
-                one — check the address bar there before you type anything. Chatting never needs an
-                account, and what you say in a conversation is not attached to one.
-              </span>
-            </p>
           </>
         )}
       </div>
