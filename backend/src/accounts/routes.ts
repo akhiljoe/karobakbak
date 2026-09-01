@@ -829,10 +829,35 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         return;
       }
 
+      /*
+        The asker's own session is resolved from their account, never taken from
+        the request. The first version accepted a `from` field, which was both a
+        protocol rule 3 violation — routing must never come off a client frame —
+        and broken, because the client had nothing sensible to put in it and
+        sent a placeholder. A caller who could name the asking session could
+        push two strangers into a conversation with each other.
+
+        Being signed in is therefore required. That is not a new constraint in
+        substance: a reconnect ends in a connection request, which needs an
+        account anyway.
+      */
+      const me = await resolveAccount(db, logger, credentialOf(req));
+      if (!me.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+
+      const mySession = await presence.sessionFor(me.accountId);
+      if (mySession === null) {
+        // No live session for this account — the socket is gone, or the
+        // heartbeat has not run yet. Nothing to pair.
+        json(res, 200, { asked: false, reason: 'away' });
+        return;
+      }
+
       const body = await readBody(req);
       const token = typeof body?.token === 'string' ? body.token : '';
-      const from = typeof body?.from === 'string' ? body.from : '';
-      if (!/^[0-9a-f]{32}$/.test(token) || !/^[A-Za-z0-9_-]{1,64}$/.test(from)) {
+      if (!/^[0-9a-f]{32}$/.test(token)) {
         json(res, 400, { error: 'bad_request' });
         return;
       }
@@ -852,7 +877,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         // client but the offer itself.
         await redis?.set(
           `${config.redis.keyPrefix}:offer:${offer}`,
-          `${from}:${theirSession}`,
+          `${mySession}:${theirSession}`,
           'EX',
           120,
         );

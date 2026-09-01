@@ -56,6 +56,38 @@ export function HistoryPanel({
   const [asked, setAsked] = useState<Record<string, AskResult>>({});
 
   /*
+    Every state this button shows clears itself after three seconds.
+
+    The disable exists to stop a double-tap becoming two requests, not to stop
+    somebody trying again. A person whose friend was away a moment ago has every
+    reason to press it once more, and a control that stays dead until the panel
+    is closed and reopened reads as broken rather than as busy.
+
+    Timers are held so a panel that closes mid-flight does not set state on a
+    component nobody is looking at.
+  */
+  const timers = useRef<number[]>([]);
+  useEffect(
+    () => () => {
+      timers.current.forEach((id) => window.clearTimeout(id));
+      timers.current = [];
+    },
+    [],
+  );
+
+  const clearSoon = (key: string): void => {
+    timers.current.push(
+      window.setTimeout(() => {
+        setAsked((was) => {
+          const next = { ...was };
+          delete next[key];
+          return next;
+        });
+      }, 3000),
+    );
+  };
+
+  /*
     Asked once, when the panel opens, and never on a timer. A list somebody
     glances at does not need to update while they look at it, and polling would
     turn a glance into a request every few seconds for the life of the tab.
@@ -236,25 +268,30 @@ export function HistoryPanel({
                     onClick={() => {
                       const token = entry.presence;
                       if (token === null) {
-                        setAsked((was) => ({ ...was, [String(entry.at)]: 'away' }));
+                        const key = String(entry.at);
+                        setAsked((was) => ({ ...was, [key]: 'away' }));
+                        clearSoon(key);
                         return;
                       }
                       setAsked((was) => ({ ...was, [token]: 'asked' }));
-                      void askToReconnect(token).then((result) =>
-                        setAsked((was) => ({ ...was, [token]: result })),
-                      );
+                      void askToReconnect(token).then((result) => {
+                        setAsked((was) => ({ ...was, [token]: result }));
+                        clearSoon(token);
+                      });
                     }}
                     disabled={askedFor(entry) === 'asked'}
                     aria-label="Ask to chat again"
                     title={
                       askedFor(entry) === 'asked'
                         ? 'Asked'
-                        : askedFor(entry) === 'away'
-                          ? 'Not around right now'
-                          : 'Ask to chat again'
+                        : askedFor(entry) === 'signin'
+                          ? 'Sign in to chat again'
+                          : askedFor(entry) === 'away'
+                            ? 'Not around right now'
+                            : 'Ask to chat again'
                     }
                     className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
-                      askedFor(entry) === 'away'
+                      askedFor(entry) === 'away' || askedFor(entry) === 'signin'
                         ? 'border-ink-700 text-ink-600'
                         : askedFor(entry) === 'asked'
                           ? 'border-green-500/50 bg-green-500/10 text-green-300'

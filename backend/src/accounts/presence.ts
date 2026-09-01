@@ -71,6 +71,8 @@ export interface PresenceService {
   online(accountIds: readonly string[]): Promise<Set<string>>;
   /** Whether this account currently shares presence. */
   sharing(accountId: string): Promise<boolean>;
+  /** This account's own live session, whatever it shows other people. */
+  sessionFor(accountId: string): Promise<string | null>;
   /** Change the setting. Turning it off withdraws immediately. */
   setSharing(accountId: string, share: boolean): Promise<void>;
   /**
@@ -104,6 +106,11 @@ export function createPresenceService(
   return {
     async announce(accountId, sessionId) {
       try {
+        // Written whatever the setting says: this is routing, not visibility.
+        // Somebody who hides from other people still has to be reachable by the
+        // things they themselves ask for.
+        await redis.set(keys.accountSession(accountId), sessionId, 'EX', PRESENCE_TTL_SECONDS);
+
         // Checked on every announce rather than cached: the setting is read
         // once per heartbeat, which is cheap, and a cached "yes" would keep
         // publishing somebody who has just turned it off.
@@ -203,6 +210,16 @@ export function createPresenceService(
         logger.warn('could not resolve presence tokens', errorFields(err));
       }
       return here;
+    },
+
+    async sessionFor(accountId) {
+      try {
+        const sessionId = await redis.get(keys.accountSession(accountId));
+        return sessionId === null || sessionId === '' ? null : sessionId;
+      } catch (err) {
+        logger.warn('could not resolve an account to a session', errorFields(err));
+        return null;
+      }
     },
 
     async sessionForToken(token) {
