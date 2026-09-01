@@ -21,7 +21,7 @@
     "verify": "npm run verify:protocol && npm run verify:pending-policy && npm run typecheck && npm run test && npm run test:frontend",
     "redis:test:up": "docker compose -f docker-compose.test.yml up -d",
     "redis:test:down": "docker compose -f docker-compose.test.yml down -v",
-    "up": "docker compose up --build -d",
+    "up": "docker compose up --build -d && node scripts/where.mjs",
     "personas": "docker compose --profile personas up --build -d personas",
     "personas:down": "docker compose --profile personas stop personas",
     "personas:logs": "docker compose --profile personas logs -f personas",
@@ -43,6 +43,7 @@
     "prod:down": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml down",
     "prod:logs": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs -f backend",
     "unblock:loadtest": "docker compose --env-file .env.loadtest -p karobakbak-loadtest exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
-    "unblock": "docker compose exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0"
+    "unblock": "docker compose exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
+    "where": "node scripts/where.mjs"
   }
 }
