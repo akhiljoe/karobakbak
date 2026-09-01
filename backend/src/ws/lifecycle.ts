@@ -181,15 +181,15 @@ export interface MatchmakingObserver {
    */
   profileDeclared(gender: string): void;
   /**
-   * A search that declared a preference had it dropped by one of the §29.4
-   * limits, or by nobody having declared one to drop.
+   * A search that declared a preference had it dropped — by the entitlement, by
+   * one of the §29.4 limits, or by the session row having expired.
    *
    * The only place either limit is observable. Nothing reaches the user by
    * design, so without this the difference between "the preference matched
    * nobody" and "the preference was never applied" is invisible — and those
    * two want opposite responses from whoever is tuning the feature.
    */
-  preferenceLimited(reason: 'cooldown' | 'budget' | 'no_session'): void;
+  preferenceLimited(reason: 'not_premium' | 'cooldown' | 'budget' | 'no_session'): void;
 }
 
 export type LeaveOutcome =

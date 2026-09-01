@@ -212,7 +212,7 @@ export type BanCheck =
  */
 export type PreferenceAllowance =
   | { granted: true }
-  | { granted: false; reason: 'cooldown' | 'budget' | 'no_session' };
+  | { granted: false; reason: 'not_premium' | 'cooldown' | 'budget' | 'no_session' };
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -1071,6 +1071,7 @@ export class RedisStore {
     );
     const status = str(reply, 0);
     if (status === 'GRANTED') return { granted: true };
+    if (status === 'NOT_PREMIUM') return { granted: false, reason: 'not_premium' };
     if (status === 'COOLDOWN') return { granted: false, reason: 'cooldown' };
     if (status === 'BUDGET') return { granted: false, reason: 'budget' };
     return { granted: false, reason: 'no_session' };
@@ -1136,6 +1137,31 @@ export class RedisStore {
    */
   async setAccount(sessionId: string, accountId: string): Promise<void> {
     await this.client.hset(this.keys.session(sessionId), 'account', accountId);
+  }
+
+  /**
+   * Stamp the premium deadline this connection was opened with.
+   *
+   * A plain `HSET`, the same category as the account and the segment beside it:
+   * a fact about one connection, written once by that connection, that no
+   * matchmaking transition branches on. `preferenceAllowance` reads it from the
+   * row it is already reading, so enforcing the entitlement costs a search
+   * nothing — no database round trip on the join path (D16), and not even an
+   * extra Redis key.
+   *
+   * Session-scoped, which means an entitlement bought mid-session takes effect
+   * on the next connection rather than the next search. That is the existing
+   * `reauthenticate` seam: the client closes and re-opens the socket after
+   * sign-in and the resume token re-attaches the same session, so a payment can
+   * do exactly the same thing. It is also why this is written on **both** the
+   * connect and the join path, mirroring `setAccount` — a session can be
+   * resumed onto a different connection.
+   *
+   * Zero for "not premium", never a missing field, so the script can tell a
+   * session that was evaluated from one that has not been.
+   */
+  async setPremiumUntil(sessionId: string, untilMs: number | null): Promise<void> {
+    await this.client.hset(this.keys.session(sessionId), 'premiumUntil', String(untilMs ?? 0));
   }
 
   /**

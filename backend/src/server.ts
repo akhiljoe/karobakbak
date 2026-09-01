@@ -52,6 +52,7 @@ import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
 import type { Metrics } from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
+import type { EntitlementService } from './accounts/entitlement';
 import type { PresenceService } from './accounts/presence';
 import type { AuthRoutes } from './accounts/routes';
 import type { RetentionSink } from './storage/sink';
@@ -117,6 +118,12 @@ export interface ChatServerDeps {
   /** Publishes who is online, for their connections. Optional. */
   accountPresence?: PresenceService | null;
   /**
+   * Reads whether an account is premium. Null when accounts are off, which
+   * makes every session non-premium — the correct answer when there is no
+   * account to be entitled.
+   */
+  entitlement?: EntitlementService | null;
+  /**
    * The sign-in routes, or null when `AUTH_ENABLED` is false.
    *
    * Null rather than a no-op, the same shape as `payments`: an unconfigured
@@ -155,6 +162,26 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   const { config, logger, store, clients, retention, metrics } = deps;
   const payments = deps.payments ?? null;
   const accountPresence = deps.accountPresence ?? null;
+  const entitlement = deps.entitlement ?? null;
+
+  /**
+   * Copy an account's premium deadline onto its session row.
+   *
+   * Never throws. An entitlement that cannot be read leaves the session
+   * non-premium, which costs a preference and nothing else — the same
+   * degradation §29.4's limits produce, reached by a different route. Failing
+   * the other way would hand the paid dimension to everybody for the length of
+   * a database outage, which is exactly when nobody is reading the metric that
+   * would show it.
+   */
+  async function stampEntitlement(sessionId: string, accountId: string): Promise<void> {
+    if (entitlement === null) return;
+    try {
+      await store.setPremiumUntil(sessionId, await entitlement.premiumUntilMs(accountId));
+    } catch (err) {
+      logger.warn('could not stamp the entitlement on a session', errorFields(err));
+    }
+  }
   const auth = deps.auth ?? null;
   const keys = createKeys(config.redis.keyPrefix);
   const registry = new ConnectionRegistry(logger);
@@ -874,6 +901,15 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // Not fatal: it costs a presence token, never the connection.
         logger.warn('could not record the account on a session', errorFields(err));
       });
+      /*
+        The premium deadline, stamped onto the session so matchmaking never has
+        to ask a database (D16). Read here rather than at the join because this
+        is the moment an identity is established and because it is the one path
+        that may take its time — nothing is waiting on it, and a search that
+        arrives before it lands simply searches without a preference, which is
+        the same degraded answer every other limit gives.
+      */
+      void stampEntitlement(sessionId, accountId);
     }
 
     registry.add(connection);
@@ -1085,6 +1121,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // join is about to touch anyway.
         if (connection.accountId !== null) {
           await store.setAccount(connection.sessionId, connection.accountId);
+          // Mirrors `setAccount` for the reason beside it: a session can be
+          // resumed onto a different connection, so the row that carries the
+          // account has to carry the entitlement with it. Warm by now — the
+          // connect path cached it — so this is a Redis read, not a query.
+          await stampEntitlement(connection.sessionId, connection.accountId);
         }
 
         const outcome = await lifecycle.joinQueue(

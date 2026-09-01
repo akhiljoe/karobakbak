@@ -22,6 +22,89 @@ import { createTestContext, type TestContext } from '../helpers/redis';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * A session that is entitled to a preference, so the two limits are reachable.
+ *
+ * The gate is checked first and refuses everybody by default, which is correct
+ * — nothing can be bought yet — and means a limit test using a bare session
+ * would pass for the wrong reason for ever. Stamping the deadline is what the
+ * server does when a connection binds an account.
+ */
+async function premiumSession(c: TestContext, overrides: { ipHash?: string } = {}): Promise<string> {
+  const sid = await c.session(overrides);
+  await c.store.setPremiumUntil(sid, Date.now() + 3_600_000);
+  return sid;
+}
+
+describe('the entitlement gate', () => {
+  let ctx: TestContext;
+
+  beforeAll(async () => {
+    ctx = await createTestContext({
+      FILTERS_ENABLED: 'true',
+      PREFERENCE_COOLDOWN_MS: '0',
+      PREFERENCE_HOURLY_BUDGET: '100',
+    });
+  });
+
+  afterEach(async () => {
+    await ctx.flush();
+  });
+
+  afterAll(async () => {
+    await ctx.close();
+  });
+
+  it('refuses a session with no entitlement stamped on it', async () => {
+    /*
+     * The state every session is in today, and the reason this shipped ahead of
+     * payments: with nothing purchasable there is no account with a future
+     * deadline, so the gate is provably closed before anything can be bought.
+     * `premium_until` used to be written by the webhook and read by nothing.
+     */
+    const sid = await ctx.session();
+
+    expect(await ctx.store.preferenceAllowance(sid)).toEqual({
+      granted: false,
+      reason: 'not_premium',
+    });
+  });
+
+  it('refuses an entitlement that has lapsed', async () => {
+    const sid = await ctx.session();
+    await ctx.store.setPremiumUntil(sid, Date.now() - 1000);
+
+    expect(await ctx.store.preferenceAllowance(sid)).toEqual({
+      granted: false,
+      reason: 'not_premium',
+    });
+  });
+
+  it('grants one that is still live', async () => {
+    const sid = await ctx.session();
+    await ctx.store.setPremiumUntil(sid, Date.now() + 60_000);
+
+    expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
+  });
+
+  it('spends no budget on a search it refused for the entitlement', async () => {
+    /*
+     * The ordering inside the script. Somebody without the entitlement must not
+     * burn a budget belonging to a dimension they are not being given — and if
+     * they could, the first thing a paying user would notice is that their
+     * first search of the hour had already been spent by the sessions they
+     * opened before subscribing.
+     */
+    const sid = await ctx.session();
+    for (let i = 0; i < 5; i += 1) {
+      expect((await ctx.store.preferenceAllowance(sid)).granted).toBe(false);
+    }
+
+    await ctx.store.setPremiumUntil(sid, Date.now() + 60_000);
+    expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
+  });
+});
+
 describe('the cooldown between preference-applied searches', () => {
   let ctx: TestContext;
 
@@ -42,7 +125,7 @@ describe('the cooldown between preference-applied searches', () => {
   });
 
   it('grants the first search and refuses the one straight after it', async () => {
-    const sid = await ctx.session();
+    const sid = await premiumSession(ctx);
 
     expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
     expect(await ctx.store.preferenceAllowance(sid)).toEqual({
@@ -52,7 +135,7 @@ describe('the cooldown between preference-applied searches', () => {
   });
 
   it('grants again once the cooldown has elapsed', async () => {
-    const sid = await ctx.session();
+    const sid = await premiumSession(ctx);
 
     expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
     await sleep(350);
@@ -66,10 +149,10 @@ describe('the cooldown between preference-applied searches', () => {
      * a scarce group would never touch it. The hash is read from the session's
      * own row, so no caller can name a bucket other than its own.
      */
-    const first = await ctx.session({ ipHash: 'shared-address' });
+    const first = await premiumSession(ctx, { ipHash: 'shared-address' });
     expect(await ctx.store.preferenceAllowance(first)).toEqual({ granted: true });
 
-    const second = await ctx.session({ ipHash: 'shared-address' });
+    const second = await premiumSession(ctx, { ipHash: 'shared-address' });
     expect(await ctx.store.preferenceAllowance(second)).toEqual({
       granted: false,
       reason: 'cooldown',
@@ -79,8 +162,8 @@ describe('the cooldown between preference-applied searches', () => {
   it('does not follow somebody else on a different address', async () => {
     // The other half of the same property: a shared bucket would mean one
     // person's searching silently costs a stranger their preference.
-    const mine = await ctx.session({ ipHash: 'address-a' });
-    const theirs = await ctx.session({ ipHash: 'address-b' });
+    const mine = await premiumSession(ctx, { ipHash: 'address-a' });
+    const theirs = await premiumSession(ctx, { ipHash: 'address-b' });
 
     expect(await ctx.store.preferenceAllowance(mine)).toEqual({ granted: true });
     expect(await ctx.store.preferenceAllowance(theirs)).toEqual({ granted: true });
@@ -119,7 +202,7 @@ describe('the hourly preference budget', () => {
   });
 
   it('grants exactly the budget, then refuses', async () => {
-    const sid = await ctx.session();
+    const sid = await premiumSession(ctx);
 
     expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
     expect(await ctx.store.preferenceAllowance(sid)).toEqual({ granted: true });
@@ -138,7 +221,7 @@ describe('the hourly preference budget', () => {
      * a token that was never earned. Writing it back on refusal too keeps the
      * clock honest, and the refusal stable.
      */
-    const sid = await ctx.session();
+    const sid = await premiumSession(ctx);
     for (let i = 0; i < 3; i += 1) {
       expect((await ctx.store.preferenceAllowance(sid)).granted).toBe(true);
     }
@@ -152,14 +235,14 @@ describe('the hourly preference budget', () => {
   });
 
   it('is spent per address, not per session', async () => {
-    const first = await ctx.session({ ipHash: 'one-address' });
+    const first = await premiumSession(ctx, { ipHash: 'one-address' });
     for (let i = 0; i < 3; i += 1) {
       expect((await ctx.store.preferenceAllowance(first)).granted).toBe(true);
     }
 
     // Reconnecting is free and gives a new session id. It must not give a new
     // budget.
-    const second = await ctx.session({ ipHash: 'one-address' });
+    const second = await premiumSession(ctx, { ipHash: 'one-address' });
     expect(await ctx.store.preferenceAllowance(second)).toEqual({
       granted: false,
       reason: 'budget',
@@ -196,7 +279,7 @@ describe('a refused search costs nothing it did not use', () => {
      * the symptom would be a paying user whose preference stopped working for
      * reasons nothing could show them.
      */
-    const sid = await ctx.session();
+    const sid = await premiumSession(ctx);
     expect((await ctx.store.preferenceAllowance(sid)).granted).toBe(true);
 
     for (let i = 0; i < 6; i += 1) {
