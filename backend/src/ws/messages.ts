@@ -372,6 +372,32 @@ export class MessagePipeline {
     // as an error: it is two tabs, the user did press the button, and there is
     // no connection to make between an account and itself.
     if (result.status === 'self' || result.status === 'pending' || result.status === 'already') {
+      /*
+       * `pending` is the one side of this that the partner is told about: this
+       * caller has asked and the other has not. §31 used to keep that silent
+       * until reciprocated (D47) and no longer does — a request nobody is shown
+       * is indistinguishable from a broken button, and the person who might
+       * have agreed never gets the chance.
+       *
+       * `already` sends nothing, or a toggle off and on again would ping the
+       * partner repeatedly for a request they have already been shown. `self`
+       * is two tabs of one account and has no partner to tell.
+       *
+       * The route is resolved here rather than returned by the Lua script: this
+       * runs only when somebody actually presses the button, which is rare, and
+       * widening the script's positionally-parsed reply is the thing CLAUDE.md
+       * warns costs a re-verification of every matchmaking race.
+       */
+      if (result.status === 'pending' && active) {
+        const route = await this.store.resolveRoute(sessionId);
+        if (route.status === 'ok') {
+          await this.dispatcher.toSession(
+            route.partnerSessionId,
+            { event: 'connection_request', matchId: route.matchId },
+            nowIso(),
+          );
+        }
+      }
       return { kind: 'state', matchId: result.matchId, saved: true };
     }
 
