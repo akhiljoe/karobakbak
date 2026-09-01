@@ -157,6 +157,25 @@ services:
       RAZORPAY_KEY_ID: "${RAZORPAY_KEY_ID:-}"
       RAZORPAY_KEY_SECRET: "${RAZORPAY_KEY_SECRET:-}"
       RAZORPAY_WEBHOOK_SECRET: "${RAZORPAY_WEBHOOK_SECRET:-}"
+      # Sign-in (OIDC, §32, D48). Same rule as the payment block above: listed
+      # here or the container never sees it, and the failure is quiet — with
+      # AUTH_ENABLED unset the four /auth routes are never registered, so the
+      # nginx proxy below returns 404 and it reads as a broken proxy.
+      #
+      # AUTH_REDIRECT_URI is the origin the BROWSER sees, which is nginx on
+      # FRONTEND_PORT, not this container. The backend publishes no host port.
+      AUTH_ENABLED: "${AUTH_ENABLED:-false}"
+      AUTH_ISSUER: "${AUTH_ISSUER:-}"
+      AUTH_AUTHORIZE_URL: "${AUTH_AUTHORIZE_URL:-}"
+      AUTH_TOKEN_URL: "${AUTH_TOKEN_URL:-}"
+      AUTH_JWKS_URL: "${AUTH_JWKS_URL:-}"
+      AUTH_CLIENT_ID: "${AUTH_CLIENT_ID:-}"
+      AUTH_CLIENT_SECRET: "${AUTH_CLIENT_SECRET:-}"
+      AUTH_REDIRECT_URI: "${AUTH_REDIRECT_URI:-}"
+      AUTH_RETURN_URL: "${AUTH_RETURN_URL:-/}"
+      # False only on plain-HTTP localhost, where a Secure cookie is never
+      # stored. loadConfig refuses false when NODE_ENV=production.
+      AUTH_SECURE_COOKIES: "${AUTH_SECURE_COOKIES:-true}"
       SPOOL_DIR: "/var/lib/karobakbak/spool"
       METRICS_ENABLED: "true"
       # Per-IP abuse controls. Tunable because a load generator is a single

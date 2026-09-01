@@ -16,6 +16,13 @@ export default defineConfig({
       '/ws': { target: 'ws://localhost:8080', ws: true },
       '/health': 'http://localhost:8080',
       '/ready': 'http://localhost:8080',
+      // The four sign-in routes, for the same reason nginx.conf proxies them:
+      // without this they fall through to the SPA and `/auth/session` answers
+      // 200 with index.html, which reads as "permanently signed out" rather
+      // than as a missing proxy. `/auth/start` 302s to another origin, so
+      // following redirects here would defeat the point — the browser has to
+      // land on the provider itself.
+      '/auth': { target: 'http://localhost:8080', followRedirects: false },
     },
   },
   build: {

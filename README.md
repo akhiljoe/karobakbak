@@ -41,10 +41,16 @@ Redis, PostgreSQL, a one-shot migration job, Prometheus and Grafana.
 
 | Service | URL | Notes |
 |---|---|---|
-| Frontend + WebSocket | http://localhost:8081 | the only published application port |
+| Frontend + WebSocket | http://localhost:8081 | the only published application port; `FRONTEND_PORT` moves it |
 | Prometheus | http://localhost:9090 | both backends are scrape targets |
 | Grafana | http://localhost:3000 | `admin` / `admin` by default; dashboard **karobakbak — overview** |
 | Backends, Redis, PostgreSQL | — | private network, no published host port |
+
+`FRONTEND_PORT` is the whole application origin, not a cosmetic setting. It is
+what `AUTH_REDIRECT_URI` and the provider's registered sign-out URL are built
+from, and every entry in `ALLOWED_ORIGINS` has to carry the same port or the
+WebSocket upgrade is refused with a 403. Change the three together.
+
 
 Two backend **replicas** is deliberate. Production starts at **one** (cost §26);
 the second exists here so cross-instance correctness is *exercised* on a laptop
