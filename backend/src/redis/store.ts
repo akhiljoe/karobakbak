@@ -203,6 +203,17 @@ export type BanCheck =
   | { banned: false }
   | { banned: true; dimension: EnforcementDimension; enforcementId: string };
 
+/**
+ * Whether a search may carry its declared preference, and why not.
+ *
+ * The reason exists for the metric, never for the user: §29.4 requires both
+ * limits to degrade to an ordinary match rather than to an error, so no branch
+ * of this reaches a client frame.
+ */
+export type PreferenceAllowance =
+  | { granted: true }
+  | { granted: false; reason: 'cooldown' | 'budget' | 'no_session' };
+
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterMs: number;
@@ -1029,6 +1040,40 @@ export class RedisStore {
       a: profileFromFields(results?.[0]?.[1]),
       b: profileFromFields(results?.[1]?.[1]),
     };
+  }
+
+  /**
+   * May this session's preference be applied to the search it is about to make?
+   *
+   * Returns a reason rather than a boolean because the two refusals mean
+   * different things to whoever is reading the metric: `cooldown` is somebody
+   * cycling fast, `budget` is somebody who has been doing it for an hour. The
+   * caller treats both identically — it joins without writing the preference —
+   * so nothing a user can see distinguishes them (§29.4).
+   *
+   * `no_session` is the row having expired between the join arriving and this
+   * read. It is not an error: the join that follows fails on its own, and until
+   * it does, not applying a preference is the correct degraded answer.
+   */
+  async preferenceAllowance(sessionId: string): Promise<PreferenceAllowance> {
+    const reply = await this.runner.run(
+      'preferenceAllowance',
+      [this.keys.session(sessionId)],
+      [
+        this.keys.prefix,
+        this.config.preference.cooldownMs,
+        this.config.preference.hourlyBudget,
+        // The bucket is worthless once it has fully refilled, and the session
+        // TTL is the wrong clock for it — this outlives any one connection on
+        // purpose, or reconnecting would clear it.
+        3600 * 2,
+      ],
+    );
+    const status = str(reply, 0);
+    if (status === 'GRANTED') return { granted: true };
+    if (status === 'COOLDOWN') return { granted: false, reason: 'cooldown' };
+    if (status === 'BUDGET') return { granted: false, reason: 'budget' };
+    return { granted: false, reason: 'no_session' };
   }
 
   /**

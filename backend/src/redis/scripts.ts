@@ -61,6 +61,8 @@ local function kLastPartner(sid) return P .. ':last_partner:' .. sid end
 local function kResume(h)      return P .. ':resume:' .. h end
 local function kInstance(iid)  return P .. ':instance:' .. iid end
 local function kConn(ip)       return P .. ':conn:' .. ip end
+local function kPrefCd(ip)     return P .. ':pref:cd:' .. ip end
+local function kPrefBudget(ip) return P .. ':rl:pref:' .. ip end
 
 local function nowMs()
   local t = redis.call('TIME')
@@ -808,6 +810,115 @@ return { 'OK', route[1], route[2], route[3] }
  * an integer, which would truncate a partly-refilled bucket to zero on every
  * pass and make every limit stricter than configured.
  */
+/**
+ * May this session's declared matching preference be applied to this search?
+ *
+ * ---------------------------------------------------------------------------
+ * THIS IS THE ANSWER TO THE TARGETING OBJECTION, NOT A HARDENING
+ * ---------------------------------------------------------------------------
+ * D37's objection is that a paid "match me with X" is a scanning tool. Making
+ * the preference soft does not answer it: a preference plus fast re-rolling
+ * walks a scarce group. The existing limiters bound flooding rather than
+ * hunting -- `join_queue` at 12/min lets a searcher pass a small group many
+ * times an hour -- so §29.4 makes these two limits part of the decision itself.
+ *
+ * ---------------------------------------------------------------------------
+ * IT DEGRADES, IT NEVER REFUSES
+ * ---------------------------------------------------------------------------
+ * Every branch that says no returns a reason and nothing else. The caller joins
+ * the queue **without** writing the preference, so the search proceeds and
+ * takes an ordinary partner -- which is what a preference that matches nobody
+ * already does (D44). A paying user is never told they have run out of
+ * something, and nothing they can see distinguishes a limited search from an
+ * ordinary one that found no candidate.
+ *
+ * ---------------------------------------------------------------------------
+ * KEYED ON THE IP HASH, READ FROM THE SESSION
+ * ---------------------------------------------------------------------------
+ * The session id is per-connection, so a limit keyed on it is reset by pressing
+ * reconnect -- which is free, and which somebody hunting would do without
+ * thinking. The IP hash is the same dimension a block uses (D18) for the same
+ * reason. It is read from the session's own row rather than passed in, so no
+ * caller can name a bucket other than its own; that is protocol rule 3 applied
+ * to a limiter.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE COOLDOWN RUNS FROM THE LAST GRANT
+ * ---------------------------------------------------------------------------
+ * §29.4 described it as running from a match *ending*. That is a stricter rule
+ * that costs the ordinary user exactly what it costs the hunter: end a long
+ * conversation, press next, and the preference silently does not apply --
+ * while the sentence justifying the cooldown says it "costs nothing in ordinary
+ * use". Running it from the last **grant** satisfies both halves. A scan needs
+ * a preference-applied match every cycle, so the cycle is bounded identically,
+ * and somebody who talks for twenty minutes has long since paid the cooldown
+ * and gets their preference on the next search.
+ *
+ * KEYS: session.
+ * ARGV: prefix, cooldownMs, hourlyBudget, ttlSeconds.
+ *
+ * Reply: { 'GRANTED' } | { 'COOLDOWN' } | { 'BUDGET' } | { 'NO_SESSION' }.
+ */
+const preferenceAllowance = define(
+  'preferenceAllowance',
+  1,
+  4,
+  `
+local cooldownMs = tonumber(ARGV[2])
+local budget = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+local now = nowMs()
+
+local ipHash = redis.call('HGET', KEYS[1], 'ipHash')
+if (not ipHash) or ipHash == '' then return { 'NO_SESSION' } end
+
+-- The cooldown is checked before the budget and consumes nothing, so a search
+-- refused here does not also spend a token it was never allowed to use.
+if cooldownMs > 0 then
+  local last = tonumber(redis.call('GET', kPrefCd(ipHash)))
+  if last and (now - last) < cooldownMs then return { 'COOLDOWN' } end
+end
+
+-- The hourly budget as a token bucket rather than a counter in a fixed window,
+-- which would allow a double burst across the boundary -- the whole budget at
+-- 59 minutes and again at 61. Refilling continuously spreads the same number of
+-- searches over the same hour with no edge to sit on.
+local bkey = kPrefBudget(ipHash)
+local h = redis.call('HMGET', bkey, 't', 'ts')
+local tokens = tonumber(h[1])
+local ts = tonumber(h[2])
+if (not tokens) or (not ts) then
+  tokens = budget
+  ts = now
+end
+local elapsed = (now - ts) / 1000
+-- Redis is the single clock here, so this is negative only if the server's own
+-- clock stepped backwards. Treat it as no time passing rather than as credit.
+if elapsed < 0 then elapsed = 0 end
+tokens = math.min(budget, tokens + elapsed * (budget / 3600))
+
+if tokens < 1 then
+  -- Written back so the refill is not restarted by every refused attempt, which
+  -- would hold somebody at zero for as long as they kept trying.
+  redis.call('HSET', bkey, 't', tokens, 'ts', now)
+  redis.call('EXPIRE', bkey, ttl)
+  return { 'BUDGET' }
+end
+
+tokens = tokens - 1
+redis.call('HSET', bkey, 't', tokens, 'ts', now)
+redis.call('EXPIRE', bkey, ttl)
+
+-- Stamped only on a grant, which is what makes the cooldown measure the gap
+-- between preference-applied searches rather than between attempts.
+if cooldownMs > 0 then
+  redis.call('SET', kPrefCd(ipHash), now, 'PX', cooldownMs)
+end
+
+return { 'GRANTED' }
+`,
+);
+
 const rateLimit = define(
   'rateLimit',
   1,
@@ -1255,6 +1366,7 @@ export const SCRIPTS = {
   resolvePartner,
   resolveRoute,
   rateLimit,
+  preferenceAllowance,
   connRateLimit,
   connAcquire,
   connRelease,

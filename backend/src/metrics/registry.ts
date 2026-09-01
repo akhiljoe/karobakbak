@@ -140,6 +140,22 @@ export interface Metrics {
    * them was a conversation that ended when it did not have to.
    */
   readonly resumes: Counter<'outcome'>;
+  /**
+   * Searches whose declared preference was not applied, by which limit stopped
+   * it (§29.4).
+   *
+   * The only way either limit is observable at all. Both degrade to an ordinary
+   * match and nothing reaches the user, which is deliberate — and it means that
+   * without this counter, "the preference matched nobody" and "the preference
+   * was never applied" look identical from outside. They want opposite
+   * responses: the first is a thin pool, the second is a limit set too tight.
+   *
+   * A steady `cooldown` rate is ordinary — it is the limit doing its job on
+   * people who advance quickly. A rising `budget` rate is the one to read:
+   * either somebody is hunting, or the hourly number is too small for how the
+   * feature is actually used.
+   */
+  readonly preferenceLimited: Counter<'reason'>;
 
   /* matchmaking */
   readonly queueDepth: Gauge<'segment'>;
@@ -376,6 +392,11 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
       'reason',
     ]),
     resumes: counter('chat_session_resumes_total', 'Session resume attempts, by outcome', ['outcome']),
+    preferenceLimited: counter(
+      'chat_preference_limited_total',
+      'Searches whose declared preference was not applied, by which limit stopped it',
+      ['reason'],
+    ),
 
     queueDepth: gauge('chat_queue_depth', 'Sessions waiting in a queue segment', ['segment']),
     queueComposition: gauge(

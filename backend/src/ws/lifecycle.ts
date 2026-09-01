@@ -35,6 +35,7 @@ import type {
   HeartbeatResult,
   JoinQueueResult,
   LeaveQueueResult,
+  PreferenceAllowance,
   SaveIdentitiesResult,
   SessionIdentity,
   TryMatchResult,
@@ -71,6 +72,7 @@ export interface LifecycleStore {
   readNicknames(a: string, b: string): Promise<{ a: string | null; b: string | null }>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
   setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void>;
+  preferenceAllowance(sessionId: string): Promise<PreferenceAllowance>;
   setIntent(sessionId: string, intent: string | null): Promise<void>;
   resumeSession(
     presentedHash: string,
@@ -178,6 +180,16 @@ export interface MatchmakingObserver {
    * the heaviest skippers weighted highest.
    */
   profileDeclared(gender: string): void;
+  /**
+   * A search that declared a preference had it dropped by one of the §29.4
+   * limits, or by nobody having declared one to drop.
+   *
+   * The only place either limit is observable. Nothing reaches the user by
+   * design, so without this the difference between "the preference matched
+   * nobody" and "the preference was never applied" is invisible — and those
+   * two want opposite responses from whoever is tuning the feature.
+   */
+  preferenceLimited(reason: 'cooldown' | 'budget' | 'no_session'): void;
 }
 
 export type LeaveOutcome =
@@ -404,7 +416,28 @@ export class SessionLifecycle {
       await this.store.setProfile(sessionId, profile);
       this.observer?.profileDeclared(profile.gender ?? 'none');
     }
-    if (preferences !== undefined) await this.store.setPreferences(sessionId, preferences);
+    /*
+      The preference is written only if the §29.4 limits allow it.
+
+      Both refusals degrade to an ordinary search: the preference is simply not
+      written, so `tryMatch` scores every candidate at zero and takes the
+      longest-waiting one — which is exactly what a preference matching nobody
+      already does (D44). Nothing is sent to the client, and there is no frame
+      that could carry it if somebody wanted one. A paying user is never told
+      they have run out.
+
+      Checked only when a preference was actually declared. A search with no
+      preference must not spend a token, or a free user would exhaust a budget
+      belonging to a feature they do not have.
+    */
+    if (preferences !== undefined) {
+      const allowance = await this.store.preferenceAllowance(sessionId);
+      if (allowance.granted) {
+        await this.store.setPreferences(sessionId, preferences);
+      } else {
+        this.observer?.preferenceLimited(allowance.reason);
+      }
+    }
     // Same ordering requirement as the two above, and the reason is the one
     // that bit the preference: a session queued before its intent lands is
     // matched by ordinary rules, and the user's one selector did nothing on the
