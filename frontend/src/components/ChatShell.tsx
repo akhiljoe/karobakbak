@@ -297,18 +297,38 @@ export function ChatShell({
                   >
                     <UserPlus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     {/*
-                      Three labels for three genuinely different states, and
-                      never a fourth for "they added you". That frame does not
-                      exist: a request is disclosed only on reciprocity, so
-                      there is nothing between "requested" and "friends" for the
-                      interface to show.
+                      A menu item is an action, so it says what tapping does
+                      rather than what state you are in. "Request sent" was a
+                      status pretending to be a control: the tap undid the
+                      request and nothing said so, which read as no way to
+                      cancel at all. The old button carried that in a `title`,
+                      which moved out with it and was not replaced.
+
+                      Three states, and never a fourth for "they added you".
+                      That frame does not exist: a request is disclosed only on
+                      reciprocity, so there is nothing between "requested" and
+                      "friends" for the interface to show.
                     */}
                     {state.connectionMade
                       ? 'Friends'
                       : state.connectionSaved
-                        ? 'Request sent'
+                        ? 'Cancel request'
                         : 'Add friend'}
                   </button>
+
+                  {/*
+                    Said here because here is where it is asked. A request that
+                    produces no visible effect reads as a broken button, and the
+                    silence is the whole point: telling them you asked would
+                    disclose it without the reciprocity it was conditional on.
+                  */}
+                  {!state.connectionMade && (
+                    <p className="px-3 pb-2 pt-0.5 text-[11px] leading-relaxed text-ink-500">
+                      {state.connectionSaved
+                        ? 'Sent. They are told only if they add you too.'
+                        : 'They are told only if they add you back.'}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
