@@ -24,6 +24,7 @@ import { createPaymentRoutes, type PaymentRoutes } from './payments/routes';
 import { createAuthRoutes, type AuthRoutes } from './accounts/routes';
 import { createOidcClient } from './accounts/oidc';
 import { createConnectionRepository, type ConnectionRepository } from './accounts/connections';
+import { createBlockRepository, type BlockRepository } from './accounts/blocks';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
@@ -154,8 +155,16 @@ async function main(): Promise<void> {
   // rather than PostgreSQL.
   let auth: AuthRoutes | null = null;
   let connections: ConnectionRepository | undefined;
+  let accountBlocks: BlockRepository | undefined;
   if (config.auth.enabled && database !== null) {
     connections = createConnectionRepository(database, logger);
+    accountBlocks = createBlockRepository(
+      database,
+      clients.command,
+      logger,
+      config.redis.keyPrefix,
+      config.blocks.ttlSeconds,
+    );
     auth = createAuthRoutes({
       config,
       logger,
@@ -166,6 +175,7 @@ async function main(): Promise<void> {
       // session.
       redis: clients.command,
       connections,
+      blocks: accountBlocks,
     });
     logger.info('sign-in enabled');
   }

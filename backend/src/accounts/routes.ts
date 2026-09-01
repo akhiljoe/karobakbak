@@ -54,6 +54,7 @@ import { accountForSubject, bearerToken, mintCredential, resolveAccount, revokeC
 import { fetchAvatar } from './avatar';
 import { createHash } from 'node:crypto';
 import type { ConnectionRepository } from './connections';
+import type { BlockRepository } from './blocks';
 import { createKeys } from '../redis/keys';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
@@ -94,6 +95,8 @@ export interface AuthRoutesDeps {
   readonly redis?: Redis;
   /** Saved connections. Absent means the routes answer as if there are none. */
   readonly connections?: ConnectionRepository;
+  /** Account-scoped blocks. Absent means the routes answer as if there are none. */
+  readonly blocks?: BlockRepository;
 }
 
 export interface AuthRoutes {
@@ -106,6 +109,10 @@ export interface AuthRoutes {
   connections(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Removes one of them, addressed by its per-account handle. */
   removeConnection(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** The caller's blocks, as dates. */
+  blocks(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Lifts one of them. */
+  removeBlock(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -151,7 +158,7 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc, redis, connections } = deps;
+  const { config, logger, db, oidc, redis, connections, blocks } = deps;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
 
@@ -187,7 +194,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
    * not "trusted with an unbounded upload". The same reasoning as
    * `PAYMENTS_MAX_BODY_BYTES`.
    */
-  async function readHandle(req: IncomingMessage): Promise<string | null> {
+  async function readHandle(req: IncomingMessage, shape = /^[0-9a-f]{32}$/): Promise<string | null> {
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req) {
@@ -203,7 +210,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       const handle = (body as { handle?: unknown }).handle;
       // Exactly the shape this server mints. Anything else is not a handle it
       // could have issued, so there is nothing to look up.
-      return typeof handle === 'string' && /^[0-9a-f]{32}$/.test(handle) ? handle : null;
+      return typeof handle === 'string' && shape.test(handle) ? handle : null;
     } catch {
       return null;
     }
@@ -550,6 +557,68 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         json(res, 200, { removed: true });
       } catch (err) {
         logger.error('could not remove a connection', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * The caller's blocks, newest first, as dates and nothing else.
+     *
+     * The blocked person stays a hash: they may have no account, and resolving
+     * one would mean turning a pair of key hashes into an identity, which is
+     * the cross-chat correlation §24.3 exists to prevent. You see that you
+     * blocked somebody, and when.
+     */
+    async blocks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (blocks === undefined) {
+        json(res, 200, { blocks: [] });
+        return;
+      }
+      try {
+        const rows = await blocks.list(resolved.accountId);
+        json(res, 200, {
+          blocks: rows.map((row) => ({ handle: row.handle, since: row.since.toISOString() })),
+        });
+      } catch (err) {
+        logger.error('could not list blocks', errorFields(err));
+        json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * Lift a block.
+     *
+     * The handle names a moment, not a person, and is resolved against the
+     * caller's own rows — so it cannot address somebody else's block even by
+     * guessing, the same rule the connection handles follow.
+     */
+    async removeBlock(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+      if (blocks === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const handle = await readHandle(req, /^[0-9]{1,15}$/);
+      if (handle === null) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      try {
+        const removed = await blocks.remove(resolved.accountId, handle);
+        json(res, removed ? 200 : 404, removed ? { removed: true } : { error: 'not_found' });
+      } catch (err) {
+        logger.error('could not remove a block', errorFields(err));
         json(res, 500, { error: 'internal_error' });
       }
     },

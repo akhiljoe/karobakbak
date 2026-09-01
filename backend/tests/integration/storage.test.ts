@@ -441,6 +441,7 @@ describe('repositories', () => {
         blockerKey: 'a'.repeat(32),
         blockedKey: 'b'.repeat(32),
         dimension: 'ip',
+      blockerAccountId: null,
         conversationId: started.conversationId,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 86_400_000).toISOString(),

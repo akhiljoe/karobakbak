@@ -239,6 +239,7 @@ export class Repositories {
         record.blockerKey,
         record.blockedKey,
         record.dimension,
+        record.blockerAccountId,
         record.conversationId,
         record.createdAt,
         record.expiresAt,
@@ -246,8 +247,9 @@ export class Repositories {
     }
     await db.query(
       `insert into blocks
-         (block_id, blocker_key, blocked_key, dimension, conversation_id, created_at, expires_at)
-       values ${placeholders(records.length, 7)}
+         (block_id, blocker_key, blocked_key, dimension, blocker_account_id,
+          conversation_id, created_at, expires_at)
+       values ${placeholders(records.length, 8)}
        on conflict (block_id) do nothing`,
       values,
     );

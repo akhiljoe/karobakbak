@@ -78,6 +78,14 @@ export interface BlockRecord {
   readonly blockerKey: string;
   readonly blockedKey: string;
   readonly dimension: 'ip' | 'client';
+  /**
+   * The account that made this block, or null when it was made signed out.
+   *
+   * The blocker's, never the blocked person's — see `015_account_blocks.sql`.
+   * It is what makes a block findable again from another network, since both
+   * key hashes change and an account id does not.
+   */
+  readonly blockerAccountId: string | null;
   readonly conversationId: string | null;
   readonly createdAt: string;
   readonly expiresAt: string;
