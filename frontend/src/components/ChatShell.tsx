@@ -535,7 +535,13 @@ export function ChatShell({
         </div>
       )}
 
-      {chatting && (
+      {/*
+        Visible while searching as well as while chatting. Waiting is exactly
+        when somebody looks at who they met before — the list is most useful in
+        the gap, and hiding it there made it disappear at the moment it was
+        wanted. Nothing in it depends on there being a conversation.
+      */}
+      {(chatting || searching) && (
       <div className="flex items-center gap-4 px-3 pt-1 sm:px-4">
         {/*
           Connections. Only when signed in: the list belongs to
@@ -591,7 +597,7 @@ export function ChatShell({
         which lives in the header. Side by side is how a reflex becomes a block
         somebody did not mean.
       */}
-      {chatting && (
+      {(chatting || searching) && (
         <div className="flex items-center justify-between gap-3 px-3 pb-1.5 pt-1 sm:px-4">
           <label className="flex cursor-pointer items-center gap-2 text-xs text-ink-400 transition-colors hover:text-ink-200">
             <input
@@ -640,13 +646,26 @@ export function ChatShell({
             />
           </div>
 
-          <button
-            onClick={onSkip}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs font-medium text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
-          >
-            <SkipForward className="h-3.5 w-3.5" />
-            Next stranger
-          </button>
+          {/*
+            Only while there is somebody to skip. Searching already *is* looking
+            for the next stranger, so the button would either do nothing or
+            restart the thing it is sitting next to.
+
+            A spacer keeps Recent in the middle rather than letting it slide
+            right when this goes, which would move a control under the thumb
+            that was aiming at something else.
+          */}
+          {chatting ? (
+            <button
+              onClick={onSkip}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-ink-700 bg-ink-900 px-3 py-1.5 text-xs font-medium text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
+            >
+              <SkipForward className="h-3.5 w-3.5" />
+              Next stranger
+            </button>
+          ) : (
+            <span aria-hidden="true" className="w-24 shrink-0" />
+          )}
         </div>
       )}
 
