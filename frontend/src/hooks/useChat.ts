@@ -90,6 +90,17 @@ export interface ChatApi {
   dismissReconnect(): void;
   /** Acknowledge that the reconnect search has been started. */
   reconnectStarted(): void;
+  /**
+   * Re-open the socket so the server sees who you are now.
+   *
+   * The account is read from the cookie at the handshake and nowhere else, so a
+   * socket opened while signed out stays signed out for its whole life — and
+   * signing in happens in a popup that deliberately does not reload the page.
+   * Closing it triggers the ordinary reconnect, which presents the resume token
+   * and re-attaches the same session (§28), so the conversation survives and
+   * the identity is refreshed.
+   */
+  reauthenticate(): void;
   dismissNotice(): void;
 }
 
@@ -361,6 +372,13 @@ export function useChat(): ChatApi {
     () => dispatch({ type: 'connection_dismissed' }),
     [],
   );
+  const reauthenticate = useCallback(() => {
+    const socket = socketRef.current;
+    // Deliberately not marking this as a close of our own: that flag suppresses
+    // reconnection, and reconnecting is the entire point.
+    if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000, 'reauthenticate');
+  }, []);
+
   const dismissReconnect = useCallback(() => dispatch({ type: 'reconnect_dismissed' }), []);
   const reconnectStarted = useCallback(() => dispatch({ type: 'reconnect_started' }), []);
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
@@ -380,6 +398,7 @@ export function useChat(): ChatApi {
     dismissConnectionRequest,
     dismissReconnect,
     reconnectStarted,
+    reauthenticate,
     dismissNotice,
   };
 }

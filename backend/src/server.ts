@@ -852,6 +852,27 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       },
     });
 
+    /*
+      Bind the account to the session as soon as the socket is up, not only when
+      somebody searches.
+
+      `accountId` is read from the cookie at the handshake, so it is only ever
+      as current as the connection. Signing in happens in a popup that
+      deliberately does not reload the page, which means an already-open socket
+      keeps the identity it opened with — the client closes and resumes after a
+      sign-in for exactly this reason, and this is the half that records it.
+
+      Written here as well as at `join_queue` because a match can be announced
+      to a session that never joined a queue on this connection: the resumed
+      side of a conversation, for one.
+    */
+    if (accountId !== null) {
+      void store.setAccount(sessionId, accountId).catch((err: unknown) => {
+        // Not fatal: it costs a presence token, never the connection.
+        logger.warn('could not record the account on a session', errorFields(err));
+      });
+    }
+
     registry.add(connection);
     metrics.connectionsTotal.inc();
     metrics.connectionsActive.set(registry.size);
