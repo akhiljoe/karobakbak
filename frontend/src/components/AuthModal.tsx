@@ -38,6 +38,16 @@
  *
  * It closes on Escape and on the backdrop, unlike the age gate, which
  * deliberately does neither. This one is a choice somebody can decline.
+ *
+ * ---------------------------------------------------------------------------
+ * SIGNING OUT IS NOT HERE
+ * ---------------------------------------------------------------------------
+ * It was, and it made this dialog two things at once — which showed: finishing
+ * a sign-in left the same centred panel on screen, now offering Sign out. A
+ * modal is the right shape for something that interrupts and leaves for another
+ * origin, which signing in does and signing out does not. Sign out is one
+ * action belonging to one control, so it lives in the menu under that control
+ * (`AccountMenu`), and this dialog closes itself the moment a session exists.
  */
 import { useEffect, useState } from 'react';
 import { LogIn, User, X } from 'lucide-react';
@@ -57,7 +67,6 @@ interface AuthModalProps {
 
 export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Element | null {
   const [leaving, setLeaving] = useState(false);
-  const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -68,34 +77,29 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  // A modal that is reopened after a failed sign-out should not still be
-  // showing the failure from last time.
+  // A dialog reopened after an abandoned sign-in should offer the button
+  // again, not the "waiting" label from the attempt nobody finished.
   useEffect(() => {
-    if (!open) {
-      setSignOutFailed(false);
-      // Reset too, or the next deliberate open — from the header avatar, while
-      // already signed in — would satisfy the auto-close below on its first
-      // render and shut immediately.
-      setLeaving(false);
-    }
+    if (!open) setLeaving(false);
   }, [open]);
 
   /*
-   * Close as soon as the sign-in this dialog started has succeeded.
+   * Close the moment there is a session, however that happened.
    *
-   * Without this the dialog stays open across the whole flow and silently
-   * becomes the account panel: you press "Sign in to continue", finish in the
-   * popup, the popup closes — and you are left looking at "Your account" and a
-   * Sign out button you did not ask for. The correct end of a successful
-   * sign-in is the page you were on, with the toast saying it worked.
+   * This dialog is only ever "sign in" now — signing out moved to the header
+   * menu — so being open while signed in is not a state, it is the tail end of
+   * a flow that has finished. Without this it stayed open across the whole
+   * flow: press "Sign in to continue", finish in the popup, the popup closes,
+   * and you are left looking at a panel you did not ask for on top of the page
+   * you actually wanted. The correct end of a successful sign-in is the page
+   * you were already on, with the toast saying it worked.
    *
-   * Gated on `leaving` so it only fires for a flow this dialog began. Opening
-   * it deliberately from the header avatar while already signed in is the other
-   * case, and that one must stay open — it is the only route to Sign out.
+   * Ungated, so a sign-in completed in another tab closes this too rather than
+   * leaving a dialog offering something already done.
    */
   useEffect(() => {
-    if (open && leaving && session.signedIn) onClose();
-  }, [open, leaving, session.signedIn, onClose]);
+    if (open && session.signedIn) onClose();
+  }, [open, session.signedIn, onClose]);
 
   if (!open) return null;
 
@@ -109,9 +113,8 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   };
 
   // The popup leaves this dialog on screen behind it, so the button has to stop
-  // looking pressable once a window is open. It un-sets when the flow finishes,
-  // because `signedIn` changing re-renders this and the dialog is closed by the
-  // header; if the person abandons the popup, reopening the dialog resets it.
+  // looking pressable while a window is open. A finished sign-in closes the
+  // whole dialog, and an abandoned one resets this when it is next opened.
   const busyLabel = leaving ? 'Waiting for the sign-in window…' : null;
 
   // The published Terms when there is one, the in-app page otherwise. Same
@@ -119,19 +122,12 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   // nowhere public to point and must not link nowhere.
   const termsUrl = clientConfig.legal.termsUrl !== '' ? clientConfig.legal.termsUrl : '/terms';
 
-  const signOut = (): void => {
-    void session.signOut().then((confirmed) => {
-      setSignOutFailed(!confirmed);
-      if (confirmed) onClose();
-    });
-  };
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
       role="dialog"
       aria-modal="true"
-      aria-label={session.signedIn ? 'Account' : 'Sign in'}
+      aria-label="Sign in"
     >
       <div
         className="absolute inset-0 animate-fade-in bg-ink-950/70 backdrop-blur-sm"
@@ -156,9 +152,9 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
 
         <div className="flex flex-col items-center px-2 pb-6 pt-3 text-center">
           {/*
-            The same round glyph as the header's signed-in control, larger. It
-            is deliberately not the provider's profile picture: see the note on
-            that control in AppHeader for what fetching a photo would cost.
+            The same round glyph as the header's account control, larger. It is
+            deliberately not the provider's profile picture — `AccountMenu` has
+            the note on what fetching a photo would cost.
 
             The karobakbak mark sits underneath rather than here, because this
             dialog is the one place that sends somebody to another origin and
@@ -169,7 +165,7 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
           </span>
 
           <h2 className="font-display text-xl font-semibold text-ink-50">
-            {session.signedIn ? 'Your account' : 'Sign in to continue'}
+            Sign in to continue
           </h2>
 
           <span className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-500">
@@ -178,71 +174,54 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
           </span>
         </div>
 
-        {session.signedIn ? (
-          <>
-            <Button size="lg" className="w-full" onClick={signOut}>
-              Sign out
+        {SIGNIN_PROVIDER === 'google' ? (
+            /*
+              Google's own button, not ours. The light plate and the
+              unrecoloured mark are both required by their brand guidelines —
+              the G may not be tinted to suit a dark theme — so this is
+              deliberately the one control in the product that is not on the
+              palette. It is `type="button"` and a plain element rather than
+              `Button`, because `Button` carries the amber styling that would
+              have to be undone here anyway.
+            */
+            <button
+              type="button"
+              onClick={signIn}
+              disabled={leaving}
+              className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-ink-600 bg-ink-800 px-4 text-[15px] font-medium text-ink-50 transition-all hover:border-ink-500 hover:bg-ink-700 active:scale-[0.99] disabled:cursor-default disabled:opacity-60"
+            >
+              <GoogleMark />
+              {busyLabel ?? 'Sign in with Google'}
+            </button>
+          ) : (
+            <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
+              <LogIn className="mr-2 h-4 w-4" aria-hidden="true" />
+              {busyLabel ?? 'Continue to sign in'}
             </Button>
+          )}
 
-            {signOutFailed && (
-              <p className="mt-3 rounded-lg border border-dashed border-amber-400/40 bg-amber-400/5 px-3 py-2.5 text-sm leading-relaxed text-ink-400">
-                <span className="font-medium text-amber-300">Still signed in.</span> We could not
-                reach the server, so nothing was revoked. Try again.
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            {SIGNIN_PROVIDER === 'google' ? (
-              /*
-                Google's own button, not ours. The light plate and the
-                unrecoloured mark are both required by their brand guidelines —
-                the G may not be tinted to suit a dark theme — so this is
-                deliberately the one control in the product that is not on the
-                palette. It is `type="button"` and a plain element rather than
-                `Button`, because `Button` carries the amber styling that would
-                have to be undone here anyway.
-              */
-              <button
-                type="button"
-                onClick={signIn}
-                disabled={leaving}
-                className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-ink-600 bg-ink-800 px-4 text-[15px] font-medium text-ink-50 transition-all hover:border-ink-500 hover:bg-ink-700 active:scale-[0.99] disabled:cursor-default disabled:opacity-60"
-              >
-                <GoogleMark />
-                {busyLabel ?? 'Sign in with Google'}
-              </button>
-            ) : (
-              <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
-                <LogIn className="mr-2 h-4 w-4" aria-hidden="true" />
-                {busyLabel ?? 'Continue to sign in'}
-              </Button>
-            )}
+          {/*
+            The one line of prose left, and it is not a benefit — it is the
+            agreement being entered into by pressing the button above, which
+            is the moment it is worth saying.
 
-            {/*
-              The one line of prose left, and it is not a benefit — it is the
-              agreement being entered into by pressing the button above, which
-              is the moment it is worth saying.
-
-              Rendered only when there is somewhere for it to point.
-              `VITE_TERMS_URL` is empty in a development build on purpose, and
-              the in-app /terms route is the fallback; a link to nothing would
-              be worse than no link, which is the same rule the age gate follows.
-            */}
-            <p className="mt-4 text-center text-xs leading-relaxed text-ink-500">
-              By continuing you agree to our{' '}
-              <a
-                href={termsUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-ink-300 underline underline-offset-2 transition-colors hover:text-amber-300"
-              >
-                Terms
-              </a>
-              .
-            </p>
-          </>
-        )}
+            Rendered only when there is somewhere for it to point.
+            `VITE_TERMS_URL` is empty in a development build on purpose, and
+            the in-app /terms route is the fallback; a link to nothing would
+            be worse than no link, which is the same rule the age gate follows.
+          */}
+          <p className="mt-4 text-center text-xs leading-relaxed text-ink-500">
+            By continuing you agree to our{' '}
+            <a
+              href={termsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-ink-300 underline underline-offset-2 transition-colors hover:text-amber-300"
+            >
+              Terms
+            </a>
+            .
+        </p>
       </div>
     </div>
   );
