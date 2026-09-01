@@ -272,6 +272,33 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
        */
       if (auth.identityProvider !== '') {
         url.searchParams.set('identity_provider', auth.identityProvider);
+
+        /*
+         * Always offer the account chooser, never sign somebody in silently.
+         *
+         * Without this the provider reuses whichever account is already
+         * signed in on the device and returns immediately — no screen, no
+         * choice, no indication that an identity was picked for you. On a
+         * shared or borrowed machine that means signing in as whoever used it
+         * last, which is a worse failure than an extra click by a wide margin.
+         *
+         * It also closes half of a gap that is otherwise surprising: our
+         * sign-out revokes our own credential and deliberately does not touch
+         * the provider's session (see docs/SIGNIN-SETUP.md). Signing out and
+         * back in would otherwise land on the same account with nothing asked,
+         * which reads as the sign-out having done nothing at all.
+         *
+         * `select_account` rather than `login`: the ask is "which account",
+         * not "prove it is you again". Forcing a fresh password prompt on
+         * every sign-in is a different and much heavier promise.
+         *
+         * Only sent alongside a federated IdP, because that is the case it
+         * describes — this is about the provider's chooser, and Cognito
+         * forwards the parameter on to it. Verified by following the redirect
+         * chain rather than assumed: Cognito passes `prompt` through to
+         * Google, and without it no `prompt` reaches Google at all.
+         */
+        url.searchParams.set('prompt', 'select_account');
       }
 
       return { authorizeUrl: url.toString(), state, nonce, codeVerifier };
