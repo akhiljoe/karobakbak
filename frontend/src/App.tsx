@@ -538,12 +538,23 @@ export function App(): JSX.Element {
             <button
               onClick={() => {
                 const offer = state.reconnectOffer;
+                /*
+                  Signed out, this offers the way through rather than failing.
+                  The offer lives two minutes, which is comfortably longer than
+                  a sign-in popup takes — and the popup does not navigate this
+                  page, so the request is still waiting afterwards.
+                */
+                if (!session.signedIn) {
+                  setAuthReason('Sign in to chat with them again.');
+                  setAuthOpen(true);
+                  return;
+                }
                 chat.dismissReconnect();
                 if (offer !== null) void acceptReconnect(offer);
               }}
               className="rounded-lg border border-green-500/50 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:bg-green-500/10"
             >
-              Chat
+              {session.signedIn ? 'Chat' : 'Sign in to chat'}
             </button>
             <button
               onClick={chat.dismissReconnect}
@@ -553,7 +564,9 @@ export function App(): JSX.Element {
             </button>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
-            Ignoring tells them nothing.
+            {session.signedIn
+              ? 'Ignoring tells them nothing.'
+              : 'Talking to a chosen person needs an account. Ignoring tells them nothing.'}
           </p>
         </div>
       )}

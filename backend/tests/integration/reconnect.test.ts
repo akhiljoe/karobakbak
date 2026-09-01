@@ -233,6 +233,55 @@ describe('asking somebody to chat again', () => {
   });
 });
 
+describe('somebody who is not signed in', () => {
+  it('can still be asked, and the token dies with their session', async () => {
+    // The bug this replaced: no token was minted for a signed-out partner at
+    // all, so the request could not be addressed and they were told nothing —
+    // which reads as the feature being broken rather than as a rule.
+    const asker = await signedIn('sub_asker', await ctx.session());
+    const strangerSession = await ctx.session();
+
+    const token = await presence.mintSessionToken(strangerSession);
+    expect(token).not.toBeNull();
+
+    const ask = await post('/auth/reconnect/ask', { token }, asker.cookie);
+    expect(ask.body.asked).toBe(true);
+    expect(delivered[0]?.to).toBe(strangerSession);
+  });
+
+  it('reads as online without an account behind it', async () => {
+    // A session token is its own liveness check: the key exists only while the
+    // heartbeat keeps it, so there is no account to look up.
+    const strangerSession = await ctx.session();
+    const token = (await presence.mintSessionToken(strangerSession)) as string;
+    expect(await presence.resolveTokens([token])).toEqual(new Set([token]));
+  });
+
+  it('cannot accept until they sign in', async () => {
+    /*
+      Receiving needs no account; taking it does. Chatting with a stranger never
+      needs one — chatting with a *chosen* person is what an account is for, and
+      is the one direction of contact that should be opted into.
+    */
+    const asker = await signedIn('sub_asker', await ctx.session());
+    const strangerSession = await ctx.session();
+    const token = await presence.mintSessionToken(strangerSession);
+
+    await post('/auth/reconnect/ask', { token }, asker.cookie);
+    const offer = delivered[0]?.event.offer as string;
+
+    const accept = await post('/auth/reconnect/accept', { offer });
+    expect(accept.status).toBe(401);
+    expect(paired).toHaveLength(0);
+
+    // And the offer survives the refusal, so signing in and answering works —
+    // spending it on a rejected attempt would make the prompt a dead end.
+    const late = await signedIn('sub_late', strangerSession);
+    expect((await post('/auth/reconnect/accept', { offer }, late.cookie)).status).toBe(200);
+    expect(paired).toEqual([[asker.sessionId, strangerSession]]);
+  });
+});
+
 describe('answering', () => {
   it('spends the offer, so it cannot be replayed', async () => {
     const asker = await signedIn('sub_asker', await ctx.session());

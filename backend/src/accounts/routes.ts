@@ -909,6 +909,22 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         return;
       }
 
+      /*
+        Receiving a request needs no account — the prompt reaches anybody who is
+        still in the conversation they were met in. Taking it does.
+
+        That asymmetry is deliberate. Chatting with a stranger never needs an
+        account and never will; chatting with a *chosen* person is the thing an
+        account is for, and it is the one direction of contact where being
+        reachable again should be a thing somebody opted into. So the prompt
+        arrives, says so, and offers the way through.
+      */
+      const me = await resolveAccount(db, logger, credentialOf(req));
+      if (!me.ok) {
+        json(res, 401, { error: 'sign_in_required' });
+        return;
+      }
+
       const body = await readBody(req);
       const offer = typeof body?.offer === 'string' ? body.offer : '';
       if (!/^[0-9a-f]{32}$/.test(offer)) {
