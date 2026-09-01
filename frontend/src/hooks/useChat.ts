@@ -84,6 +84,8 @@ export interface ChatApi {
   react(messageId: string, reaction: string, active?: boolean): void;
   /** Save the current stranger, or withdraw it. Requires an account (§31). */
   saveConnection(active: boolean): void;
+  /** Decline an incoming request. Local only — a refusal is never sent (§31). */
+  dismissConnectionRequest(): void;
   dismissNotice(): void;
 }
 
@@ -349,6 +351,12 @@ export function useChat(): ChatApi {
     [sendCommand, stopTyping],
   );
 
+  // No frame. Declining is answered with silence, which is the half of D47 that
+  // did not change when asking became visible.
+  const dismissConnectionRequest = useCallback(
+    () => dispatch({ type: 'connection_dismissed' }),
+    [],
+  );
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
 
   return {
@@ -363,6 +371,7 @@ export function useChat(): ChatApi {
     typing,
     react,
     saveConnection,
+    dismissConnectionRequest,
     dismissNotice,
   };
 }
@@ -413,6 +422,9 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
       };
     case 'connection_made':
       return { type: 'connection_made', matchId: frame.payload.matchId };
+
+    case 'connection_request':
+      return { type: 'connection_request', matchId: frame.payload.matchId };
     case 'report_ack':
       return { type: 'report_ack' };
     case 'error':

@@ -48,6 +48,7 @@ export const SERVER_EVENTS = [
   'partner_typing',
   'partner_reacted',
   'connection_state',
+  'connection_request',
   'connection_made',
   'partner_skipped',
   'partner_reconnecting',
@@ -638,20 +639,31 @@ export type LeaveChatPayload = Record<string, never>;
  * ---------------------------------------------------------------------------
  * MUTUAL CONSENT, AND THE LEAK IT IS BUILT TO AVOID
  * ---------------------------------------------------------------------------
- * Saving alone does nothing and is **never revealed to the partner**. A
- * connection exists only when both sides have saved, and the only frame that
- * mentions the other person is `connection_made`, which is sent to both at the
- * same moment and only when both have agreed.
+ * A connection still exists only when both sides have agreed, and
+ * `connection_made` is still the frame that says so, sent to both at the same
+ * moment. What changed is that asking is now **announced** to the person being
+ * asked (`connection_request`), where it used to be silent until reciprocated.
  *
- * One-sided saving would make a stranger's future contactability something they
- * did not agree to. Telling A that B saved them would be worse: it hands A a
- * fact about B that B chose to disclose only on condition of reciprocity.
+ * D47 originally refused that, and the reasoning is kept here because it is
+ * what the reversal cost: telling A that B asked hands A a fact that B chose to
+ * disclose only on condition of reciprocity. Somebody who declines now knows
+ * that this particular stranger wanted to connect, which they previously did
+ * not.
  *
- * The residual inference is real and is not fixable: a conversation that ends
- * with no `connection_made` tells a saver that the other side did not save. That
- * is inherent to mutual consent — every system of this shape has it — and it is
- * bounded to "they did not", never to when or why. It is recorded here rather
- * than left to be discovered.
+ * It was overruled deliberately, on the ground that a silent request is
+ * indistinguishable from a broken button: the asker sees nothing happen, and
+ * the person who might have said yes is never given the chance. Both sides are
+ * present in a live conversation, which is the setting that makes the ask
+ * ordinary rather than a disclosure about somebody who is not there.
+ *
+ * The bound that remains: a request is announced, a **refusal never is**.
+ * Ignoring produces no frame at all, so declining stays private and the asker
+ * learns only what silence tells them.
+ *
+ * The residual inference is unchanged: a conversation that ends with no
+ * `connection_made` tells a saver that the other side did not agree. That is
+ * inherent to mutual consent — every system of this shape has it — and it is
+ * bounded to "they did not", never to when or why.
  *
  * `active` is a toggle so a mis-tap is recoverable while the conversation is
  * still running. It does **not** undo a connection that has already been made:
@@ -688,6 +700,20 @@ export interface ConnectionStatePayload {
  * partner's decision, and it can only be emitted when that decision was to
  * agree — so there is no state in which it discloses a refusal.
  */
+/**
+ * Somebody in this conversation has asked to connect.
+ *
+ * Sent once, to the other side only, when a save arrives and that side has not
+ * saved. It names nothing about the asker beyond the conversation both are
+ * already in — the recipient can already see who they are talking to.
+ *
+ * There is deliberately no frame for the opposite direction. Declining sends
+ * nothing, so a refusal is never disclosed; see the note on `save_connection`.
+ */
+export interface ConnectionRequestPayload {
+  readonly matchId: string;
+}
+
 export interface ConnectionMadePayload {
   matchId: string;
 }
@@ -1083,6 +1109,7 @@ export interface ServerEventPayloads {
   partner_typing: PartnerTypingPayload;
   partner_reacted: PartnerReactedPayload;
   connection_state: ConnectionStatePayload;
+  connection_request: ConnectionRequestPayload;
   connection_made: ConnectionMadePayload;
   partner_skipped: PartnerSkippedPayload;
   partner_reconnecting: PartnerReconnectingPayload;

@@ -71,6 +71,8 @@ interface ChatShellProps {
   onReact(messageId: string, reaction: string, active: boolean): void;
   /** Save this stranger, or withdraw it while the conversation is still running. */
   onSaveConnection(active: boolean): void;
+  /** Decline the incoming request. Sends nothing; see §31. */
+  onDismissConnectionRequest(): void;
   onSkip(): void;
   onCancelSearch(): void;
   onOpenSafety(): void;
@@ -92,6 +94,7 @@ export function ChatShell({
   onTyping,
   onReact,
   onSaveConnection,
+  onDismissConnectionRequest,
   onSkip,
   onCancelSearch,
   onOpenSafety,
@@ -439,6 +442,47 @@ export function ChatShell({
         Both panels open upward: this is near the bottom of the viewport, and
         one dropping downward would open off-screen on a phone.
       */}
+      {/*
+        The incoming ask, above the action row and below the transcript, so it
+        is between the conversation and the controls rather than covering
+        either. Not a modal: it is not urgent, it must not interrupt typing, and
+        a dialog over a live conversation is the wrong weight for a question
+        that can simply be left alone.
+
+        Three answers, and only two of them send anything. Ignore dismisses it
+        here and tells the asker nothing — a refusal is never disclosed (§31),
+        which is the half of D47 that did not change.
+      */}
+      {chatting && state.connectionAsked && !state.connectionMade && (
+        <div className="mx-auto mb-1 flex w-full max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-amber-400/35 bg-amber-400/5 px-3 py-2 text-xs">
+          <UserPlus className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
+          <span className="flex-1 text-ink-200">They would like to stay in touch.</span>
+          <button
+            onClick={() => {
+              onSaveConnection(true);
+              onDismissConnectionRequest();
+            }}
+            className="rounded-lg border border-green-500/40 px-2.5 py-1 font-medium text-green-300 transition-colors hover:bg-green-500/10"
+          >
+            Add back
+          </button>
+          <button
+            onClick={onDismissConnectionRequest}
+            className="rounded-lg border border-ink-700 px-2.5 py-1 text-ink-300 transition-colors hover:border-ink-600 hover:bg-ink-800"
+          >
+            Ignore
+          </button>
+          {state.features.block && (
+            <button
+              onClick={onBlockAndNext}
+              className="rounded-lg border border-rose-500/40 px-2.5 py-1 text-rose-300 transition-colors hover:bg-rose-500/10"
+            >
+              Block
+            </button>
+          )}
+        </div>
+      )}
+
       {chatting && (
       <div className="flex items-center gap-4 px-3 pt-1 sm:px-4">
         {/*

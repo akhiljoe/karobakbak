@@ -135,6 +135,14 @@ export interface ChatState {
    */
   readonly connectionMade: boolean;
   /**
+   * The other side asked to connect and this side has not answered.
+   *
+   * Cleared by agreeing, by declining, and by the conversation ending — a
+   * prompt about a stranger who has gone is a prompt with nothing behind it.
+   * Declining sends nothing at all: a refusal is never disclosed (§31).
+   */
+  readonly connectionAsked: boolean;
+  /**
    * The user asked to go home and the server has not confirmed it yet.
    *
    * Leaving a conversation is two commands — `skip` ends the match, then
@@ -216,6 +224,7 @@ export const initialState: ChatState = {
   reportSent: false,
   connectionSaved: false,
   connectionMade: false,
+  connectionAsked: false,
   leaving: false,
   searchPending: false,
   resumeToken: null,
@@ -240,6 +249,9 @@ export type Action =
   | { type: 'report_ack' }
   | { type: 'connection_state'; matchId: string; saved: boolean }
   | { type: 'connection_made'; matchId: string }
+  | { type: 'connection_request'; matchId: string }
+  /** The prompt was declined here. Nothing is sent; see §31. */
+  | { type: 'connection_dismissed' }
   | { type: 'server_error'; payload: ErrorPayload }
   | { type: 'server_shutdown' }
   /* local intents, applied optimistically where the server cannot contradict them */
@@ -280,6 +292,7 @@ function clearedConversation(state: ChatState): ChatState {
     // surviving would claim a connection with somebody who does not have one.
     connectionSaved: false,
     connectionMade: false,
+    connectionAsked: false,
     // Cleared with everything else, and its absence here was a real fault: a
     // held seat belongs to *this* conversation, so a skip taken while the
     // stranger was away carried the flag into the next one. The composer is
@@ -565,6 +578,17 @@ export function reduce(state: ChatState, action: Action): ChatState {
       if (state.matchId !== action.matchId) return state;
       return { ...state, connectionSaved: action.saved };
 
+    case 'connection_request':
+      if (state.matchId !== action.matchId) return state;
+      // Already agreed, so there is nothing to ask: the two saves crossed and
+      // `connection_made` is on its way. Showing a prompt here would ask
+      // somebody to agree to something they have just done.
+      if (state.connectionSaved || state.connectionMade) return state;
+      return { ...state, connectionAsked: true };
+
+    case 'connection_dismissed':
+      return { ...state, connectionAsked: false };
+
     case 'connection_made':
       if (state.matchId !== action.matchId) return state;
       // `connectionSaved` is forced true rather than left alone. This frame can
@@ -574,6 +598,7 @@ export function reduce(state: ChatState, action: Action): ChatState {
         ...state,
         connectionSaved: true,
         connectionMade: true,
+        connectionAsked: false,
         notice: 'Connected. You can find each other later.',
       };
 

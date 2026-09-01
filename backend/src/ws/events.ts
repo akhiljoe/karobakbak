@@ -55,6 +55,16 @@ export type SessionEvent =
    * because it cannot exist unless that decision was to agree.
    */
   | { event: 'connection_made'; matchId: string }
+  /**
+   * The other side asked to connect and this side has not (§31).
+   *
+   * Crosses the bus for the same reason `connection_made` does: the two people
+   * are on two instances as often as not. It discloses that somebody asked,
+   * which D47 originally refused and this reverses deliberately — see the note
+   * on `save_connection` in the protocol types. A refusal still crosses
+   * nothing, so declining stays private.
+   */
+  | { event: 'connection_request'; matchId: string }
   | { event: 'partner_disconnected'; matchId: string }
   /** The session was reaped server-side; the socket should be closed, not updated. */
   | { event: 'session_evicted'; matchId: string; reason: 'reaped' | 'shutdown' };
@@ -178,6 +188,8 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
       return { event: 'partner_returned', matchId };
     case 'connection_made':
       return { event: 'connection_made', matchId };
+    case 'connection_request':
+      return { event: 'connection_request', matchId };
     case 'partner_disconnected':
       return { event: 'partner_disconnected', matchId };
     case 'session_evicted':
@@ -234,6 +246,8 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       return serverFrame('partner_disconnected', { matchId: event.matchId });
     case 'connection_made':
       return serverFrame('connection_made', { matchId: event.matchId });
+    case 'connection_request':
+      return serverFrame('connection_request', { matchId: event.matchId });
     case 'session_evicted':
       return null;
     default: {
