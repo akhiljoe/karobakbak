@@ -78,7 +78,19 @@ export function HistoryPanel({
       ref={container}
       role="dialog"
       aria-label="Recent strangers"
-      className={`absolute right-0 z-40 w-72 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift ${
+      /*
+        Centred on its button and clamped to the viewport, not right-aligned.
+
+        Right-aligning was correct while this hung off a control at the end of
+        the header. The control is in the middle of the action row now, so
+        `right-0` put a 288px panel to the *left* of a button near the middle of
+        a phone — which is off the screen, with no way to scroll to it, because
+        the page body does not scroll sideways.
+
+        `max-w` is what actually keeps it on screen; centring is what keeps it
+        pointing at the thing that opened it.
+      */
+      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw-1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift ${
         placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
       }`}
     >
@@ -118,14 +130,25 @@ export function HistoryPanel({
                   />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-ink-200">{entry.nickname}</p>
+                    {/*
+                      Where they said they were from, and nothing else.
+
+                      The time was here and is gone: it answered a question
+                      nobody asked, and a list of timestamps reads as a log of
+                      your evening rather than a list of people.
+
+                      There is deliberately no online dot. Presence is keyed to
+                      an account, and this list holds no account — only what was
+                      on screen during the conversation. Knowing whether a past
+                      stranger is here now would mean keeping a durable handle
+                      for them, which is the thing `history.ts` does not do and
+                      `minor-safety-policy.md` §6 is written about.
+                    */}
                     <p className="text-xs text-ink-500">
-                      {new Date(entry.at).toLocaleTimeString([], {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                      {entry.country !== null && (
+                      {entry.country === null ? (
+                        'Somewhere'
+                      ) : (
                         <>
-                          {' · '}
                           <span aria-hidden="true">{flagOf(entry.country)}</span>{' '}
                           {COUNTRY_NAMES[entry.country as keyof typeof COUNTRY_NAMES] ??
                             entry.country}
