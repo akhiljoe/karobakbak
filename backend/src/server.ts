@@ -430,6 +430,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
                             ? auth.presence
                             : req.method === 'POST' && path === '/auth/presence/lookup'
                               ? auth.presenceLookup
+                              : req.method === 'POST' && path === '/auth/reconnect/ask'
+                                ? auth.reconnectAsk
+                                : req.method === 'POST' && path === '/auth/reconnect/accept'
+                                  ? auth.reconnectAccept
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;
@@ -1328,7 +1332,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // takes the refresh with it, so the key lapses without anybody having
         // to notice. Signed-out connections publish nothing.
         if (accountPresence != null && connection.accountId !== null) {
-          await accountPresence.announce(connection.accountId);
+          await accountPresence.announce(connection.accountId, connection.sessionId);
         }
       } catch (err) {
         // A Redis blip must not take the socket down: /ready has already gone

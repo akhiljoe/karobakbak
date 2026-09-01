@@ -1038,6 +1038,33 @@ export class RedisStore {
     await this.client.hset(this.keys.session(sessionId), 'account', accountId);
   }
 
+  /**
+   * Move a session into a different queue segment.
+   *
+   * A plain `HSET`, like the account and the profile beside it: the segment is
+   * written by the session's own connection and no transition branches on it
+   * mid-flight — the scripts take it as an argument, so what matters is that
+   * the argument is right when they are called, not that the write is atomic
+   * with them.
+   *
+   * The seam has existed since day one (R6, D23) with only `default` in it.
+   * This is the first thing to use it, and it uses it for the reason it was
+   * kept: a private lane means `tryMatch` pairs two people without a new
+   * script, so every guard it already applies — blocks in both directions,
+   * bans, preferences — applies here for free. Duplicating those into a
+   * bespoke pairing script is the version of this feature that gets somebody
+   * matched with a person they blocked.
+   */
+  async setSegment(sessionId: string, segment: string): Promise<void> {
+    await this.client.hset(this.keys.session(sessionId), 'segment', segment);
+  }
+
+  /** Which queue a session is in. Falls back to the default. */
+  async readSegment(sessionId: string, fallback: string): Promise<string> {
+    const value = await this.client.hget(this.keys.session(sessionId), 'segment');
+    return typeof value === 'string' && value !== '' ? value : fallback;
+  }
+
   /** Each side's account, or null where that side is signed out. */
   async readAccounts(
     sessionA: string,

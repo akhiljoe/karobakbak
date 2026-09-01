@@ -73,6 +73,17 @@ export type SessionEvent =
    * nothing, so declining stays private.
    */
   | { event: 'connection_request'; matchId: string }
+  /**
+   * Somebody you met earlier is online and would like to talk again.
+   *
+   * Crosses the bus because the two people are on two instances as often as
+   * not. `matchId` is empty — there is no conversation yet, and that is the
+   * point — so the bus carries it only to satisfy the envelope every event
+   * shares.
+   */
+  | { event: 'reconnect_request'; matchId: string; offer: string }
+  /** Both agreed; start searching in the private lane. */
+  | { event: 'reconnect_ready'; matchId: string; startedAt: string }
   | { event: 'partner_disconnected'; matchId: string }
   /** The session was reaped server-side; the socket should be closed, not updated. */
   | { event: 'session_evicted'; matchId: string; reason: 'reaped' | 'shutdown' };
@@ -201,6 +212,12 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
       return { event: 'connection_made', matchId };
     case 'connection_request':
       return { event: 'connection_request', matchId };
+    case 'reconnect_request':
+      if (typeof data.offer !== 'string' || data.offer === '') return null;
+      return { event: 'reconnect_request', matchId, offer: data.offer };
+    case 'reconnect_ready':
+      if (typeof data.startedAt !== 'string') return null;
+      return { event: 'reconnect_ready', matchId, startedAt: data.startedAt };
     case 'partner_disconnected':
       return { event: 'partner_disconnected', matchId };
     case 'session_evicted':
@@ -260,6 +277,10 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       return serverFrame('connection_made', { matchId: event.matchId });
     case 'connection_request':
       return serverFrame('connection_request', { matchId: event.matchId });
+    case 'reconnect_request':
+      return serverFrame('reconnect_request', { offer: event.offer });
+    case 'reconnect_ready':
+      return serverFrame('reconnect_ready', { startedAt: event.startedAt });
     case 'session_evicted':
       return null;
     default: {

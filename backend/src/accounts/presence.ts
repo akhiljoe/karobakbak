@@ -56,8 +56,15 @@ export const PRESENCE_TTL_SECONDS = 75;
 export const PRESENCE_TOKEN_TTL_SECONDS = 12 * 60 * 60;
 
 export interface PresenceService {
-  /** Publish, or refresh, that this account is here. Respects the setting. */
-  announce(accountId: string): Promise<void>;
+  /**
+   * Publish, or refresh, that this account is here, on this session.
+   *
+   * The session id is the value rather than a flag, because "who is online" and
+   * "where do I send them something" are the same question asked twice, and
+   * storing only a flag meant answering the second with another lookup that did
+   * not exist.
+   */
+  announce(accountId: string, sessionId: string): Promise<void>;
   /** Stop claiming this account is here. */
   withdraw(accountId: string): Promise<void>;
   /** Which of these accounts are online. Absent means offline or hidden. */
@@ -76,6 +83,14 @@ export interface PresenceService {
   mintToken(accountId: string): Promise<string | null>;
   /** Which of these tokens point at somebody who is online right now. */
   resolveTokens(tokens: readonly string[]): Promise<Set<string>>;
+  /**
+   * The live session behind a token, or null.
+   *
+   * Null covers every reason equally — expired token, invented token, opted
+   * out, simply not here — which is what stops this being a way to test whether
+   * a token ever referred to anybody.
+   */
+  sessionForToken(token: string): Promise<string | null>;
 }
 
 export function createPresenceService(
@@ -87,13 +102,13 @@ export function createPresenceService(
   const keys = createKeys(keyPrefix);
 
   return {
-    async announce(accountId) {
+    async announce(accountId, sessionId) {
       try {
         // Checked on every announce rather than cached: the setting is read
         // once per heartbeat, which is cheap, and a cached "yes" would keep
         // publishing somebody who has just turned it off.
         if (!(await this.sharing(accountId))) return;
-        await redis.set(keys.presence(accountId), '1', 'EX', PRESENCE_TTL_SECONDS);
+        await redis.set(keys.presence(accountId), sessionId, 'EX', PRESENCE_TTL_SECONDS);
       } catch (err) {
         // Never fatal. Presence is decoration; a heartbeat that fails to
         // publish must not cost the connection it rode in on.
@@ -188,6 +203,18 @@ export function createPresenceService(
         logger.warn('could not resolve presence tokens', errorFields(err));
       }
       return here;
+    },
+
+    async sessionForToken(token) {
+      try {
+        const accountId = await redis.get(keys.presenceToken(token));
+        if (accountId === null) return null;
+        const sessionId = await redis.get(keys.presence(accountId));
+        return sessionId === null || sessionId === '' ? null : sessionId;
+      } catch (err) {
+        logger.warn('could not resolve a presence token to a session', errorFields(err));
+        return null;
+      }
     },
 
     async setSharing(accountId, share) {

@@ -64,6 +64,8 @@ export interface LifecycleStore {
   ): Promise<CreateSessionResult>;
   heartbeat(sessionId: string): Promise<HeartbeatResult>;
   closeSession(sessionId: string, ipHash: string, holdSeat?: boolean): Promise<CloseSessionResult>;
+  setSegment(sessionId: string, segment: string): Promise<void>;
+  readSegment(sessionId: string, fallback: string): Promise<string>;
   joinQueue(sessionId: string, segment: string): Promise<JoinQueueResult>;
   setProfile(sessionId: string, profile: Profile): Promise<void>;
   setPreferences(sessionId: string, preferences: MatchPreferences): Promise<void>;
@@ -389,7 +391,17 @@ export class SessionLifecycle {
     // matched by ordinary rules, and the user's one selector did nothing on the
     // attempt they were watching.
     if (intent !== undefined) await this.store.setIntent(sessionId, intent);
-    const joined = await this.store.joinQueue(sessionId, this.segment);
+    /*
+      Read once, here, and carried through the join and the search that follows.
+
+      Almost always the default. It differs only for a reconnect, where both
+      people are put into a private lane so `tryMatch` pairs them with each
+      other — reusing every guard that path already applies, rather than a
+      bespoke pairing script that would have to re-implement the block check
+      and could get it wrong.
+    */
+    const lane = await this.store.readSegment(sessionId, this.segment);
+    const joined = await this.store.joinQueue(sessionId, lane);
     switch (joined.status) {
       case 'session_gone':
         return { kind: 'session_gone' };
@@ -397,7 +409,7 @@ export class SessionLifecycle {
         return { kind: 'matched_elsewhere' };
       case 'ok':
       case 'already_searching':
-        return this.search(sessionId);
+        return this.search(sessionId, lane);
       default: {
         const exhaustive: never = joined;
         void exhaustive;
@@ -408,7 +420,13 @@ export class SessionLifecycle {
 
   /** Idempotent: an already-idle session is not an error (§5). */
   async leaveQueue(sessionId: string): Promise<LeaveOutcome> {
-    const left = await this.store.leaveQueue(sessionId, this.segment);
+    // The lane it actually joined, not the default — leaving the wrong queue
+    // would leave a private-lane session sitting in one forever, matchable by
+    // nobody and cleaned up only by its TTL.
+    const left = await this.store.leaveQueue(
+      sessionId,
+      await this.store.readSegment(sessionId, this.segment),
+    );
     switch (left.status) {
       case 'ok':
         return { kind: 'idle' };
@@ -480,7 +498,12 @@ export class SessionLifecycle {
     // Not matched. Leaving still means "stop looking", so a session that was
     // SEARCHING comes out of the queue.
     if (state.state === 'SEARCHING') {
-      const result = await this.store.leaveQueue(sessionId, this.segment);
+      // Its own lane, for the reason above: leaving the default queue would
+      // strand a private-lane session in one until its TTL.
+      const result = await this.store.leaveQueue(
+        sessionId,
+        await this.store.readSegment(sessionId, this.segment),
+      );
       if (result.status === 'session_gone') return { kind: 'session_gone' };
       return { kind: 'left' };
     }
@@ -633,11 +656,15 @@ export class SessionLifecycle {
    * this searcher, because in both cases a fresh random sample can contain
    * someone the first one did not (D3).
    */
-  private async search(sessionId: string): Promise<SearchOutcome> {
+  private async search(sessionId: string, segment = this.segment): Promise<SearchOutcome> {
     let waiting = 0;
     for (let attempt = 0; attempt < this.config.matchmaking.retryAttempts; attempt += 1) {
       this.observer?.attempt();
-      const result = await this.store.tryMatch(sessionId, this.segment, newMatchId());
+      // The segment is read once by the caller and passed down rather than
+      // re-read on every retry: a session cannot change lanes mid-search, and a
+      // read per attempt would be a Redis round trip inside the loop that
+      // exists to be fast.
+      const result = await this.store.tryMatch(sessionId, segment, newMatchId());
 
       if (result.status === 'matched') {
         return this.announceMatch(sessionId, result.matchId, result.partnerSessionId);
