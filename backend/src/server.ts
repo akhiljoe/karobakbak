@@ -1285,6 +1285,18 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           startedAt: outcome.startedAt,
           you: outcome.you,
           partner: outcome.partner,
+          /*
+            The searcher's half of the pair of tokens minted in `announceMatch`.
+
+            It was missing, and the asymmetry is the reason it went unnoticed:
+            the *waiting* side is told about the match by a frame `lifecycle`
+            builds and publishes, which carried the token from the start, while
+            the side that pressed Start is told by this frame, which is built
+            here from the outcome and did not. So half of every conversation
+            recorded a Recent row it could never act on, and which half depended
+            on who had been waiting.
+          */
+          partnerPresence: outcome.partnerPresence ?? null,
         });
         return;
       case 'searching':
