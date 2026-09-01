@@ -40,8 +40,9 @@
  * deliberately does neither. This one is a choice somebody can decline.
  */
 import { useEffect, useState } from 'react';
-import { LogIn, X } from 'lucide-react';
+import { LogIn, User, X } from 'lucide-react';
 
+import { clientConfig } from '../config';
 import { SIGNIN_PROVIDER } from '../features';
 import type { Session } from '../hooks/useSession';
 import { Button } from './Button';
@@ -90,6 +91,11 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   // header; if the person abandons the popup, reopening the dialog resets it.
   const busyLabel = leaving ? 'Waiting for the sign-in window…' : null;
 
+  // The published Terms when there is one, the in-app page otherwise. Same
+  // fallback the age gate uses, for the same reason: a development build has
+  // nowhere public to point and must not link nowhere.
+  const termsUrl = clientConfig.legal.termsUrl !== '' ? clientConfig.legal.termsUrl : '/terms';
+
   const signOut = (): void => {
     void session.signOut().then((confirmed) => {
       setSignOutFailed(!confirmed);
@@ -112,28 +118,41 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
       <div className="relative w-full max-w-sm animate-fade-in rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl sm:p-5">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
 
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            {/*
-              The mark, at the size the header uses. The dialog is the one place
-              in the product that sends somebody to a different origin, so it is
-              the one place worth restating whose sign-in this is — the next
-              thing they see is Google's page, and a person who cannot remember
-              what they clicked from is a person who should not be typing a
-              password.
-            */}
-            <LogoMark size={22} />
-            <h2 className="font-display text-lg font-semibold text-ink-50">
-              {session.signedIn ? 'Your account' : 'Sign in'}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        {/*
+          The close control sits alone in the corner rather than in a row with
+          the heading, because the heading is centred now and a flex row with an
+          X on one end pulls it off centre by exactly the width of the X.
+        */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute right-3 top-3 rounded-lg p-1.5 text-ink-400 transition-colors hover:bg-ink-800 hover:text-ink-100"
+        >
+          <X className="h-5 w-5" />
+        </button>
+
+        <div className="flex flex-col items-center px-2 pb-6 pt-3 text-center">
+          {/*
+            The same round glyph as the header's signed-in control, larger. It
+            is deliberately not the provider's profile picture: see the note on
+            that control in AppHeader for what fetching a photo would cost.
+
+            The karobakbak mark sits underneath rather than here, because this
+            dialog is the one place that sends somebody to another origin and
+            the thing worth being unambiguous about is whose sign-in this is.
+          */}
+          <span className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-ink-800 text-ink-300 ring-1 ring-ink-700">
+            <User className="h-8 w-8" aria-hidden="true" />
+          </span>
+
+          <h2 className="font-display text-xl font-semibold text-ink-50">
+            {session.signedIn ? 'Your account' : 'Sign in to continue'}
+          </h2>
+
+          <span className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-500">
+            <LogoMark size={14} />
+            karobakbak
+          </span>
         </div>
 
         {session.signedIn ? (
@@ -165,10 +184,10 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
                 type="button"
                 onClick={signIn}
                 disabled={leaving}
-                className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl bg-white px-4 text-[15px] font-medium text-[#1f1f1f] shadow-sm transition-all hover:bg-ink-100 active:scale-[0.99] disabled:cursor-default disabled:opacity-60"
+                className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-ink-600 bg-ink-800 px-4 text-[15px] font-medium text-ink-50 transition-all hover:border-ink-500 hover:bg-ink-700 active:scale-[0.99] disabled:cursor-default disabled:opacity-60"
               >
                 <GoogleMark />
-                {busyLabel ?? 'Continue with Google'}
+                {busyLabel ?? 'Sign in with Google'}
               </button>
             ) : (
               <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
@@ -176,6 +195,29 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
                 {busyLabel ?? 'Continue to sign in'}
               </Button>
             )}
+
+            {/*
+              The one line of prose left, and it is not a benefit — it is the
+              agreement being entered into by pressing the button above, which
+              is the moment it is worth saying.
+
+              Rendered only when there is somewhere for it to point.
+              `VITE_TERMS_URL` is empty in a development build on purpose, and
+              the in-app /terms route is the fallback; a link to nothing would
+              be worse than no link, which is the same rule the age gate follows.
+            */}
+            <p className="mt-4 text-center text-xs leading-relaxed text-ink-500">
+              By continuing you agree to our{' '}
+              <a
+                href={termsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-ink-300 underline underline-offset-2 transition-colors hover:text-amber-300"
+              >
+                Terms
+              </a>
+              .
+            </p>
           </>
         )}
       </div>
