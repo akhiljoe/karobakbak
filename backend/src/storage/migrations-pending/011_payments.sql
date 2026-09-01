@@ -39,21 +39,19 @@
 -- promise would quietly stop being true.
 
 -- ---------------------------------------------------------------------------
--- The entitlement
+-- The entitlement lives in `017_premium_entitlement.sql`, already applied
 -- ---------------------------------------------------------------------------
--- On `accounts` rather than in a subscriptions table, because there is one
--- entitlement and it is a deadline. A table would model a billing history that
--- Razorpay already holds authoritatively; this column answers the only question
--- the running server ever asks, which is "is this account premium right now".
+-- `premium_until` and its index used to be added here, which coupled writing an
+-- entitlement to enforcing one. Enforcement was the half that was missing: the
+-- column was written by the webhook below and read by nothing, while
+-- preferences were gated on the process-wide `FILTERS_ENABLED`. Paying would
+-- have changed nothing either way, and the first person to notice would have
+-- been the first person to pay.
 --
--- Null means never subscribed. A past timestamp means lapsed. The two are
--- distinguishable on purpose: "lapsed" is a thing a support conversation needs
--- to be able to tell from "never had it".
-alter table accounts add column if not exists premium_until timestamptz;
-
-create index if not exists accounts_premium_idx
-  on accounts (premium_until)
-  where premium_until is not null;
+-- The column now ships ahead of payments so the gate can be tested closed —
+-- with nothing purchasable, no account has a future deadline and no preference
+-- is ever applied. Nothing in this file needs it to be here; the repository
+-- writes a column that already exists.
 
 -- ---------------------------------------------------------------------------
 -- Orders

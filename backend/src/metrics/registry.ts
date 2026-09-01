@@ -154,6 +154,12 @@ export interface Metrics {
    * people who advance quickly. A rising `budget` rate is the one to read:
    * either somebody is hunting, or the hourly number is too small for how the
    * feature is actually used.
+   *
+   * `not_premium` is the entitlement, and while nothing can be bought it is
+   * every preference-carrying search there is. Once payments ship it becomes
+   * the interesting one: a client sending preferences for an account without
+   * the entitlement is either a stale UI or somebody probing, and either is
+   * worth knowing about.
    */
   readonly preferenceLimited: Counter<'reason'>;
 

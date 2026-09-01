@@ -72,6 +72,15 @@ export interface RedisKeys {
   /** STRING — connection attempts from one IP hash in the current window. */
   connRate(ipHash: string): string;
   /**
+   * STRING — a cached premium deadline for one account, or the empty string.
+   *
+   * A cache, never the truth: `accounts.premium_until` is, because Redis runs
+   * with persistence off (D12) and an entitlement that vanished on restart
+   * would be a refund nobody asked for. The empty string is a cached negative,
+   * which is the case worth caching — almost every account is in it.
+   */
+  premium(accountId: string): string;
+  /**
    * STRING — when this IP hash last had a matching preference applied.
    *
    * Keyed on the IP hash rather than the session, unlike every other limiter
@@ -190,6 +199,7 @@ export function createKeys(prefix: string): RedisKeys {
     rateLimit: (command, sid) =>
       `${prefix}:rl:${assertComponent(command, 'command')}:${assertComponent(sid, 'session id')}`,
     connRate: (ipHash) => `${prefix}:rl:conn:${assertComponent(ipHash, 'ip hash')}`,
+    premium: (accountId) => `${prefix}:premium:${assertComponent(accountId, 'account id')}`,
     preferenceCooldown: (ipHash) =>
       `${prefix}:pref:cd:${assertComponent(ipHash, 'ip hash')}`,
     preferenceBudget: (ipHash) =>

@@ -25,6 +25,7 @@ import { createAuthRoutes, type AuthRoutes } from './accounts/routes';
 import { createOidcClient } from './accounts/oidc';
 import { createConnectionRepository, type ConnectionRepository } from './accounts/connections';
 import { createBlockRepository, type BlockRepository } from './accounts/blocks';
+import { createEntitlementService, type EntitlementService } from './accounts/entitlement';
 import { createPresenceService, type PresenceService } from './accounts/presence';
 import { randomBytes } from 'node:crypto';
 
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
   let connections: ConnectionRepository | undefined;
   let accountBlocks: BlockRepository | undefined;
   let presence: PresenceService | undefined;
+  let entitlement: EntitlementService | undefined;
   if (config.auth.enabled && database !== null) {
     connections = createConnectionRepository(database, logger);
     accountBlocks = createBlockRepository(
@@ -173,6 +175,12 @@ async function main(): Promise<void> {
       config.blocks.ttlSeconds,
     );
     presence = createPresenceService(database, clients.command, logger, config.redis.keyPrefix);
+    entitlement = createEntitlementService(
+      database,
+      clients.command,
+      logger,
+      config.redis.keyPrefix,
+    );
     auth = createAuthRoutes({
       config,
       logger,
@@ -274,6 +282,7 @@ async function main(): Promise<void> {
     metrics,
     payments,
     accountPresence: presence ?? null,
+    entitlement: entitlement ?? null,
     auth,
     connections,
     // The backup job reports inward; nothing here reaches out to look.

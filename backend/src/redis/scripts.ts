@@ -869,8 +869,22 @@ local budget = tonumber(ARGV[3])
 local ttl = tonumber(ARGV[4])
 local now = nowMs()
 
-local ipHash = redis.call('HGET', KEYS[1], 'ipHash')
+local row = redis.call('HMGET', KEYS[1], 'ipHash', 'premiumUntil')
+local ipHash = row[1]
 if (not ipHash) or ipHash == '' then return { 'NO_SESSION' } end
+
+-- The entitlement, checked before either limit and consuming nothing.
+--
+-- Read from the session's own row, stamped by the server when the connection
+-- bound an account. A session that never signed in has no deadline, an account
+-- that never paid has a zero, and a lapsed one has a past timestamp -- all three
+-- answer the same way, because the caller does the same thing with all three.
+--
+-- Ordered first on purpose: somebody who is not premium must not spend a
+-- preference budget they do not have, and must not be held by a cooldown that
+-- exists to bound a dimension they are not being given.
+local premiumUntil = tonumber(row[2]) or 0
+if premiumUntil <= now then return { 'NOT_PREMIUM' } end
 
 -- The cooldown is checked before the budget and consumes nothing, so a search
 -- refused here does not also spend a token it was never allowed to use.
