@@ -55,8 +55,14 @@ export interface Session {
   readonly checking: boolean;
   /** What the callback just reported, once, or null. */
   readonly outcome: SigninOutcome | null;
-  /** Leave for the provider. Does not return. */
-  signIn(): void;
+  /**
+   * Start signing in.
+   *
+   * Answers whether a window opened. `allowRedirect` false suppresses the
+   * full-page fallback, for callers that would lose something by navigating —
+   * a live conversation being the one that matters.
+   */
+  signIn(allowRedirect?: boolean): boolean;
   /** Revoke. Resolves false when the server did not confirm it. */
   signOut(): Promise<boolean>;
   /** Acknowledge the outcome so it stops being shown. */
@@ -113,12 +119,22 @@ export function useSession(): Session {
    *
    * Neither path trusts what it is told. Both end in `readSession`.
    */
-  const signIn = useCallback((): void => {
+  const signIn = useCallback((allowRedirect = true): boolean => {
     const popup = openSignInPopup();
     if (popup === null) {
-      // Refused. A full-page redirect is a worse experience and a working one.
+      /*
+       * Refused. A full-page redirect is a worse experience and a working one —
+       * except from inside a conversation, where it is neither.
+       *
+       * The socket dies with the navigation and `RESUME_GRACE_SECONDS` is 20,
+       * so a round trip through the provider will not finish inside the window
+       * that holds the seat. The stranger waits, times out, and is gone. That is
+       * a real loss to trade for a sign-in nobody asked to prioritise, so the
+       * caller is told instead and can say so.
+       */
+      if (!allowRedirect) return false;
       beginSignIn();
-      return;
+      return true;
     }
 
     popup.focus();
@@ -154,6 +170,7 @@ export function useSession(): Session {
     watcher = window.setInterval(() => {
       if (popup.closed) finish(null);
     }, 400);
+    return true;
   }, []);
 
   const signOut = useCallback(async (): Promise<boolean> => {

@@ -108,6 +108,10 @@ export function App(): JSX.Element {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  // Why the sign-in dialog was opened, when something asked for it. Cleared on
+  // close, so opening it from the header later does not inherit an explanation
+  // for something the person is no longer doing.
+  const [authReason, setAuthReason] = useState<string | null>(null);
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
   /**
@@ -361,7 +365,10 @@ export function App(): JSX.Element {
         onHome={chat.leave}
         onOpenFilters={() => setFiltersOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAuth={() => setAuthOpen(true)}
+        onOpenAuth={() => {
+          setAuthReason(null);
+          setAuthOpen(true);
+        }}
         session={session}
       />
 
@@ -380,6 +387,10 @@ export function App(): JSX.Element {
               history={history}
               onClearHistory={() => setHistory(clearHistory())}
               signedIn={session.signedIn}
+              onOpenAuth={(reason) => {
+                setAuthReason(reason);
+                setAuthOpen(true);
+              }}
               onTyping={chat.typing}
               onReact={chat.react}
               onSaveConnection={chat.saveConnection}
@@ -451,7 +462,15 @@ export function App(): JSX.Element {
         server has the four routes registered at all.
       */}
       {ACCOUNTS_ENABLED && (
-        <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} session={session} />
+        <AuthModal
+          open={authOpen}
+          reason={authReason}
+          onClose={() => {
+            setAuthOpen(false);
+            setAuthReason(null);
+          }}
+          session={session}
+        />
       )}
 
       <SafetySheet
