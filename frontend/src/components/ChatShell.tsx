@@ -16,6 +16,7 @@ import {
   UserPlus,
   X,
   Users,
+  Flag,
 } from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
@@ -267,7 +268,7 @@ export function ChatShell({
             urgent and not frequent, so it costs a tap; Block stays out here for
             the opposite reason — see the note above.
           */}
-          {chatting && ACCOUNTS_ENABLED && (
+          {chatting && (
             <div className="relative shrink-0">
               <button
                 onClick={() => setMoreOpen((was) => !was)}
@@ -289,6 +290,7 @@ export function ChatShell({
                   aria-label="This stranger"
                   className="absolute right-0 top-full z-40 mt-2 w-48 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 p-1 shadow-lift"
                 >
+                  {ACCOUNTS_ENABLED && (
                   <button
                     role="menuitem"
                     onClick={() => {
@@ -323,6 +325,7 @@ export function ChatShell({
                         ? 'Cancel request'
                         : 'Add friend'}
                   </button>
+                  )}
 
                   {/*
                     Said here because here is where it is asked. A request that
@@ -330,28 +333,60 @@ export function ChatShell({
                     silence is the whole point: telling them you asked would
                     disclose it without the reciprocity it was conditional on.
                   */}
-                  {!state.connectionMade && (
+                  {ACCOUNTS_ENABLED && !state.connectionMade && (
                     <p className="px-3 pb-2 pt-0.5 text-[11px] leading-relaxed text-ink-500">
                       {state.connectionSaved
                         ? 'Sent. They are told only if they add you too.'
                         : 'They are told only if they add you back.'}
                     </p>
                   )}
+
+                  {/*
+                    Block and Report, in the same menu as Add friend rather than
+                    beside it in the header. One control about this person, not
+                    three competing for a phone's width.
+
+                    Block keeps its own colour and sits directly above Report.
+                    It was a labelled button out here for a reason worth
+                    restating: it has to be findable in a hurry by somebody who
+                    is uncomfortable, and behind a menu that costs a tap. What
+                    the tap buys is that the menu is *one* place, in the header,
+                    beside who it is about — rather than a control the eye has
+                    to find among others. If that trade ever reads wrong, this
+                    is the note to reverse.
+                  */}
+                  {state.features.block && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        onBlockAndNext();
+                        setMoreOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
+                    >
+                      <ShieldX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      Block and find someone else
+                    </button>
+                  )}
+
+                  {safetyAvailable && (
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        onOpenSafety();
+                        setMoreOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50"
+                    >
+                      <Flag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      Report
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          {chatting && state.features.block && (
-            <button
-              onClick={onBlockAndNext}
-              aria-label="Block this stranger and find someone else"
-              className="inline-flex h-12 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border border-rose-500/30 text-rose-400/90 transition-all hover:border-rose-500/60 hover:bg-rose-500/10 active:scale-95"
-            >
-              <ShieldX className="h-4 w-4" />
-              <span className="text-[0.65rem] font-medium leading-none">Block</span>
-            </button>
-          )}
 
           {/*
             Reporting is a *considered* action — pick a category, maybe write a
@@ -363,15 +398,6 @@ export function ChatShell({
             report needs the match that is being reported, so there is no
             reporting from the ended screen.
           */}
-          {chatting && safetyAvailable && (
-            <button
-              onClick={onOpenSafety}
-              aria-label="Safety and reporting options"
-              className="inline-flex h-12 w-9 shrink-0 items-center justify-center rounded-xl text-ink-400 transition-all hover:bg-ink-800 hover:text-ink-100 active:scale-95"
-            >
-              <MoreVertical className="h-5 w-5" />
-            </button>
-          )}
 
           {searching && (
             <button
