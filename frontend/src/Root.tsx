@@ -42,6 +42,7 @@ import { NotFound } from './components/NotFound';
 import { SitePage } from './components/SitePage';
 import { STATIC_PAGES } from './content/pages';
 import { useRoute } from './router';
+import { useSession } from './hooks/useSession';
 
 /** Path to page, built from the content so the two cannot disagree. */
 const PAGES = new Map(STATIC_PAGES.map((page) => [`/${page.id}`, page]));
@@ -49,6 +50,10 @@ const PAGES = new Map(STATIC_PAGES.map((page) => [`/${page.id}`, page]));
 export function Root(): JSX.Element {
   const path = useRoute();
   const [signInOpen, setSignInOpen] = useState(false);
+  // Above every early return, because hooks are unconditional. Only one of
+  // these two mount sites is ever live — `/premium` renders instead of `App`,
+  // never beside it — so this is one session check, not two.
+  const session = useSession();
 
   if (path === '/') return <App />;
 
@@ -84,7 +89,7 @@ export function Root(): JSX.Element {
             onSignIn={() => setSignInOpen(true)}
             credential={clientConfig.devAccountCredential || null}
           />
-          <AuthModal open={signInOpen} onClose={() => setSignInOpen(false)} />
+          <AuthModal open={signInOpen} onClose={() => setSignInOpen(false)} session={session} />
         </>
       );
     }

@@ -1,57 +1,53 @@
 /**
- * The sign-in surface — premium only, and switched off.
+ * The sign-in surface.
  *
  * ---------------------------------------------------------------------------
- * THIS COMPONENT IS NOT REACHABLE IN THIS BUILD
+ * WHAT THIS REPLACED, AND WHY IT HAD TO GO
  * ---------------------------------------------------------------------------
- * `ACCOUNTS_ENABLED` in `features.ts` is `false`, and `App.tsx` does not mount
- * this at all while it is. The file exists so the design work survives until
- * the decision that gates it is made, and turning the flag on is a commit
- * rather than a deploy.
+ * This was a magic-link email form gated on `ACCOUNTS_ENABLED && PAYMENTS_ENABLED`,
+ * whose copy read "Only for premium subscriptions". Both halves were wrong by
+ * the time sign-in was built:
+ *
+ *  * The protocol is OIDC against a hosted provider (§32, D48). There is no
+ *    address to collect here and no mail to send — the provider owns the
+ *    credential entirely, which is the point of choosing it.
+ *  * Signing in is **free** (§31). Coupling it to `PAYMENTS_ENABLED` would have
+ *    hidden a free feature behind a paid flag, with nothing in the types to
+ *    notice. Premium is the asymmetric matching preferences and nothing else.
  *
  * ---------------------------------------------------------------------------
- * WHY THE PASSWORD FIELDS ARE GONE
+ * WHY THERE IS NO FORM
  * ---------------------------------------------------------------------------
- * This was an email-and-password form with sign-in and sign-up modes. It is now
- * a single one-time link, because the account it guards is a subscription and
- * nothing else.
- *
- * A password is a credential this service would have to store, reset, rate
- * limit and one day be breached over, in exchange for protecting a ₹99
- * subscription that holds no conversation history. A link sent to the address
- * that already identifies the subscription is strictly less to get wrong, and
- * it keeps the account surface as small as the rest of the product claims: an
- * address and a subscription state, nothing that describes a person.
+ * One button that leaves. Anything typed here would be a credential this
+ * origin had touched, and the reason for an external provider is that it never
+ * does. The button navigates; it does not submit, fetch or validate.
  *
  * ---------------------------------------------------------------------------
- * NO AUTHENTICATION CLIENT, DELIBERATELY
+ * WHAT IT PROMISES IS BOUNDED BY WHAT IS BUILT
  * ---------------------------------------------------------------------------
- * No Supabase, no token storage, no network call of any kind. The original
- * design shipped with a hosted auth provider wired in; that was removed rather
- * than disabled, because a credential form pointed at a live external service
- * is not something to leave one boolean away from working. `onSubmit` is where
- * a real implementation goes, and it is the only way anything leaves here.
+ * Saved connections and history are what an account gates (§31). The copy says
+ * exactly those and does not mention friend requests, which are specified and
+ * not yet built — a list of benefits is a claim, and one item of it being
+ * aspirational makes the whole list untrustworthy.
  *
- * While `PAYMENTS_ENABLED` is false the form says nothing was sent, rather than
- * showing "check your inbox" for a mail that will never arrive. A fake success
- * state is the most disorienting thing an unfinished flow can do, because the
- * person goes away and waits for it.
+ * It closes on Escape and on the backdrop, unlike the age gate, which
+ * deliberately does neither. This one is a choice somebody can decline.
  */
 import { useEffect, useState } from 'react';
-import { Mail, X } from 'lucide-react';
+import { LogIn, ShieldCheck, X } from 'lucide-react';
 
-import { ACCOUNTS_ENABLED, PAYMENTS_ENABLED } from '../features';
+import type { Session } from '../hooks/useSession';
 import { Button } from './Button';
 
 interface AuthModalProps {
   open: boolean;
   onClose(): void;
-  /** Where a real implementation would take over. Never called while disabled. */
-  onSubmit?(email: string): void;
+  session: Session;
 }
 
-export function AuthModal({ open, onClose, onSubmit }: AuthModalProps): JSX.Element | null {
-  const [email, setEmail] = useState('');
+export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Element | null {
+  const [leaving, setLeaving] = useState(false);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -62,16 +58,27 @@ export function AuthModal({ open, onClose, onSubmit }: AuthModalProps): JSX.Elem
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // A modal that is reopened after a failed sign-out should not still be
+  // showing the failure from last time.
+  useEffect(() => {
+    if (!open) setSignOutFailed(false);
+  }, [open]);
+
   if (!open) return null;
 
-  const live = ACCOUNTS_ENABLED && PAYMENTS_ENABLED;
+  const signIn = (): void => {
+    // The page is about to be replaced, so this flag only ever un-sets by the
+    // navigation not happening. That is the case it is for: a blocked or
+    // failed redirect otherwise leaves a button that looks untouched.
+    setLeaving(true);
+    session.signIn();
+  };
 
-  const submit = (event: React.FormEvent): void => {
-    event.preventDefault();
-    // The guard is here as well as at the mount site: a component that can
-    // submit an address should refuse to do so itself, not rely on its parent.
-    if (!live || !onSubmit) return;
-    onSubmit(email);
+  const signOut = (): void => {
+    void session.signOut().then((confirmed) => {
+      setSignOutFailed(!confirmed);
+      if (confirmed) onClose();
+    });
   };
 
   return (
@@ -79,7 +86,7 @@ export function AuthModal({ open, onClose, onSubmit }: AuthModalProps): JSX.Elem
       className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
       role="dialog"
       aria-modal="true"
-      aria-label="Sign in"
+      aria-label={session.signedIn ? 'Account' : 'Sign in'}
     >
       <div
         className="absolute inset-0 animate-fade-in bg-ink-950/70 backdrop-blur-sm"
@@ -90,7 +97,9 @@ export function AuthModal({ open, onClose, onSubmit }: AuthModalProps): JSX.Elem
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
 
         <div className="mb-1 flex items-start justify-between gap-4">
-          <h2 className="font-display text-lg font-semibold text-ink-50">Sign in</h2>
+          <h2 className="font-display text-lg font-semibold text-ink-50">
+            {session.signedIn ? 'Your account' : 'Sign in'}
+          </h2>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -100,49 +109,46 @@ export function AuthModal({ open, onClose, onSubmit }: AuthModalProps): JSX.Elem
           </button>
         </div>
 
-        <p className="mb-4 text-sm leading-relaxed text-ink-400">
-          Only for premium subscriptions. Chatting needs no account and never will.
-        </p>
+        {session.signedIn ? (
+          <>
+            <p className="mb-4 text-sm leading-relaxed text-ink-400">
+              You are signed in. Saved connections and recent conversations are kept on this
+              account.
+            </p>
 
-        <form onSubmit={submit}>
-          <label htmlFor="signin-email" className="mb-1.5 block text-sm text-ink-300">
-            Email address
-          </label>
-          <div className="relative">
-            <Mail
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500"
-              aria-hidden="true"
-            />
-            <input
-              id="signin-email"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@example.com"
-              disabled={!live}
-              className="h-12 w-full rounded-xl border border-ink-700 bg-ink-950 pl-9 pr-3 text-base text-ink-100 placeholder:text-ink-600 focus:border-amber-400/60 focus:outline-none focus:ring-2 focus:ring-amber-400/25 disabled:opacity-50"
-            />
-          </div>
-
-          <div className="mt-3">
-            <Button size="lg" className="w-full" disabled={!live}>
-              Send me a sign-in link
+            <Button size="lg" className="w-full" onClick={signOut}>
+              Sign out
             </Button>
-          </div>
-        </form>
 
-        {!live && (
-          <p className="mt-3 rounded-lg border border-dashed border-amber-400/40 bg-amber-400/5 px-3 py-2.5 text-sm leading-relaxed text-ink-400">
-            <span className="font-medium text-amber-300">Not live yet.</span> Subscriptions are not
-            open, so there is nothing to sign in to and no mail will be sent.
-          </p>
+            {signOutFailed && (
+              <p className="mt-3 rounded-lg border border-dashed border-amber-400/40 bg-amber-400/5 px-3 py-2.5 text-sm leading-relaxed text-ink-400">
+                <span className="font-medium text-amber-300">Still signed in.</span> We could not
+                reach the server, so nothing was revoked. Try again.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="mb-4 text-sm leading-relaxed text-ink-400">
+              Signing in is free. It keeps the strangers you saved and your recent conversations,
+              so they survive closing the tab.
+            </p>
+
+            <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
+              <LogIn className="mr-2 h-4 w-4" aria-hidden="true" />
+              {leaving ? 'Taking you there…' : 'Continue to sign in'}
+            </Button>
+
+            <p className="mt-4 flex gap-2 text-xs leading-relaxed text-ink-500">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ink-600" aria-hidden="true" />
+              <span>
+                You will finish on our sign-in provider's page, not here — check the address bar
+                before you type anything. Chatting never needs an account, and what you say in a
+                conversation is not attached to one.
+              </span>
+            </p>
+          </>
         )}
-
-        <p className="mt-4 text-xs leading-relaxed text-ink-500">
-          No password to forget, and none for us to lose. The address identifies the subscription
-          and nothing else — your conversations are not linked to it.
-        </p>
       </div>
     </div>
   );

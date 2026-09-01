@@ -5,9 +5,12 @@
  * are (`PresencePayload.approximate` is literally `true`), and they appear only
  * when the server said it supports presence at all.
  *
- * The sign-in control is absent rather than disabled: `ACCOUNTS_ENABLED` is
- * false and a button that opens a screen explaining it does nothing is worse
- * than no button.
+ * The sign-in control is absent rather than disabled whenever it would be
+ * wrong: `ACCOUNTS_ENABLED` off, and also for the moment before the first
+ * `/auth/session` answer arrives. Rendering "Sign in" during that moment and
+ * swapping it to "Account" is a visible flicker that tells the user something
+ * false in between, and the something-false is what a header should never do.
+ * The check is one same-origin request, so the gap is not perceptible.
  *
  * The filter control is now the same case. It used to render always and open a
  * modal whose contents were a "Part of Premium" lock — a control on the chat
@@ -18,6 +21,7 @@
 import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
 import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from '../features';
+import type { Session } from '../hooks/useSession';
 import { LogoMark } from './Logo';
 import { SiteNav, SiteNavLinks } from './SiteNav';
 import type { ChatState } from '../state/machine';
@@ -29,6 +33,7 @@ interface AppHeaderProps {
   onOpenFilters(): void;
   onOpenSettings(): void;
   onOpenAuth(): void;
+  session: Session;
 }
 
 export function AppHeader({
@@ -37,6 +42,7 @@ export function AppHeader({
   onOpenFilters,
   onOpenSettings,
   onOpenAuth,
+  session,
 }: AppHeaderProps): JSX.Element {
   const presence = state.features.presence ? state.presence : null;
 
@@ -120,13 +126,23 @@ export function AppHeader({
           <Settings className="h-3.5 w-3.5" />
         </button>
 
-        {ACCOUNTS_ENABLED && (
+        {ACCOUNTS_ENABLED && !session.checking && (
           <button
             onClick={onOpenAuth}
-            aria-label="Sign in or create account"
-            className="inline-flex h-9 items-center gap-1 rounded-lg bg-amber-400 px-3 text-sm font-semibold text-ink-950 transition-all hover:bg-amber-300 active:scale-95"
+            aria-label={session.signedIn ? 'Your account' : 'Sign in'}
+            /*
+              Signed out it is the amber call to action; signed in it is a quiet
+              control like Settings beside it. Being signed in is a state, not
+              something to be urged towards, and leaving the loud styling on
+              would keep asking for something already done.
+            */
+            className={
+              session.signedIn
+                ? 'inline-flex h-9 items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 px-3 text-sm text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95'
+                : 'inline-flex h-9 items-center gap-1 rounded-lg bg-amber-400 px-3 text-sm font-semibold text-ink-950 transition-all hover:bg-amber-300 active:scale-95'
+            }
           >
-            Sign in
+            {session.signedIn ? 'Account' : 'Sign in'}
           </button>
         )}
       </div>
