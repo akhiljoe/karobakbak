@@ -329,6 +329,17 @@ class UnexpectedScriptReplyError extends Error {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * A stored nickname, or null for anything that is not a non-empty string.
+ *
+ * An empty string is treated as absent rather than shown: it would render as a
+ * blank label with no way for either side to refer to the other, which is worse
+ * than the fresh name the caller draws instead.
+ */
+function nickFromReply(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length > 0 ? raw : null;
+}
+
+/**
  * Rebuild a profile from three raw hash fields.
  *
  * Returns null when nothing was declared, so "no profile" and "a profile of
@@ -1018,6 +1029,50 @@ export class RedisStore {
       a: profileFromFields(results?.[0]?.[1]),
       b: profileFromFields(results?.[1]?.[1]),
     };
+  }
+
+  /**
+   * Pin the display nickname to the session.
+   *
+   * A plain `HSET`, for the same reason `setAccount` below is one: a fact about
+   * one connection, written once by that connection, that no matchmaking
+   * transition branches on. It is written immediately after `createSession`
+   * rather than inside its Lua because nothing races for it — no other instance
+   * has heard of this session yet.
+   *
+   * Being on the session hash is what scopes it: the hash is the session, so
+   * the nickname lives exactly as long as one and needs nothing to clean it up.
+   * A resume re-attaches the same hash, so reconnecting inside the grace window
+   * keeps the name, which is the same continuity the resume exists to provide.
+   */
+  async setNickname(sessionId: string, nickname: string): Promise<void> {
+    await this.client.hset(this.keys.session(sessionId), 'nick', nickname);
+  }
+
+  /**
+   * Both sides' nicknames, for the match about to be announced.
+   *
+   * Deliberately its own method and its own pipeline rather than another field
+   * on `readProfiles`. That field list is exhaustive on purpose — a value never
+   * read there can never reach a stranger's screen — and widening it for an
+   * unrelated value is how that guarantee stops being one. This is off the
+   * message path, on the same branch as the profile read, so the second round
+   * trip costs a match nothing anybody can perceive.
+   *
+   * Null for a session whose hash has expired, or one created before nicknames
+   * were stored. The caller draws a fresh name for it.
+   */
+  async readNicknames(
+    sessionA: string,
+    sessionB: string,
+  ): Promise<{ a: string | null; b: string | null }> {
+    const results = await this.client
+      .pipeline()
+      .hget(this.keys.session(sessionA), 'nick')
+      .hget(this.keys.session(sessionB), 'nick')
+      .exec();
+
+    return { a: nickFromReply(results?.[0]?.[1]), b: nickFromReply(results?.[1]?.[1]) };
   }
 
   /**

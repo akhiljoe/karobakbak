@@ -109,6 +109,57 @@ describe('joinQueue', () => {
     expect(result.you.colour).not.toBe(result.partner.colour);
   });
 
+  it('shows the same nickname to every stranger a session meets', async () => {
+    /*
+     * The reason the nickname moved onto the session hash. A name redrawn per
+     * match made somebody unrecognisable in Recent, and unrecognisable across a
+     * skip that paired the same two people again.
+     *
+     * Asserted from the *partner's* side of two separate matches, because that
+     * is where it is visible: what one session shows to the strangers it meets.
+     */
+    const ctx = build();
+    ctx.store.seedSession({ sessionId: 's_a' });
+    ctx.store.seedSession({ sessionId: 's_b' });
+    ctx.store.seedSession({ sessionId: 's_c' });
+    ctx.store.nicknames.set('s_a', 'Gentle Otter');
+
+    await ctx.lifecycle.joinQueue('s_a');
+    const first = await ctx.lifecycle.joinQueue('s_b');
+    expect(first.kind).toBe('matched');
+    if (first.kind !== 'matched') return;
+    expect(first.partner.nickname).toBe('Gentle Otter');
+
+    // Skipped by `s_a`, so `s_a` searches again and `s_b` is left idle. The
+    // other way round leaves both searching and they simply re-pair with each
+    // other, which is a match but not a second stranger.
+    await ctx.lifecycle.skip('s_a');
+    const second = await ctx.lifecycle.joinQueue('s_c');
+    expect(second.kind).toBe('matched');
+    if (second.kind !== 'matched') return;
+    expect(second.partner.nickname).toBe('Gentle Otter');
+  });
+
+  it('keeps the waiting name and redraws the arriving one on a collision', async () => {
+    // Both sessions drew the same name independently. The one already using it
+    // with other people keeps it; the newcomer changes for this match only.
+    const ctx = build();
+    ctx.store.seedSession({ sessionId: 's_a' });
+    ctx.store.seedSession({ sessionId: 's_b' });
+    ctx.store.nicknames.set('s_a', 'Gentle Otter');
+    ctx.store.nicknames.set('s_b', 'Gentle Otter');
+
+    await ctx.lifecycle.joinQueue('s_a');
+    const result = await ctx.lifecycle.joinQueue('s_b');
+    expect(result.kind).toBe('matched');
+    if (result.kind !== 'matched') return;
+    expect(result.partner.nickname).toBe('Gentle Otter');
+    expect(result.you.nickname).not.toBe('Gentle Otter');
+    // Never written back: a stranger colliding with somebody must not be able
+    // to change the name they use with everybody else.
+    expect(ctx.store.nicknames.get('s_b')).toBe('Gentle Otter');
+  });
+
   it('tells the partner, with the identities swapped', async () => {
     const ctx = build();
     ctx.store.seedSession({ sessionId: 's_a' });

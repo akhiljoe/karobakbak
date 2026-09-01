@@ -180,6 +180,17 @@ export class FakeStore implements LifecycleStore {
     return { status: 'ok' };
   }
 
+  /** Session-scoped nicknames, keyed by session, as the real store holds them. */
+  readonly nicknames = new Map<string, string>();
+
+  async setNickname(sessionId: string, nickname: string): Promise<void> {
+    this.nicknames.set(sessionId, nickname);
+  }
+
+  async readNicknames(a: string, b: string): Promise<{ a: string | null; b: string | null }> {
+    return { a: this.nicknames.get(a) ?? null, b: this.nicknames.get(b) ?? null };
+  }
+
   /** Declared profiles, keyed by session, exactly as the real store holds them. */
   readonly profiles = new Map<string, Profile>();
 
