@@ -81,6 +81,9 @@ export function App(): JSX.Element {
     met.current = {
       at: Date.now(),
       nickname: state.partner.nickname,
+      // What the chat header showed for them. Null when they declared no name,
+      // which is when the nickname is the only thing there has ever been.
+      name: state.partner.profile?.name ?? null,
       colour: state.partner.colour,
       country: state.partner.profile?.country ?? null,
       // Null for a partner who was signed out, or who turned presence off. No
@@ -236,13 +239,8 @@ export function App(): JSX.Element {
   // shown, and this is the one declaration that is not (D45, §30.1).
   const [matchIntent, setMatchIntent] = useState<string | null>(() => loadMatchIntent());
 
-  const showShell = phase === 'searching' || phase === 'chatting';
 
   useMatchNotification({ state, enabled: preferences.notifyOnMatch });
-
-  // Back on a phone should leave the conversation, not the site. Active while
-  // searching too: a search is a thing somebody equally wants to back out of.
-  useBackButton({ active: showShell, onBack: chat.leave });
 
   // Browsers refuse to start audio without a user gesture. Starting a search is
   // the one gesture guaranteed to precede any match, so the context is unlocked
@@ -310,6 +308,26 @@ export function App(): JSX.Element {
     enabled: preferences.autoSearch,
     onSearch: startSearch,
   });
+
+  /*
+    The shell also holds the gap between two conversations.
+
+    Auto-search used to end a conversation by returning to the landing screen
+    and counting down there — the front door, with its heading, its tagline and
+    its footer, between every pair of strangers. Somebody who turned auto-search
+    on has said they are staying, so the countdown belongs where they already
+    are. `autoSearch.secondsLeft` is non-null only while one is running, so an
+    ended conversation with auto-search off still lands on the landing screen,
+    which is right: nothing else is coming.
+  */
+  const advancing = autoSearch.secondsLeft !== null;
+  const showShell = phase === 'searching' || phase === 'chatting' || (phase === 'ended' && advancing);
+
+  // Back on a phone should leave the conversation, not the site. Active while
+  // searching too: a search is a thing somebody equally wants to back out of.
+  // Declared after `showShell` rather than beside the other hooks, because it
+  // is the one that reads it.
+  useBackButton({ active: showShell, onBack: chat.leave });
 
   // Held in the browser, re-sent on every join. The server keeps nothing
   // between sessions, so this is the only place the declaration lives.
@@ -418,6 +436,8 @@ export function App(): JSX.Element {
               state={state}
               connection={connection}
               searching={phase === 'searching'}
+              autoSearchIn={phase === 'ended' ? autoSearch.secondsLeft : null}
+              onCancelAutoSearch={autoSearch.cancel}
               icebreakersEnabled={preferences.icebreakers}
               autoSearch={preferences.autoSearch}
               onToggleAutoSearch={(value) => setPreference('autoSearch', value)}
@@ -509,6 +529,9 @@ export function App(): JSX.Element {
             setAuthReason(null);
           }}
           session={session}
+          // What a full-page redirect would destroy. A blocked popup falls back
+          // to one only when this is false.
+          inConversation={state.matchId !== null}
         />
       )}
 

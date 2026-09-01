@@ -87,8 +87,18 @@ export function LogoMark({
 }
 
 interface LogoProps {
-  /** Mark size; the wordmark scales alongside it. */
+  /** Mark size in pixels. */
   readonly size?: number;
+  /**
+   * Type scale for the word, when the default does not suit the surface.
+   *
+   * The mark and the word are sized separately because the wordmark does *not*
+   * scale with the mark automatically, and a lockup where only one half grew
+   * is worse than either size on its own. The sign-in dialog is the case: it
+   * is the one surface that hands somebody to another origin, so the name has
+   * to be readable at a glance rather than a caption under a button.
+   */
+  readonly wordClassName?: string;
   readonly className?: string;
 }
 
@@ -99,11 +109,17 @@ interface LogoProps {
  * a word rather than a proper noun being announced, which is the tone the whole
  * product is written in.
  */
-export function Logo({ size = 28, className }: LogoProps): JSX.Element {
+export function Logo({
+  size = 28,
+  wordClassName = 'text-base',
+  className,
+}: LogoProps): JSX.Element {
   return (
     <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
       <LogoMark size={size} />
-      <span className="font-display text-base font-semibold tracking-tight text-ink-50">
+      <span
+        className={`font-display font-semibold tracking-tight text-ink-50 ${wordClassName}`}
+      >
         karobakbak
       </span>
     </span>

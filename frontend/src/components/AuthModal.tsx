@@ -23,18 +23,22 @@
  * does. The button navigates; it does not submit, fetch or validate.
  *
  * ---------------------------------------------------------------------------
- * IT MAKES NO CLAIMS AT ALL
+ * IT MAKES EXACTLY ONE CLAIM
  * ---------------------------------------------------------------------------
- * It listed what an account gates and warned about checking the address bar on
- * the provider's page. Both are gone, deliberately: this dialog is opened by
- * somebody who already decided to sign in, and a sales pitch plus a security
- * lecture in front of a single button is a wall of text between a person and
- * the thing they clicked for.
+ * It used to list everything an account gates and warn about checking the
+ * address bar on the provider's page. That was a sales pitch plus a security
+ * lecture in front of a single button, so both went — and the dialog then said
+ * nothing at all, which was the opposite mistake. Opened from the header it
+ * asked somebody to hand themselves to another origin and gave them no reason
+ * to, above a heading that only restated the button.
  *
- * Nothing was traded away to shorten it. The benefits belong on the pages that
- * describe the product, and the address-bar advice is now carried by the thing
- * that actually demonstrates it — a real browser window with its own visible
- * address bar, which is more convincing than a sentence saying to look at one.
+ * So: one heading that is a reason, and one sentence saying what an account
+ * keeps. Connections, and nothing else — see the note beside that copy for why
+ * the sentence has to stay this narrow, and why it never says "profile".
+ *
+ * The address-bar advice stays gone. It is carried by the thing that actually
+ * demonstrates it — a real browser window with its own visible address bar,
+ * which is more convincing than a sentence saying to look at one.
  *
  * It closes on Escape and on the backdrop, unlike the age gate, which
  * deliberately does neither. This one is a choice somebody can decline.
@@ -50,14 +54,14 @@
  * (`AccountMenu`), and this dialog closes itself the moment a session exists.
  */
 import { useEffect, useState } from 'react';
-import { LogIn, User, X } from 'lucide-react';
+import { LogIn, X } from 'lucide-react';
 
 import { clientConfig } from '../config';
 import { SIGNIN_PROVIDER } from '../features';
 import type { Session } from '../hooks/useSession';
 import { Button } from './Button';
 import { GoogleMark } from './GoogleMark';
-import { LogoMark } from './Logo';
+import { Logo } from './Logo';
 
 interface AuthModalProps {
   open: boolean;
@@ -72,6 +76,19 @@ interface AuthModalProps {
    * asked for is left to them to make.
    */
   reason?: string | null;
+  /**
+   * Whether a conversation is live behind this dialog.
+   *
+   * It decides whether a blocked popup may fall back to a full-page redirect,
+   * and it has to be that rather than `reason`, which is what it used to be.
+   * `reason` says why the dialog opened; this says what navigating would
+   * destroy. They agree from Add friend and disagree in exactly the case that
+   * loses somebody their chat: signing in from the header while talking to
+   * a stranger sets no reason, so the redirect was allowed and the socket died
+   * with the navigation. `RESUME_GRACE_SECONDS` is 20, and a round trip through
+   * the provider does not reliably finish inside it.
+   */
+  inConversation?: boolean;
 }
 
 export function AuthModal({
@@ -79,6 +96,7 @@ export function AuthModal({
   onClose,
   session,
   reason = null,
+  inConversation = false,
 }: AuthModalProps): JSX.Element | null {
   const [leaving, setLeaving] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
@@ -128,13 +146,17 @@ export function AuthModal({
     // blocked.
     setLeaving(true);
     /*
-      `reason` is only set when something in the app asked for this — today,
-      pressing Add friend mid-conversation. There a full-page redirect would end
-      the chat, so it is suppressed and the blocked popup is explained instead.
-      Opened from the header, with nothing to lose, the redirect stays the
-      fallback that always works.
+      The redirect fallback is allowed only when there is nothing to lose.
+
+      This asked `reason === null`, which is a different question wearing the
+      same answer most of the time: it permitted the redirect whenever nothing
+      in the app had asked for the dialog. Signing in from the header *during a
+      conversation* is exactly that case, and the navigation ended the chat -
+      the socket dies with the page, and the 20-second grace window does not
+      cover a round trip through the provider. Nothing failed loudly; the chat
+      was simply gone on the way back.
     */
-    const opened = session.signIn(reason === null);
+    const opened = session.signIn(!inConversation);
     if (!opened) {
       setLeaving(false);
       setPopupBlocked(true);
@@ -153,7 +175,18 @@ export function AuthModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
+      /*
+        Centred at every width, which the other modals here are not.
+
+        `FiltersModal`, `ReportDialog` and `SettingsSheet` are bottom sheets on
+        a phone, and rightly: each is a tall scrolling form, so anchoring it to
+        the bottom puts the controls under the thumb and lets the content run
+        off the top. This one is a mark, two lines and a button. Pinned to the
+        bottom it read as a sheet that had failed to fill - most of the screen
+        dimmed and empty above a short panel - and the padding is what keeps it
+        off the edges once it is no longer flush with one.
+      */
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Sign in"
@@ -163,8 +196,13 @@ export function AuthModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-sm animate-fade-in rounded-t-3xl border border-ink-700 bg-ink-900 p-4 shadow-lift sm:rounded-3xl sm:p-5">
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
+      {/*
+        Rounded on all four corners, and no drag handle. Both belonged to the
+        sheet: a handle is an affordance for dragging something away, and this
+        never could be dragged - it is a promise the panel cannot keep, and a
+        floating panel wearing one is stranger still.
+      */}
+      <div className="relative w-full max-w-sm animate-fade-in rounded-3xl border border-ink-700 bg-ink-900 p-5 shadow-lift">
 
         {/*
           The close control sits alone in the corner rather than in a row with
@@ -179,32 +217,62 @@ export function AuthModal({
           <X className="h-5 w-5" />
         </button>
 
-        <div className="flex flex-col items-center px-2 pb-6 pt-3 text-center">
+        <div className="flex flex-col items-center px-2 pb-6 pt-4 text-center">
           {/*
-            The same round glyph as the header's account control, larger. It is
-            deliberately not the provider's profile picture — `AccountMenu` has
-            the note on what fetching a photo would cost.
+            The name, at a size somebody can read.
 
-            The karobakbak mark sits underneath rather than here, because this
-            dialog is the one place that sends somebody to another origin and
-            the thing worth being unambiguous about is whose sign-in this is.
+            This was a generic person glyph in a 64px circle with the mark
+            beneath it at 14px in the dimmest grey on the palette. Both halves
+            were wrong for the one dialog that hands somebody to another
+            origin: the glyph was the same avatar placeholder the header shows
+            for *any* signed-out visitor, so it identified nothing, and it was
+            the largest thing on screen — while the only element that answers
+            "whose sign-in is this" was a caption. Being unambiguous about that
+            is the whole job here, so the lockup does it directly.
           */}
-          <span className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-ink-800 text-ink-300 ring-1 ring-ink-700">
-            <User className="h-8 w-8" aria-hidden="true" />
-          </span>
+          <Logo size={34} wordClassName="text-2xl" className="mb-5" />
 
-          <h2 className="font-display text-xl font-semibold text-ink-50">
+          <h2 className="font-display text-xl font-bold leading-snug text-ink-50">
             Sign in to continue
           </h2>
 
-          <span className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-500">
-            <LogoMark size={14} />
-            karobakbak
-          </span>
+          {/*
+            Why an account is worth having, said once.
 
-          {reason !== null && (
-            <p className="mt-3 max-w-[16rem] text-sm leading-relaxed text-ink-400">{reason}</p>
-          )}
+            When something in the app asked for this, that ask is the reason and
+            it is more specific than anything written here — stacking a general
+            pitch on top of "Sign in to add people you meet" is two answers to a
+            question with one.
+
+            The claim is deliberately narrow, and narrow because it has to be
+            true. An account keeps **connections** — the friends list, and being
+            able to ask somebody to talk again. It does not keep conversations:
+            messages are retained for abuse investigation and are never shown
+            back to anybody (§2.1, §18.2), so "your chats are saved" would be a
+            promise the product does not keep. Recent is not sold here either;
+            it works signed out, in this tab, and saying otherwise would make
+            the sign-in dialog lie about a feature somebody already has.
+
+            "talk to them again", not "keep talking". There is no inbox and no
+            thread to return to: you ask somebody you met to talk again, and the
+            server pairs you if they accept. The shorter phrasing describes a
+            product with private messaging in it.
+
+            It continues the heading rather than restarting it - "Sign in to
+            continue" / "To keep your friends". Both opened with "Sign in" for a
+            while, which reads as the dialog asking twice. That is also why it
+            is the smaller type: the heading is the ask, this is the reason for
+            it, and they were competing at the same size.
+
+            "Account", never "profile". A profile in this product is the name,
+            age, gender and country declared for one conversation, which the
+            server keeps for that conversation and no longer (D34, §24.3). Using
+            the word here would name one thing after another and imply the
+            declared profile is stored, which is exactly what it is not.
+          */}
+          <p className="mt-2 max-w-[17rem] text-xs leading-relaxed text-ink-400">
+            {reason ?? 'To keep your friends, and talk to them again.'}
+          </p>
         </div>
 
         {SIGNIN_PROVIDER === 'google' ? (
