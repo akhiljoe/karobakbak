@@ -169,7 +169,28 @@ describe('verifying the id token', () => {
     await expect(client().exchange('code_1', 'verifier', 'nonce_ok')).resolves.toEqual({
       subject: 'sub_12345',
       email: null,
+      picture: null,
     });
+  });
+
+  it('reads an https picture and refuses anything else', async () => {
+    /*
+     * The claim is about to be turned into an outbound request, so its shape is
+     * checked where it is read rather than trusted downstream. `avatar.ts`
+     * checks the scheme again and pins the host — this is the first of the two,
+     * not the only one.
+     */
+    stubFetch(token({ picture: 'https://lh3.googleusercontent.com/a/abc=s96-c' }));
+    await expect(client().exchange('c', 'v', 'nonce_ok')).resolves.toMatchObject({
+      picture: 'https://lh3.googleusercontent.com/a/abc=s96-c',
+    });
+
+    for (const bad of ['http://lh3.googleusercontent.com/a', 'javascript:alert(1)', 42, null]) {
+      stubFetch(token({ picture: bad }));
+      await expect(client().exchange('c', 'v', 'nonce_ok')).resolves.toMatchObject({
+        picture: null,
+      });
+    }
   });
 
   it('reads a verified email and ignores an unverified one', async () => {

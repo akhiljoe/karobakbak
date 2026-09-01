@@ -16,18 +16,25 @@
  * interrupt, it does leave for another origin, and it carries the Terms.
  *
  * ---------------------------------------------------------------------------
- * THE GLYPH IS NOT A PHOTO
+ * THE PHOTO COMES FROM THIS ORIGIN, OR NOT AT ALL
  * ---------------------------------------------------------------------------
- * The obvious version shows the provider's profile picture. It costs the
- * `profile` scope back, a stored `picture` on `accounts`, a wider
- * `/auth/session` — which deliberately answers *whether* and never *who* — and
- * either a CSP hole for `lh3.googleusercontent.com` or an image proxy, because
- * an `<img>` pointed at Google reports every visitor to Google on every page
- * view. A shape that says "you are signed in" needs none of it.
+ * `/auth/avatar` relays the provider's picture; the provider's own CDN URL
+ * never reaches this page. An `<img>` pointed at it would be blocked by
+ * `img-src 'self' data:` before it was a policy problem, and it would report
+ * every visitor's IP and referring page to the vendor on every render, for a
+ * signed-in user, on every page they open.
+ *
+ * The glyph is not a placeholder waiting to be replaced — it is the answer
+ * whenever there is no picture, which is an ordinary state: avatars are off,
+ * the provider returned none, the image was too large, the fetch failed, or
+ * Redis was restarted and the cached URL went with it. `onError` falls back to
+ * it too, so a 404 from our own route degrades to the same shape rather than a
+ * broken-image icon.
  */
 import { useEffect, useRef, useState } from 'react';
 import { LogOut, User } from 'lucide-react';
 
+import { AVATAR_URL } from '../auth';
 import type { Session } from '../hooks/useSession';
 
 interface AccountMenuProps {
@@ -39,6 +46,7 @@ interface AccountMenuProps {
 export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [imageBroken, setImageBroken] = useState(false);
   const container = useRef<HTMLDivElement>(null);
 
   /*
@@ -79,6 +87,9 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
     if (!session.signedIn) {
       setOpen(false);
       setFailed(false);
+      // So the next sign-in retries the image rather than inheriting a failure
+      // that belonged to somebody else's session.
+      setImageBroken(false);
     }
   }, [session.signedIn]);
 
@@ -111,14 +122,26 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
         aria-label="Your account"
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`inline-flex h-9 w-9 items-center justify-center rounded-full border bg-ink-800 transition-all active:scale-95 ${
+        className={`inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border bg-ink-800 transition-all active:scale-95 ${
           open
             ? 'border-amber-400/60 text-amber-300'
             : 'border-ink-700 text-ink-200 hover:border-amber-400/60 hover:text-amber-300'
         }`}
       >
-        {/* Decorative: the button already carries an accessible name. */}
-        <User className="h-4 w-4" aria-hidden="true" />
+        {/* Decorative either way: the button already carries an accessible name. */}
+        {session.avatar && !imageBroken ? (
+          <img
+            src={AVATAR_URL}
+            alt=""
+            aria-hidden="true"
+            width={36}
+            height={36}
+            onError={() => setImageBroken(true)}
+            className="h-full w-full rounded-full object-cover"
+          />
+        ) : (
+          <User className="h-4 w-4" aria-hidden="true" />
+        )}
       </button>
 
       {open && (

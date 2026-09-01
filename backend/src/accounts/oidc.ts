@@ -78,6 +78,15 @@ export interface VerifiedIdentity {
    * wire.
    */
   readonly email: string | null;
+  /**
+   * The provider's profile image URL, or null.
+   *
+   * Present only when `AUTH_AVATARS` is on, because the claim rides the
+   * `profile` scope. It is a URL on the provider's CDN and is **never** handed
+   * to a browser — the caller fetches it once, server-side, and stores the
+   * bytes. See `015_account_avatar.sql` for why.
+   */
+  readonly picture: string | null;
 }
 
 export interface OidcClient {
@@ -210,7 +219,15 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
         ? claims.email
         : null;
 
-    return { subject: claims.sub, email };
+    // Only a string, and only an https URL. A `picture` claim is provider data
+    // rather than something this server chose, and it is about to be fetched —
+    // so the shape is checked here rather than trusted downstream.
+    const picture =
+      typeof claims.picture === 'string' && claims.picture.startsWith('https://')
+        ? claims.picture
+        : null;
+
+    return { subject: claims.sub, email, picture };
   }
 
   return {
@@ -239,7 +256,11 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
       // can verify it — not so this service can keep it. Every extra scope
       // becomes a row in the Privacy Policy's data table with its own retention
       // period, on a service whose central claim is that it holds nothing.
-      url.searchParams.set('scope', 'openid email');
+      // `profile` only when avatars are on. Every scope is a row in the Privacy
+      // Policy's data table with its own retention, and `profile` additionally
+      // asks the provider's consent screen to say "name and profile picture",
+      // which is a thing to show somebody only when it is true.
+      url.searchParams.set('scope', auth.avatars ? 'openid email profile' : 'openid email');
       url.searchParams.set('state', state);
       url.searchParams.set('nonce', nonce);
       url.searchParams.set('code_challenge', challenge);

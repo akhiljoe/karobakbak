@@ -405,6 +405,8 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
             ? auth.callback
             : req.method === 'GET' && path === '/auth/session'
               ? auth.session
+              : req.method === 'GET' && path === '/auth/avatar'
+                ? auth.avatar
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;

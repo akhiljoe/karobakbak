@@ -160,6 +160,10 @@ async function main(): Promise<void> {
       logger,
       db: database,
       oidc: createOidcClient(config, logger),
+      // Only for the avatar URL cache. Sign-in itself is a PostgreSQL flow and
+      // works without Redis; an unavailable Redis costs a picture, never a
+      // session.
+      redis: clients.command,
     });
     connections = createConnectionRepository(database, logger);
     logger.info('sign-in enabled');

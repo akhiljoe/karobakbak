@@ -114,14 +114,33 @@ export function signinMessageOutcome(event: MessageEvent): SigninOutcome | null 
   return null;
 }
 
+/** What the server will say about this browser. */
+export interface SessionState {
+  readonly signedIn: boolean;
+  /**
+   * Whether `/auth/avatar` has an image to serve.
+   *
+   * A boolean and never a URL. The provider's CDN address is not something a
+   * page should carry: an `<img>` pointed at it would be blocked by `img-src`
+   * and would report every visitor to the vendor on every render. The image
+   * comes from this origin or not at all.
+   */
+  readonly avatar: boolean;
+}
+
+const SIGNED_OUT: SessionState = { signedIn: false, avatar: false };
+
+/** The image, served by this origin. Cached hard by the browser. */
+export const AVATAR_URL = '/auth/avatar';
+
 /**
  * Whether this browser currently holds a working credential.
  *
- * Every failure answers `false`. That is the safe direction: showing a signed
- * out header to somebody who is in fact signed in costs them one click, while
- * the reverse shows account controls that then fail one by one.
+ * Every failure answers signed out. That is the safe direction: showing a
+ * signed-out header to somebody who is in fact signed in costs them one click,
+ * while the reverse shows account controls that then fail one by one.
  */
-export async function readSession(): Promise<boolean> {
+export async function readSession(): Promise<SessionState> {
   let response: Response;
   try {
     response = await fetch(SESSION_URL, {
@@ -130,19 +149,22 @@ export async function readSession(): Promise<boolean> {
       headers: { accept: 'application/json' },
     });
   } catch {
-    return false;
+    return SIGNED_OUT;
   }
 
-  if (!response.ok) return false;
+  if (!response.ok) return SIGNED_OUT;
 
   try {
     const body: unknown = await response.json();
+    if (typeof body !== 'object' || body === null) return SIGNED_OUT;
+    const shape = body as { signedIn?: unknown; avatar?: unknown };
     // Strict, not truthy. A server that ever answered `"signedIn": "no"` would
     // otherwise read as signed in, and this is the check the whole account
     // surface hangs off.
-    return typeof body === 'object' && body !== null && (body as { signedIn?: unknown }).signedIn === true;
+    if (shape.signedIn !== true) return SIGNED_OUT;
+    return { signedIn: true, avatar: shape.avatar === true };
   } catch {
-    return false;
+    return SIGNED_OUT;
   }
 }
 

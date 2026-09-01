@@ -374,6 +374,20 @@ export interface Config {
     /** Absolute, and must match the value registered with the provider exactly. */
     readonly redirectUri: string;
     /**
+     * Whether to ask the provider for a profile image and keep it.
+     *
+     * Off by default, and it is not only a display toggle: with it on the
+     * authorize request adds the `profile` scope, so the provider must be
+     * configured to grant it — on Cognito that means `profile` in the Google
+     * IdP's authorized scopes *and* `Profile` ticked on the app client. Ask for
+     * a scope the client cannot grant and the whole sign-in fails.
+     *
+     * The image is fetched once, server-side, at sign-in and stored as a
+     * `data:` URI. It is account-scoped and never reaches a chat partner; see
+     * `015_account_avatar.sql`.
+     */
+    readonly avatars: boolean;
+    /**
      * A federated identity provider to go straight to, e.g. `Google`.
      *
      * Empty renders the provider's own hosted login form. Set, it is passed as
@@ -1032,6 +1046,7 @@ export function loadConfig(env: Env = process.env): Config {
       clientSecret: str(env, 'AUTH_CLIENT_SECRET', ''),
       redirectUri: str(env, 'AUTH_REDIRECT_URI', ''),
       identityProvider: str(env, 'AUTH_IDENTITY_PROVIDER', ''),
+      avatars: bool(env, 'AUTH_AVATARS', false),
       returnUrl: str(env, 'AUTH_RETURN_URL', '/'),
       // Thirty days. Long enough that signing in is rare, short enough that a
       // credential lifted from a shared machine dies on its own.
