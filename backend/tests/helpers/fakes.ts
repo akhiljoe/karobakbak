@@ -113,6 +113,17 @@ export class FakeStore implements LifecycleStore {
     return { a: null, b: null };
   }
 
+  /** Everybody is in the default lane, which is what every existing test assumes. */
+  segments = new Map<string, string>();
+
+  async setSegment(sessionId: string, segment: string): Promise<void> {
+    this.segments.set(sessionId, segment);
+  }
+
+  async readSegment(sessionId: string, fallback: string): Promise<string> {
+    return this.segments.get(sessionId) ?? fallback;
+  }
+
   async createSession(identity: SessionIdentity, _segment: string): Promise<CreateSessionResult> {
     void _segment;
     this.seedSession({ ...identity });

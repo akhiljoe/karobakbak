@@ -45,7 +45,13 @@ import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
 import { useSession } from './hooks/useSession';
-import { clearHistory, readHistory, recordHistory, type HistoryEntry } from './history';
+import {
+  acceptReconnect,
+  clearHistory,
+  readHistory,
+  recordHistory,
+  type HistoryEntry,
+} from './history';
 import type { ReportCategory } from './protocol/types';
 import { connectionOf, phaseOf } from './view/presentation';
 
@@ -240,6 +246,19 @@ export function App(): JSX.Element {
   // Browsers refuse to start audio without a user gesture. Starting a search is
   // the one gesture guaranteed to precede any match, so the context is unlocked
   // there rather than on load, where it would be refused.
+  /*
+    Both sides agreed to talk again, so both start looking — through the
+    ordinary search, because the server has already put them in a private queue
+    lane and ordinary matchmaking is what pairs them there. Nothing about this
+    path is reconnect-specific, which is why every guard that applies to a
+    random match applies here too.
+  */
+  useEffect(() => {
+    if (!state.reconnectReady) return;
+    chat.reconnectStarted();
+    startSearch();
+  }, [state.reconnectReady]);
+
   const startSearch = useCallback(() => {
     // The last moment before a conversation starts, which is exactly where the
     // policy puts the gate. Acknowledging carries straight on into the search,
@@ -501,6 +520,44 @@ export function App(): JSX.Element {
         second chance to be shown. `useSession` strips the marker from the URL
         as it reads it, so a refresh does not re-announce it.
       */}
+      {/*
+        An offer from somebody met earlier, waiting to be answered.
+
+        Rendered over the landing screen rather than as a dialog: it is not
+        urgent, it expires on its own in two minutes, and it must not sit in
+        front of somebody who is about to press Start chatting. Ignoring it is
+        the default in the strongest sense — doing nothing at all is a refusal,
+        and no refusal is ever sent.
+      */}
+      {state.reconnectOffer !== null && (
+        <div className="pointer-events-auto fixed inset-x-3 top-16 z-40 mx-auto max-w-sm animate-fade-in rounded-xl border border-green-500/40 bg-ink-900 p-3 shadow-2xl ring-1 ring-black/50">
+          <p className="mb-2 text-sm text-ink-100">
+            Someone you talked to earlier is here and would like to chat again.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                const offer = state.reconnectOffer;
+                chat.dismissReconnect();
+                if (offer !== null) void acceptReconnect(offer);
+              }}
+              className="rounded-lg border border-green-500/50 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:bg-green-500/10"
+            >
+              Chat
+            </button>
+            <button
+              onClick={chat.dismissReconnect}
+              className="rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 transition-colors hover:bg-ink-800"
+            >
+              Ignore
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+            Ignoring tells them nothing.
+          </p>
+        </div>
+      )}
+
       <Toast
         message={signinNotice ?? state.notice}
         onDismiss={signinNotice === null ? chat.dismissNotice : session.dismissOutcome}

@@ -113,6 +113,48 @@ export async function onlineFrom(entries: readonly HistoryEntry[]): Promise<Set<
   }
 }
 
+/** What happened when we asked somebody to talk again. */
+export type AskResult = 'asked' | 'away' | 'failed';
+
+/**
+ * Ask a past partner to talk again.
+ *
+ * Both of you have to be online. That is the design rather than a limitation to
+ * apologise for: the request travels down a socket that already exists, so
+ * there is no inbox, no polling and no push service — and nothing is stored
+ * about somebody who never answered.
+ */
+export async function askToReconnect(token: string): Promise<AskResult> {
+  try {
+    const response = await fetch('/auth/reconnect/ask', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ token, from: 'me' }),
+    });
+    if (!response.ok) return 'failed';
+    const body: unknown = await response.json();
+    return (body as { asked?: unknown }).asked === true ? 'asked' : 'away';
+  } catch {
+    return 'failed';
+  }
+}
+
+/** Accept a request. Declining calls nothing — a refusal is never disclosed. */
+export async function acceptReconnect(offer: string): Promise<boolean> {
+  try {
+    const response = await fetch('/auth/reconnect/accept', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ offer }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read the list, newest first.
  *

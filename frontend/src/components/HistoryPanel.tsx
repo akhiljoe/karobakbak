@@ -24,10 +24,10 @@
  * durable version would have to answer.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Clock, Trash2, X } from 'lucide-react';
+import { Clock, MessageCircle, Trash2, X } from 'lucide-react';
 
 import { COUNTRY_NAMES } from '../protocol/types';
-import { flagOf, onlineFrom, type HistoryEntry } from '../history';
+import { askToReconnect, flagOf, onlineFrom, type AskResult, type HistoryEntry } from '../history';
 
 interface HistoryPanelProps {
   open: boolean;
@@ -53,6 +53,7 @@ export function HistoryPanel({
 }: HistoryPanelProps): JSX.Element | null {
   const container = useRef<HTMLDivElement>(null);
   const [online, setOnline] = useState<ReadonlySet<string>>(new Set());
+  const [asked, setAsked] = useState<Record<string, AskResult>>({});
 
   /*
     Asked once, when the panel opens, and never on a timer. A list somebody
@@ -109,7 +110,15 @@ export function HistoryPanel({
         `max-w` is what actually keeps it on screen; centring is what keeps it
         pointing at the thing that opened it.
       */
-      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw-1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift ${
+      /*
+        A harder edge than the rest of the interface carries. This floats over a
+        transcript of a similar darkness, and a one-pixel `ink-700` border on
+        `ink-900` was the same contrast as two panels side by side — which is
+        fine for a card in a column and not fine for something overlapping
+        content it is not part of. The ring and the deeper ground do the
+        separating; the shadow alone was not enough on a dark surface.
+      */
+      className={`absolute left-1/2 z-40 w-72 max-w-[calc(100vw-1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 ${
         placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
       }`}
     >
@@ -187,6 +196,33 @@ export function HistoryPanel({
                       )}
                     </p>
                   </div>
+                  {/*
+                    Only for somebody who is here. A button that could be
+                    pressed for an absent person would be a button that mostly
+                    fails, and the honest version of "they are not around" is
+                    not offering it.
+                  */}
+                  {entry.presence !== null && online.has(entry.presence) && (
+                    <button
+                      onClick={() => {
+                        const token = entry.presence;
+                        if (token === null) return;
+                        setAsked((was) => ({ ...was, [token]: 'asked' }));
+                        void askToReconnect(token).then((result) =>
+                          setAsked((was) => ({ ...was, [token]: result })),
+                        );
+                      }}
+                      disabled={asked[entry.presence] === 'asked'}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-green-500/40 px-2 py-1 text-[11px] font-medium text-green-300 transition-colors hover:bg-green-500/10 disabled:opacity-60"
+                    >
+                      <MessageCircle className="h-3 w-3" aria-hidden="true" />
+                      {asked[entry.presence] === 'asked'
+                        ? 'Asked'
+                        : asked[entry.presence] === 'away'
+                          ? 'Away'
+                          : 'Chat'}
+                    </button>
+                  )}
                 </div>
               </li>
             ))}

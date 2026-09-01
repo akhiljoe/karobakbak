@@ -26,6 +26,9 @@ import { createOidcClient } from './accounts/oidc';
 import { createConnectionRepository, type ConnectionRepository } from './accounts/connections';
 import { createBlockRepository, type BlockRepository } from './accounts/blocks';
 import { createPresenceService, type PresenceService } from './accounts/presence';
+import { randomBytes } from 'node:crypto';
+
+import { encodeSessionEvent } from './ws/events';
 import { DeletionWorker } from './storage/deletion';
 import { createDatabase, assertTlsWhereRequired } from './storage/pool';
 import { RetentionWriter } from './storage/retention';
@@ -180,6 +183,45 @@ async function main(): Promise<void> {
       connections,
       blocks: accountBlocks,
       presence,
+      /*
+        The whole of what an HTTP handler may do to matchmaking: deliver one
+        event to one session, and put two sessions in a lane. Deliberately not
+        the lifecycle itself — a route that could reach the rest of it is a
+        route somebody will eventually use to reach the rest of it.
+
+        `pair` writes a segment nobody else is in, so the pairing is done by
+        ordinary `tryMatch` with every guard it already applies. There is no
+        reconnect-specific matching code, and therefore no reconnect-specific
+        way to get the block check wrong.
+      */
+      reconnect: {
+        async notify(sessionId, event) {
+          const frame =
+            'offer' in event
+              ? ({ event: 'reconnect_request', matchId: '', offer: event.offer } as const)
+              : ({ event: 'reconnect_ready', matchId: '', startedAt: event.startedAt } as const);
+          /*
+            Published on the session's own channel rather than handed to the
+            dispatcher, which lives inside the chat server and is not reachable
+            from here. The channel name *is* the routing key (D8), so this
+            reaches whichever instance holds that socket without a routing table
+            — and a publish with no subscriber returns zero, which is exactly
+            the "they are not here after all" answer the caller needs.
+          */
+          const receivers = await store.publishToSession(
+            sessionId,
+            encodeSessionEvent(frame, new Date().toISOString()),
+          );
+          return receivers > 0;
+        },
+        async pair(sessionA, sessionB) {
+          // Random rather than derived from the two session ids: a derived
+          // lane would be identical every time the same two people reconnect,
+          // which is a stable identifier for a pair sitting in a key name.
+          const lane = `pair-${randomBytes(8).toString('hex')}`;
+          await Promise.all([store.setSegment(sessionA, lane), store.setSegment(sessionB, lane)]);
+        },
+      },
     });
     logger.info('sign-in enabled');
   }

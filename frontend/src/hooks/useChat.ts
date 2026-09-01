@@ -86,6 +86,10 @@ export interface ChatApi {
   saveConnection(active: boolean): void;
   /** Decline an incoming request. Local only — a refusal is never sent (§31). */
   dismissConnectionRequest(): void;
+  /** Decline a reconnect. Local only — a refusal is never sent. */
+  dismissReconnect(): void;
+  /** Acknowledge that the reconnect search has been started. */
+  reconnectStarted(): void;
   dismissNotice(): void;
 }
 
@@ -357,6 +361,8 @@ export function useChat(): ChatApi {
     () => dispatch({ type: 'connection_dismissed' }),
     [],
   );
+  const dismissReconnect = useCallback(() => dispatch({ type: 'reconnect_dismissed' }), []);
+  const reconnectStarted = useCallback(() => dispatch({ type: 'reconnect_started' }), []);
   const dismissNotice = useCallback(() => dispatch({ type: 'dismiss_notice' }), []);
 
   return {
@@ -372,6 +378,8 @@ export function useChat(): ChatApi {
     react,
     saveConnection,
     dismissConnectionRequest,
+    dismissReconnect,
+    reconnectStarted,
     dismissNotice,
   };
 }
@@ -425,6 +433,12 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
 
     case 'connection_request':
       return { type: 'connection_request', matchId: frame.payload.matchId };
+
+    case 'reconnect_request':
+      return { type: 'reconnect_request', offer: frame.payload.offer };
+
+    case 'reconnect_ready':
+      return { type: 'reconnect_ready' };
     case 'report_ack':
       return { type: 'report_ack' };
     case 'error':

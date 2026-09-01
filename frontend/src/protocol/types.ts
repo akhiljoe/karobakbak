@@ -49,6 +49,8 @@ export const SERVER_EVENTS = [
   'partner_reacted',
   'connection_state',
   'connection_request',
+  'reconnect_request',
+  'reconnect_ready',
   'connection_made',
   'partner_skipped',
   'partner_reconnecting',
@@ -714,6 +716,32 @@ export interface ConnectionRequestPayload {
   readonly matchId: string;
 }
 
+/**
+ * Somebody you spoke to earlier would like to talk again.
+ *
+ * Reaches a person who is online, from a person who is online, and carries
+ * nothing about who is asking beyond what the recipient's own Recent list
+ * already remembers. Declining sends nothing back — the same rule as a
+ * connection request.
+ */
+export interface ReconnectRequestPayload {
+  /** Answer with this to accept. Opaque, single-use, and short-lived. */
+  readonly offer: string;
+}
+
+/**
+ * Both sides agreed, so both should start looking.
+ *
+ * The pairing itself is ordinary matchmaking in a private queue lane, so every
+ * guard that applies to a random match applies here — blocks in both
+ * directions, bans, rate limits. A reconnect cannot reach somebody who blocked
+ * you, and does not need code of its own to ensure that.
+ */
+export interface ReconnectReadyPayload {
+  /** Nothing to act on but the instruction to search. */
+  readonly startedAt: string;
+}
+
 export interface ConnectionMadePayload {
   matchId: string;
 }
@@ -1124,6 +1152,8 @@ export interface ServerEventPayloads {
   partner_reacted: PartnerReactedPayload;
   connection_state: ConnectionStatePayload;
   connection_request: ConnectionRequestPayload;
+  reconnect_request: ReconnectRequestPayload;
+  reconnect_ready: ReconnectReadyPayload;
   connection_made: ConnectionMadePayload;
   partner_skipped: PartnerSkippedPayload;
   partner_reconnecting: PartnerReconnectingPayload;

@@ -100,6 +100,19 @@ export interface AuthRoutesDeps {
   readonly blocks?: BlockRepository;
   /** Who is online. Absent means nobody is reported online, ever. */
   readonly presence?: PresenceService;
+  /**
+   * Reconnect plumbing, supplied by the chat process.
+   *
+   * Given as functions rather than the lifecycle itself: these routes need to
+   * put two sessions in a lane and tell them to look, and nothing more of the
+   * matchmaking surface should be reachable from an HTTP handler.
+   */
+  readonly reconnect?: {
+    /** The session behind a request, if it is still attached here or anywhere. */
+    notify(sessionId: string, event: { offer: string } | { startedAt: string }): Promise<boolean>;
+    /** Put a session into a private lane so ordinary matchmaking pairs the two. */
+    pair(sessionA: string, sessionB: string): Promise<void>;
+  };
 }
 
 export interface AuthRoutes {
@@ -122,6 +135,10 @@ export interface AuthRoutes {
   presence(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Which of a set of presence tokens point at somebody online now. */
   presenceLookup(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Ask somebody you met earlier, and who is online, to talk again. */
+  reconnectAsk(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Accept such a request. Declining sends nothing and needs no route. */
+  reconnectAccept(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -167,7 +184,7 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc, redis, connections, blocks, presence } = deps;
+  const { config, logger, db, oidc, redis, connections, blocks, presence, reconnect } = deps;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
 
@@ -241,6 +258,14 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
     } catch {
       return null;
     }
+  }
+
+  /** A single-use offer id. Random, not derived: it names one moment. */
+  function randomOffer(): string {
+    return createHash('sha256')
+      .update(`${Date.now()}:${Math.random()}:${Math.random()}`)
+      .digest('hex')
+      .slice(0, 32);
   }
 
   function connectionHandle(viewer: string, other: string): string {
@@ -784,6 +809,118 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         logger.error('could not resolve presence tokens', errorFields(err));
         json(res, 200, { online: [] });
       }
+    },
+
+    /**
+     * Ask a past partner to talk again.
+     *
+     * Both people have to be online — this is the whole design, and it is what
+     * makes the feature cost nothing: the request travels down a socket that
+     * already exists, so there is no inbox, no polling and no push service. If
+     * they are not here, the answer says so and nothing is stored.
+     *
+     * The offer is minted here and held in Redis for two minutes: long enough
+     * to answer a prompt, short enough that an unanswered one is simply gone
+     * rather than something to clean up.
+     */
+    async reconnectAsk(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      if (presence === undefined || reconnect === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const token = typeof body?.token === 'string' ? body.token : '';
+      const from = typeof body?.from === 'string' ? body.from : '';
+      if (!/^[0-9a-f]{32}$/.test(token) || !/^[A-Za-z0-9_-]{1,64}$/.test(from)) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      const theirSession = await presence.sessionForToken(token);
+      if (theirSession === null) {
+        // One answer for every reason — expired, invented, opted out, away — so
+        // this cannot be used to learn anything about a token beyond whether
+        // the ask can happen right now.
+        json(res, 200, { asked: false, reason: 'away' });
+        return;
+      }
+
+      const offer = randomOffer();
+      try {
+        // Holds both sides of the pairing, so accepting needs nothing from the
+        // client but the offer itself.
+        await redis?.set(
+          `${config.redis.keyPrefix}:offer:${offer}`,
+          `${from}:${theirSession}`,
+          'EX',
+          120,
+        );
+      } catch (err) {
+        logger.warn('could not record a reconnect offer', errorFields(err));
+        json(res, 200, { asked: false, reason: 'away' });
+        return;
+      }
+
+      const delivered = await reconnect.notify(theirSession, { offer });
+      json(res, 200, { asked: delivered, ...(delivered ? {} : { reason: 'away' }) });
+    },
+
+    /**
+     * Accept, and put both sides into a private lane.
+     *
+     * The pairing is ordinary matchmaking: both join a queue segment nobody
+     * else is in, and `tryMatch` does the rest. Every guard it already applies
+     * applies here — a block in either direction still refuses, and a reconnect
+     * therefore cannot reach somebody who blocked you, without a line of code
+     * saying so.
+     *
+     * Declining has no route at all. It sends nothing, so a refusal is never
+     * disclosed.
+     */
+    async reconnectAccept(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      if (reconnect === undefined || redis === undefined) {
+        json(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const offer = typeof body?.offer === 'string' ? body.offer : '';
+      if (!/^[0-9a-f]{32}$/.test(offer)) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+
+      const key = `${config.redis.keyPrefix}:offer:${offer}`;
+      let stored: string | null = null;
+      try {
+        stored = await redis.get(key);
+        // Single use, spent on acceptance: a replayed offer would put somebody
+        // back in a private lane long after the moment passed.
+        if (stored !== null) await redis.del(key);
+      } catch (err) {
+        logger.warn('could not redeem a reconnect offer', errorFields(err));
+      }
+      if (stored === null) {
+        json(res, 404, { error: 'expired' });
+        return;
+      }
+
+      const [asker, accepter] = stored.split(':');
+      if (asker === undefined || accepter === undefined) {
+        json(res, 404, { error: 'expired' });
+        return;
+      }
+
+      await reconnect.pair(asker, accepter);
+      const startedAt = new Date().toISOString();
+      // Both are told, because both have to start looking for the lane to
+      // contain two people.
+      await Promise.all([
+        reconnect.notify(asker, { startedAt }),
+        reconnect.notify(accepter, { startedAt }),
+      ]);
+      json(res, 200, { paired: true });
     },
 
     async signout(req: IncomingMessage, res: ServerResponse): Promise<void> {

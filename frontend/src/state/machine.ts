@@ -150,6 +150,23 @@ export interface ChatState {
    */
   readonly connectionAsked: boolean;
   /**
+   * An offer from somebody you spoke to earlier, waiting to be answered.
+   *
+   * Cleared by accepting, by declining, and by the conversation changing —
+   * an offer is about right now, and answering one three conversations later
+   * would put somebody into a lane whose other half has long since left.
+   */
+  readonly reconnectOffer: string | null;
+  /**
+   * Both sides agreed and should start looking.
+   *
+   * A flag rather than an action with a side effect, because the reducer is
+   * pure: the component that owns the socket watches this and starts the search
+   * the ordinary way, so a reconnect goes through exactly the path a normal
+   * search does — including the profile and preferences the user has set.
+   */
+  readonly reconnectReady: boolean;
+  /**
    * The user asked to go home and the server has not confirmed it yet.
    *
    * Leaving a conversation is two commands — `skip` ends the match, then
@@ -233,6 +250,8 @@ export const initialState: ChatState = {
   connectionSaved: false,
   connectionMade: false,
   connectionAsked: false,
+  reconnectOffer: null,
+  reconnectReady: false,
   leaving: false,
   searchPending: false,
   resumeToken: null,
@@ -260,6 +279,12 @@ export type Action =
   | { type: 'connection_request'; matchId: string }
   /** The prompt was declined here. Nothing is sent; see §31. */
   | { type: 'connection_dismissed' }
+  | { type: 'reconnect_request'; offer: string }
+  /** Answered, either way. Declining sends nothing; see §31. */
+  | { type: 'reconnect_dismissed' }
+  | { type: 'reconnect_ready' }
+  /** The search has been started; stop asking for it. */
+  | { type: 'reconnect_started' }
   | { type: 'server_error'; payload: ErrorPayload }
   | { type: 'server_shutdown' }
   /* local intents, applied optimistically where the server cannot contradict them */
@@ -600,6 +625,21 @@ export function reduce(state: ChatState, action: Action): ChatState {
 
     case 'connection_dismissed':
       return { ...state, connectionAsked: false };
+
+    case 'reconnect_request':
+      // Ignored mid-conversation. Somebody already talking to a stranger should
+      // not be asked to abandon them, and the offer expires on its own.
+      if (state.screen === 'chatting') return state;
+      return { ...state, reconnectOffer: action.offer };
+
+    case 'reconnect_dismissed':
+      return { ...state, reconnectOffer: null };
+
+    case 'reconnect_ready':
+      return { ...state, reconnectOffer: null, reconnectReady: true };
+
+    case 'reconnect_started':
+      return { ...state, reconnectReady: false };
 
     case 'connection_made':
       if (state.matchId !== action.matchId) return state;
