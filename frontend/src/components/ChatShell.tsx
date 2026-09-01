@@ -445,6 +445,22 @@ export function ChatShell({
                       className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
                     >
                       <ShieldX className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      {/*
+                        One word, and the action behind it still advances -
+                        `onBlockAndNext` blocks and finds somebody new. That is
+                        deliberate and was decided rather than overlooked: the
+                        label read "Block and find someone else", which is the
+                        longest item in a menu of three and describes the
+                        consequence rather than the decision. Somebody reaching
+                        for this wants out of *this* conversation, and going
+                        somewhere else is what leaving it means here.
+
+                        It is not the D39 case. Auto-search must never fire
+                        after a block, and does not - `useAutoSearch` qualifies
+                        only on `partner_left`. This is an explicit press, and
+                        an explicit request to move on is not an automatic
+                        behaviour deciding to move somebody on.
+                      */}
                       Block
                     </button>
                   )}
