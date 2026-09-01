@@ -252,10 +252,19 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
        * Cognito reads `identity_provider` on the authorize endpoint and issues
        * a second redirect to that IdP, so the hosted UI — its email field, its
        * password field, its "create an account" link — is never rendered. With
-       * this empty the hosted UI appears as before, which is the right default:
-       * a pool with no federated IdP configured and this set to `Google`
-       * answers with an error page instead of a login form, and that is a
-       * misconfiguration worth having to opt into.
+       * this empty the hosted UI appears as before.
+       *
+       * NAMING AN IdP THAT IS NOT ENABLED FAILS QUIETLY, AND THAT WAS MEASURED
+       * The guess was that Cognito would refuse. It does not: it redirects to
+       * `/login` with `errorMessage=Login option is not available. Please try
+       * another one` appended, and the login page renders its ordinary email
+       * form. So the symptom of a half-configured pool is **the exact screen
+       * this setting exists to skip**, which reads as "the setting does
+       * nothing" rather than "the IdP is not enabled".
+       *
+       * The parameter is only half the work. The provider must exist on the
+       * pool *and* be ticked on the app client; the second is the one that gets
+       * missed, because adding the provider looks like it finished the job.
        *
        * It carries no user input. The value is operator configuration, so it
        * cannot be used to point a victim's sign-in at an attacker's IdP — the
