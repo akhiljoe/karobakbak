@@ -411,6 +411,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
                   ? auth.connections
                   : req.method === 'POST' && path === '/auth/connections/remove'
                     ? auth.removeConnection
+                    : req.method === 'GET' && path === '/auth/blocks'
+                      ? auth.blocks
+                      : req.method === 'POST' && path === '/auth/blocks/remove'
+                        ? auth.removeBlock
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;
@@ -1078,6 +1082,9 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         const outcome = await lifecycle.block(connection.sessionId, {
           ipHash: connection.ipHash,
           clientHash: connection.clientHash,
+          // Null while signed out, which is most blocks. It only decides
+          // whether this one is findable later, never whether it is enforced.
+          accountId: connection.accountId,
         });
         if (outcome.kind === 'session_gone') return sessionGone(connection);
         if (outcome.kind === 'not_matched') {

@@ -83,3 +83,63 @@ function isConnection(value: unknown): value is Connection {
   const row = value as Partial<Connection>;
   return typeof row.handle === 'string' && typeof row.since === 'string';
 }
+
+/* ------------------------------------------------------------------------ *
+ * Blocks
+ * ------------------------------------------------------------------------ */
+
+/**
+ * One block, as its owner may see it.
+ *
+ * A date and a handle. The blocked person stays a hash on the server and never
+ * reaches this page — they may have no account at all, and resolving one for
+ * them would be the cross-chat correlation the product exists not to do.
+ */
+export interface Block {
+  /** Names the moment the block was made. Resolved against your own rows. */
+  readonly handle: string;
+  readonly since: string;
+}
+
+/** Your blocks, newest first, or null when the list could not be read. */
+export async function readBlocks(): Promise<Block[] | null> {
+  try {
+    const response = await fetch('/auth/blocks', {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    if (typeof body !== 'object' || body === null) return null;
+    const rows = (body as { blocks?: unknown }).blocks;
+    if (!Array.isArray(rows)) return null;
+    return rows.filter(isBlock);
+  } catch {
+    return null;
+  }
+}
+
+/** Lift one. Answers whether the server confirmed it. */
+export async function removeBlock(handle: string): Promise<boolean> {
+  try {
+    const response = await fetch('/auth/blocks/remove', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ handle }),
+    });
+    // Only a confirmed removal, for the reason the connection one gives: a row
+    // dropped on failure shows somebody a block as lifted while it still holds.
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function isBlock(value: unknown): value is Block {
+  if (typeof value !== 'object' || value === null) return false;
+  const row = value as Partial<Block>;
+  return typeof row.handle === 'string' && typeof row.since === 'string';
+}

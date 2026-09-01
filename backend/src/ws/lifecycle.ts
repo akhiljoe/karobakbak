@@ -490,7 +490,10 @@ export class SessionLifecycle {
    * distinct "you were blocked" signal would tell an abuser exactly which
    * behaviour got them blocked, and by whom (security §32).
    */
-  async block(sessionId: string, blocker: { ipHash: string; clientHash: string }): Promise<BlockOutcome> {
+  async block(
+    sessionId: string,
+    blocker: { ipHash: string; clientHash: string; accountId?: string | null },
+  ): Promise<BlockOutcome> {
     const result = await this.store.blockPartner(sessionId);
     if (result.status === 'not_matched') return { kind: 'not_matched' };
 
@@ -521,6 +524,10 @@ export class SessionLifecycle {
           blockerKey,
           blockedKey,
           dimension,
+          // Recorded only when the blocker was signed in. It is what lets them
+          // find this block again from another network — both key hashes
+          // change and an account id does not — and it is the blocker's alone.
+          blockerAccountId: blocker.accountId ?? null,
           // Null, not the empty string, when the match had already ended: the
           // column is a nullable foreign key, and '' is neither a conversation
           // nor an honest "there wasn't one".

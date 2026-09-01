@@ -32,9 +32,10 @@
  * broken-image icon.
  */
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, User } from 'lucide-react';
+import { LogOut, ShieldOff, User } from 'lucide-react';
 
 import { AVATAR_URL } from '../auth';
+import { readBlocks, removeBlock, type Block } from '../connections';
 import type { Session } from '../hooks/useSession';
 
 interface AccountMenuProps {
@@ -47,6 +48,32 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   const [imageBroken, setImageBroken] = useState(false);
+  const [blocks, setBlocks] = useState<readonly Block[] | null>(null);
+  const [showBlocks, setShowBlocks] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  /*
+    Fetched when the list is opened, not when the menu is. Most people have
+    blocked nobody and will never open it, and a request per menu-open would be
+    a round trip to render a heading.
+  */
+  useEffect(() => {
+    if (!showBlocks) return;
+    let live = true;
+    setBlocks(null);
+    void readBlocks().then((rows) => {
+      if (live) setBlocks(rows ?? []);
+    });
+    return () => {
+      live = false;
+    };
+  }, [showBlocks]);
+
+  // A menu that closes forgets it was showing the list, so reopening it lands
+  // on the menu rather than mid-way into a sub-view.
+  useEffect(() => {
+    if (!open) setShowBlocks(false);
+  }, [open]);
   const container = useRef<HTMLDivElement>(null);
 
   /*
@@ -171,6 +198,72 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
             <p className="px-3 pb-2 pt-1 text-xs leading-relaxed text-amber-300">
               Still signed in — we could not reach the server.
             </p>
+          )}
+
+          {/*
+            Blocked people, and the only place they can be lifted.
+
+            It lives behind the account rather than beside Block in the chat,
+            because a block is made about somebody in front of you and undone
+            later, in the cold light of day, about somebody you can no longer
+            see. Signed out there is no list at all — blocks are keyed to an IP
+            and a cookie, both of which change, so there is nothing stable to
+            ask about. That asymmetry is real and is a reason to sign in.
+          */}
+          <button
+            role="menuitem"
+            onClick={() => setShowBlocks((was) => !was)}
+            aria-expanded={showBlocks}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-ink-200 transition-colors hover:bg-ink-800 hover:text-ink-50"
+          >
+            <ShieldOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Blocked people
+          </button>
+
+          {showBlocks && (
+            <div className="border-t border-ink-800 pt-1">
+              {blocks === null ? (
+                <p className="px-3 py-2 text-xs text-ink-500">Loading…</p>
+              ) : blocks.length === 0 ? (
+                <p className="px-3 py-2 text-xs leading-relaxed text-ink-500">
+                  You have not blocked anybody. Blocks made while signed out are not listed here.
+                </p>
+              ) : (
+                <ul className="max-h-44 overflow-y-auto">
+                  {blocks.map((block) => (
+                    <li key={block.handle} className="flex items-center gap-2 px-3 py-1.5">
+                      <span className="flex-1 text-xs text-ink-400">
+                        Blocked{' '}
+                        {new Date(block.since).toLocaleDateString([], {
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                      </span>
+                      <button
+                        disabled={busy === block.handle}
+                        onClick={() => {
+                          setBusy(block.handle);
+                          void removeBlock(block.handle)
+                            .then((done) => {
+                              // Only on confirmation, or the row would vanish
+                              // while the block still holds.
+                              if (done) {
+                                setBlocks((was) =>
+                                  (was ?? []).filter((b) => b.handle !== block.handle),
+                                );
+                              }
+                            })
+                            .finally(() => setBusy(null));
+                        }}
+                        className="rounded-lg border border-ink-700 px-2 py-0.5 text-[11px] text-ink-300 transition-colors hover:border-amber-400/60 hover:text-amber-300 disabled:opacity-50"
+                      >
+                        Unblock
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       )}
