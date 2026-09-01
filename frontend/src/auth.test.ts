@@ -7,9 +7,15 @@
  * is signed in costs a click, while answering "signed in" when they are not
  * shows account controls that then fail one at a time.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { endSession, readSession, readSigninOutcome, withoutSigninOutcome } from './auth';
+import {
+  endSession,
+  readSession,
+  readSigninOutcome,
+  signinMessageOutcome,
+  withoutSigninOutcome,
+} from './auth';
 
 function respondWith(body: unknown, ok = true): void {
   vi.stubGlobal(
@@ -155,5 +161,58 @@ describe('endSession', () => {
     respondWith({ signedIn: false });
     await endSession();
     expect(fetch).toHaveBeenCalledWith('/auth/signout', expect.objectContaining({ method: 'POST' }));
+  });
+});
+
+describe('signinMessageOutcome', () => {
+  /*
+   * A `message` event can be fired by any page that holds a reference to this
+   * window — another tab it opened, an extension, an embedding frame. This is
+   * the only place one is turned into something the application acts on, so
+   * every field is checked and anything unrecognised is null.
+   *
+   * What it returns is a hint either way: the caller re-asks /auth/session,
+   * because a message is not evidence that a credential exists.
+   */
+  /*
+   * This package's tests run without a DOM — there is no jsdom in the
+   * devDependencies and the other ten files never needed one. `window` is
+   * stubbed for the three lines that want it rather than pulling in an
+   * environment, because the function under test reads exactly one property.
+   */
+  const origin = 'http://localhost:3001';
+  beforeEach(() => {
+    vi.stubGlobal('window', { location: { origin } });
+  });
+
+  const message = (data: unknown, from = origin): MessageEvent =>
+    ({ origin: from, data }) as MessageEvent;
+
+  it('reads an outcome from a message this origin sent', () => {
+    expect(signinMessageOutcome(message({ source: 'karobakbak-signin', outcome: 'ok' }))).toBe('ok');
+    expect(signinMessageOutcome(message({ source: 'karobakbak-signin', outcome: 'failed' }))).toBe(
+      'failed',
+    );
+  });
+
+  it('ignores a message from another origin', () => {
+    expect(
+      signinMessageOutcome(
+        message({ source: 'karobakbak-signin', outcome: 'ok' }, 'https://evil.example'),
+      ),
+    ).toBeNull();
+  });
+
+  it('ignores anything without the marker, or with an outcome we did not write', () => {
+    expect(signinMessageOutcome(message({ outcome: 'ok' }))).toBeNull();
+    expect(signinMessageOutcome(message({ source: 'something-else', outcome: 'ok' }))).toBeNull();
+    expect(signinMessageOutcome(message({ source: 'karobakbak-signin', outcome: 'yes' }))).toBeNull();
+    expect(signinMessageOutcome(message({ source: 'karobakbak-signin' }))).toBeNull();
+  });
+
+  it('ignores a message that is not an object at all', () => {
+    expect(signinMessageOutcome(message('ok'))).toBeNull();
+    expect(signinMessageOutcome(message(null))).toBeNull();
+    expect(signinMessageOutcome(message(undefined))).toBeNull();
   });
 });

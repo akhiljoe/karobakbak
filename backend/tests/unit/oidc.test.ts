@@ -56,7 +56,7 @@ function token(
   return `${head}.${body}.${b64url(signer.sign(key))}`;
 }
 
-function client(): ReturnType<typeof createOidcClient> {
+function client(extraEnv: Record<string, string> = {}): ReturnType<typeof createOidcClient> {
   const config = loadConfig({
     AUTH_ENABLED: 'true',
     AUTH_ISSUER: ISSUER,
@@ -67,6 +67,7 @@ function client(): ReturnType<typeof createOidcClient> {
     AUTH_REDIRECT_URI: 'https://karobakbak.example/auth/callback',
     AUTH_SECURE_COOKIES: 'false',
     IP_HASH_SALT: 'test-salt-value-long-enough',
+    ...extraEnv,
   });
   return createOidcClient(config, createLogger({ level: 'error' }));
 }
@@ -104,6 +105,31 @@ describe('starting a sign-in', () => {
     // whole point of PKCE is that only its hash goes to the provider.
     expect(flow.authorizeUrl).not.toContain(flow.codeVerifier);
     expect(url.searchParams.get('code_challenge')).not.toBe(flow.codeVerifier);
+  });
+
+  it('renders the hosted login form when no IdP is named', () => {
+    // The default. Cognito shows its hosted UI, with whatever it is configured
+    // to offer, and the parameter is absent rather than empty — an empty
+    // `identity_provider` is not the same request.
+    expect(new URL(client().start().authorizeUrl).searchParams.has('identity_provider')).toBe(
+      false,
+    );
+  });
+
+  it('goes straight to a named IdP, skipping the hosted form', () => {
+    /*
+     * `identity_provider` makes Cognito issue a second redirect to that IdP
+     * instead of rendering its own email and password page. The value is
+     * operator configuration and never comes off the request, which is what
+     * stops a crafted link pointing somebody's sign-in at an IdP the operator
+     * did not choose.
+     */
+    const url = new URL(client({ AUTH_IDENTITY_PROVIDER: 'Google' }).start().authorizeUrl);
+    expect(url.searchParams.get('identity_provider')).toBe('Google');
+    // Everything else is unchanged: this is one more parameter on the same
+    // flow, not a different one.
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(url.searchParams.get('scope')).toBe('openid email');
   });
 
   it('asks for openid and email, and nothing else', () => {

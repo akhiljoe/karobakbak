@@ -53,8 +53,24 @@ import type { Database } from '../storage/pool';
 import { accountForSubject, bearerToken, mintCredential, resolveAccount, revokeCredential } from './credentials';
 import { TokenError, type OidcClient } from './oidc';
 
-/** Carries state, nonce and the PKCE verifier across the redirect. */
+/** Carries state, nonce, the PKCE verifier and the landing mode across the redirect. */
 const FLOW_COOKIE = '__Host-kbb_flow';
+
+/**
+ * How the browser got here, and therefore where it goes at the end.
+ *
+ * A closed list of two. Anything else read off the query string is `redirect`,
+ * which is the safe direction: a full-page landing always works, while sending
+ * a top-level navigation to the popup page would close a tab the user opened.
+ */
+export type FlowMode = 'redirect' | 'popup';
+
+/**
+ * The page a popup lands on. Static, served by the edge from the SPA root, and
+ * deliberately not under `/auth/` — that prefix is proxied to this process, and
+ * this file is a few hundred bytes nginx can serve without waking the backend.
+ */
+const POPUP_DONE_PAGE = '/signin-done.html';
 /** The session credential itself. */
 const SESSION_COOKIE = '__Host-kbb_session';
 
@@ -171,9 +187,24 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
     return bearerToken(req.headers.authorization);
   }
 
-  /** Home, with a marker the interface can act on. Never an error body. */
-  function home(res: ServerResponse, outcome: 'ok' | 'failed'): void {
-    const target = new URL(auth.returnUrl, 'http://placeholder.invalid');
+  /**
+   * Where a finished flow sends the browser. Never an error body.
+   *
+   * Two destinations, because a sign-in can happen in the page or in a popup
+   * the page opened, and a popup that lands on the app renders the whole
+   * application inside a 480px window and then sits there. `POPUP_DONE_PAGE`
+   * is a few hundred bytes that reports the outcome to its opener and closes
+   * itself.
+   *
+   * The mode comes off the flow cookie, which this server wrote — never off
+   * the callback's query string. It only decides where this browser lands, so
+   * it is not an identity decision, but reading it from the request would let
+   * a crafted callback URL choose a different landing page than the one the
+   * flow started with, and there is no reason to allow that.
+   */
+  function home(res: ServerResponse, outcome: 'ok' | 'failed', mode: FlowMode = 'redirect'): void {
+    const base = mode === 'popup' ? POPUP_DONE_PAGE : auth.returnUrl;
+    const target = new URL(base, 'http://placeholder.invalid');
     target.searchParams.set('signin', outcome);
     const relative = `${target.pathname}${target.search}`;
     res.statusCode = 302;
@@ -192,12 +223,18 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
   }
 
   return {
-    async start(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    async start(req: IncomingMessage, res: ServerResponse): Promise<void> {
       const flow = oidc.start();
+      // Matched against the one accepted value rather than passed through, so
+      // the cookie can only ever hold a member of the closed list — the fourth
+      // segment is parsed back out below and anything unrecognised is a
+      // redirect anyway, but a value is easier to reason about than a parser.
+      const started = new URL(req.url ?? '/', 'http://placeholder.invalid');
+      const mode: FlowMode = started.searchParams.get('mode') === 'popup' ? 'popup' : 'redirect';
       setCookie(
         res,
         FLOW_COOKIE,
-        `${flow.state}.${flow.nonce}.${flow.codeVerifier}`,
+        `${flow.state}.${flow.nonce}.${flow.codeVerifier}.${mode}`,
         auth.flowTtlSeconds,
       );
       res.statusCode = 302;
@@ -216,7 +253,12 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       const code = url.searchParams.get('code') ?? '';
       const state = url.searchParams.get('state') ?? '';
 
-      const [cookieState, nonce, verifier] = raw.split('.');
+      const [cookieState, nonce, verifier, rawMode] = raw.split('.');
+      // A cookie written before this field existed has three segments, so an
+      // absent mode is a redirect rather than a broken flow. That matters for
+      // exactly one deploy — the one that ships this — during which somebody
+      // is mid-sign-in with the old cookie in their browser.
+      const mode: FlowMode = rawMode === 'popup' ? 'popup' : 'redirect';
       if (
         code === '' ||
         cookieState === undefined ||
@@ -228,7 +270,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         // before anything expensive: an attacker's code delivered into a
         // victim's browser stops here, having cost one string comparison.
         logger.warn('sign-in callback did not match a started flow');
-        home(res, 'failed');
+        home(res, 'failed', mode);
         return;
       }
 
@@ -240,7 +282,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         // they are safe to log. Anything else is reported without its message.
         if (err instanceof TokenError) logger.warn('sign-in failed', { reason: err.message });
         else logger.error('sign-in failed unexpectedly', errorFields(err));
-        home(res, 'failed');
+        home(res, 'failed', mode);
         return;
       }
 
@@ -252,18 +294,18 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       );
       if (!account.ok) {
         logger.warn('sign-in resolved no usable account', { reason: account.reason });
-        home(res, 'failed');
+        home(res, 'failed', mode);
         return;
       }
 
       const token = await mintCredential(db, logger, account.accountId, auth.sessionTtlSeconds);
       if (token === null) {
-        home(res, 'failed');
+        home(res, 'failed', mode);
         return;
       }
 
       setCookie(res, SESSION_COOKIE, token, auth.sessionTtlSeconds);
-      home(res, 'ok');
+      home(res, 'ok', mode);
     },
 
     async session(req: IncomingMessage, res: ServerResponse): Promise<void> {

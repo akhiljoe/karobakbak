@@ -36,8 +36,11 @@
 import { useEffect, useState } from 'react';
 import { LogIn, ShieldCheck, X } from 'lucide-react';
 
+import { SIGNIN_PROVIDER } from '../features';
 import type { Session } from '../hooks/useSession';
 import { Button } from './Button';
+import { GoogleMark } from './GoogleMark';
+import { LogoMark } from './Logo';
 
 interface AuthModalProps {
   open: boolean;
@@ -67,12 +70,19 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
   if (!open) return null;
 
   const signIn = (): void => {
-    // The page is about to be replaced, so this flag only ever un-sets by the
-    // navigation not happening. That is the case it is for: a blocked or
-    // failed redirect otherwise leaves a button that looks untouched.
+    // Called straight from the click, with nothing awaited before it: a browser
+    // permits `window.open` only while it can attribute the call to a gesture,
+    // and one `await` in between is enough to lose that and have the popup
+    // blocked.
     setLeaving(true);
     session.signIn();
   };
+
+  // The popup leaves this dialog on screen behind it, so the button has to stop
+  // looking pressable once a window is open. It un-sets when the flow finishes,
+  // because `signedIn` changing re-renders this and the dialog is closed by the
+  // header; if the person abandons the popup, reopening the dialog resets it.
+  const busyLabel = leaving ? 'Waiting for the sign-in window…' : null;
 
   const signOut = (): void => {
     void session.signOut().then((confirmed) => {
@@ -97,9 +107,20 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-700 sm:hidden" />
 
         <div className="mb-1 flex items-start justify-between gap-4">
-          <h2 className="font-display text-lg font-semibold text-ink-50">
-            {session.signedIn ? 'Your account' : 'Sign in'}
-          </h2>
+          <div className="flex items-center gap-2.5">
+            {/*
+              The mark, at the size the header uses. The dialog is the one place
+              in the product that sends somebody to a different origin, so it is
+              the one place worth restating whose sign-in this is — the next
+              thing they see is Google's page, and a person who cannot remember
+              what they clicked from is a person who should not be typing a
+              password.
+            */}
+            <LogoMark size={22} />
+            <h2 className="font-display text-lg font-semibold text-ink-50">
+              {session.signedIn ? 'Your account' : 'Sign in'}
+            </h2>
+          </div>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -134,17 +155,38 @@ export function AuthModal({ open, onClose, session }: AuthModalProps): JSX.Eleme
               so they survive closing the tab.
             </p>
 
-            <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
-              <LogIn className="mr-2 h-4 w-4" aria-hidden="true" />
-              {leaving ? 'Taking you there…' : 'Continue to sign in'}
-            </Button>
+            {SIGNIN_PROVIDER === 'google' ? (
+              /*
+                Google's own button, not ours. The light plate and the
+                unrecoloured mark are both required by their brand guidelines —
+                the G may not be tinted to suit a dark theme — so this is
+                deliberately the one control in the product that is not on the
+                palette. It is `type="button"` and a plain element rather than
+                `Button`, because `Button` carries the amber styling that would
+                have to be undone here anyway.
+              */
+              <button
+                type="button"
+                onClick={signIn}
+                disabled={leaving}
+                className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl bg-white px-4 text-[15px] font-medium text-[#1f1f1f] shadow-sm transition-all hover:bg-ink-100 active:scale-[0.99] disabled:cursor-default disabled:opacity-60"
+              >
+                <GoogleMark />
+                {busyLabel ?? 'Continue with Google'}
+              </button>
+            ) : (
+              <Button size="lg" className="w-full" onClick={signIn} disabled={leaving}>
+                <LogIn className="mr-2 h-4 w-4" aria-hidden="true" />
+                {busyLabel ?? 'Continue to sign in'}
+              </Button>
+            )}
 
             <p className="mt-4 flex gap-2 text-xs leading-relaxed text-ink-500">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-ink-600" aria-hidden="true" />
               <span>
-                You will finish on our sign-in provider's page, not here — check the address bar
-                before you type anything. Chatting never needs an account, and what you say in a
-                conversation is not attached to one.
+                A {SIGNIN_PROVIDER === 'google' ? 'Google' : 'sign-in'} window opens on top of this
+                one — check the address bar there before you type anything. Chatting never needs an
+                account, and what you say in a conversation is not attached to one.
               </span>
             </p>
           </>

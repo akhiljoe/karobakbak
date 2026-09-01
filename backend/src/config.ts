@@ -373,6 +373,15 @@ export interface Config {
     readonly clientSecret: string;
     /** Absolute, and must match the value registered with the provider exactly. */
     readonly redirectUri: string;
+    /**
+     * A federated identity provider to go straight to, e.g. `Google`.
+     *
+     * Empty renders the provider's own hosted login form. Set, it is passed as
+     * `identity_provider` on the authorize URL and the hosted form is skipped
+     * entirely — one redirect further and the user is on Google's consent
+     * screen. The name is the provider's, exactly as it is spelled in the pool.
+     */
+    readonly identityProvider: string;
     /** Where the browser lands after the callback resolves, success or failure. */
     readonly returnUrl: string;
     /**
@@ -1022,6 +1031,7 @@ export function loadConfig(env: Env = process.env): Config {
       clientId: str(env, 'AUTH_CLIENT_ID', ''),
       clientSecret: str(env, 'AUTH_CLIENT_SECRET', ''),
       redirectUri: str(env, 'AUTH_REDIRECT_URI', ''),
+      identityProvider: str(env, 'AUTH_IDENTITY_PROVIDER', ''),
       returnUrl: str(env, 'AUTH_RETURN_URL', '/'),
       // Thirty days. Long enough that signing in is rare, short enough that a
       // credential lifted from a shared machine dies on its own.
