@@ -179,9 +179,9 @@ describe('the connections table', () => {
     await repo().save('acc_aaaa', 'acc_bbbb');
     await repo().save('acc_bbbb', 'acc_cccc');
 
-    expect(await repo().list('acc_bbbb')).toEqual(['acc_aaaa', 'acc_cccc']);
-    expect(await repo().list('acc_aaaa')).toEqual(['acc_bbbb']);
-    expect(await repo().list('acc_cccc')).toEqual(['acc_bbbb']);
+    expect((await repo().list('acc_bbbb')).map((c) => c.other).sort()).toEqual(['acc_aaaa', 'acc_cccc']);
+    expect((await repo().list('acc_aaaa')).map((c) => c.other)).toEqual(['acc_bbbb']);
+    expect((await repo().list('acc_cccc')).map((c) => c.other)).toEqual(['acc_bbbb']);
   });
 
   it('removes from either side, and removal is unilateral', async () => {

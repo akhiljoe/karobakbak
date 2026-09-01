@@ -15,6 +15,7 @@ import {
   SkipForward,
   UserPlus,
   X,
+  Users,
 } from 'lucide-react';
 
 import { useDuration } from '../hooks/useDuration';
@@ -23,7 +24,9 @@ import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
 import { ACCOUNTS_ENABLED } from '../features';
 import { HistoryPanel } from './HistoryPanel';
+import { FriendsPanel } from './FriendsPanel';
 import type { HistoryEntry } from '../history';
+import { readConnections, removeConnection, type Connection } from '../connections';
 import {
   colourFor,
   composerDisabled,
@@ -62,6 +65,8 @@ interface ChatShellProps {
   /** Strangers met in this session. Client-side only; see `history.ts`. */
   history: readonly HistoryEntry[];
   onClearHistory(): void;
+  /** Whether an account exists to have connections. */
+  signedIn: boolean;
   onTyping(active: boolean): void;
   onReact(messageId: string, reaction: string, active: boolean): void;
   /** Save this stranger, or withdraw it while the conversation is still running. */
@@ -83,6 +88,7 @@ export function ChatShell({
   onSend,
   history,
   onClearHistory,
+  signedIn,
   onTyping,
   onReact,
   onSaveConnection,
@@ -92,6 +98,31 @@ export function ChatShell({
   onBack,
 }: ChatShellProps): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  const [connections, setConnections] = useState<readonly Connection[] | null>(null);
+  const [connectionsFailed, setConnectionsFailed] = useState(false);
+
+  /*
+    Fetched when the panel opens rather than on mount: it is a list most people
+    will never look at, and asking for it on every conversation would be a
+    request per chat to render nothing. Re-fetched on each open, because the
+    other side can remove a connection at any time and a stale list would offer
+    a Remove for something already gone.
+  */
+  useEffect(() => {
+    if (!friendsOpen) return;
+    let live = true;
+    setConnections(null);
+    setConnectionsFailed(false);
+    void readConnections().then((rows) => {
+      if (!live) return;
+      setConnections(rows ?? []);
+      setConnectionsFailed(rows === null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [friendsOpen]);
   const chatting = state.screen === 'chatting';
   const duration = useDuration(chatting ? state.matchStartedAt : null);
   // What they said about themselves, as a subtitle. Null when they declared
@@ -388,7 +419,7 @@ export function ChatShell({
         The panel opens upward — this is near the bottom of the viewport, and a
         panel dropping from here would open off-screen on a phone.
       */}
-      <div className="mx-auto flex w-full max-w-3xl justify-end px-1 pb-1">
+      <div className="mx-auto flex w-full max-w-3xl items-center justify-end gap-4 px-1 pb-1">
         <div className="relative">
           <button
             onClick={() => setHistoryOpen((was) => !was)}
@@ -411,6 +442,43 @@ export function ChatShell({
             onClear={onClearHistory}
           />
         </div>
+
+        {/*
+          Connections, beside Recent. Only when signed in: the list belongs to
+          an account, and a control that always opens "sign in to see this"
+          would be the disabled-but-present shape `features.ts` argues against.
+        */}
+        {ACCOUNTS_ENABLED && signedIn && (
+          <div className="relative">
+            <button
+              onClick={() => setFriendsOpen((was) => !was)}
+              aria-haspopup="dialog"
+              aria-expanded={friendsOpen}
+              className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
+                friendsOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
+              }`}
+            >
+              <Users className="h-3 w-3" aria-hidden="true" />
+              Connections
+            </button>
+
+            <FriendsPanel
+              open={friendsOpen}
+              connections={connections}
+              failed={connectionsFailed}
+              onClose={() => setFriendsOpen(false)}
+              onRemove={async (handle) => {
+                const done = await removeConnection(handle);
+                // Only drop the row once the server confirmed it, or the panel
+                // would show a connection as gone that is still there.
+                if (done) {
+                  setConnections((was) => (was ?? []).filter((c) => c.handle !== handle));
+                }
+                return done;
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <MessageInput

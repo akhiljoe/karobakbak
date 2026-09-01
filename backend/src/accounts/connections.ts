@@ -34,9 +34,17 @@ import type { Database } from '../storage/pool';
 /** Thrown rather than interpolated, so no id reaches an error message (I8). */
 const UNORDERED = new Error('connection pair reached the repository unsorted');
 
+/** The other side of one connection, and when it was made. */
+export interface Connection {
+  /** The other account's id. Opaque, and never sent to a browser as-is. */
+  readonly other: string;
+  /** When the pair connected. */
+  readonly since: Date;
+}
+
 export interface ConnectionRepository {
   save(accountLo: string, accountHi: string): Promise<boolean>;
-  list(accountId: string): Promise<string[]>;
+  list(accountId: string): Promise<Connection[]>;
   remove(accountId: string, otherId: string): Promise<boolean>;
 }
 
@@ -80,16 +88,21 @@ export function createConnectionRepository(
      * about who is whose friend — a person is on whichever side sorts lower.
      * The union is two index probes rather than a scan with an OR.
      */
-    async list(accountId: string): Promise<string[]> {
+    async list(accountId: string): Promise<Connection[]> {
       try {
-        const { rows } = await db.query<{ other: string }>(
-          `select account_hi as other from connections where account_lo = $1
+        // `created_at` comes back because it is the only thing this table holds
+        // about a connection besides the pair itself, and therefore the only
+        // thing a list can honestly show. Ordered newest first, which is the
+        // order somebody reads such a list in; the previous ordering by id was
+        // ordering by a random string.
+        const { rows } = await db.query<{ other: string; since: Date }>(
+          `select account_hi as other, created_at as since from connections where account_lo = $1
            union all
-           select account_lo as other from connections where account_hi = $1
-           order by other`,
+           select account_lo as other, created_at as since from connections where account_hi = $1
+           order by since desc, other`,
           [accountId],
         );
-        return rows.map((row) => row.other);
+        return rows.map((row) => ({ other: row.other, since: row.since }));
       } catch (err) {
         logger.error('failed to list connections', dbErrorFields(err));
         throw new Error('connections could not be listed');
