@@ -311,6 +311,93 @@ export function ChatShell({
       </div>
 
       {/*
+        Recent and Connections: two lists, and neither is an action.
+
+        They belong to the conversation surface — both are about people you met
+        while chatting, and on the landing screen they would be controls for
+        something that has not happened yet.
+
+        THEY ARE ON THE LEFT, AND A ROW ABOVE THE ACTIONS
+        The first attempt put them right-aligned directly under "Next stranger",
+        which is the mistake the note on Block already describes: that button is
+        pressed dozens of times a session, and anything sharing an edge with a
+        reflex gets pressed by accident. This row follows the same grammar as
+        the one below it — choice on the left, action on the right — so these
+        sit on the left, and a whole row of separation stands between them and
+        the thing everybody is actually aiming for.
+
+        Links rather than buttons, because they open lists instead of doing
+        something, and quiet enough not to compete with Next stranger for
+        attention.
+
+        Both panels open upward: this is near the bottom of the viewport, and
+        one dropping downward would open off-screen on a phone.
+      */}
+      {chatting && (
+      <div className="flex items-center gap-4 px-3 pt-1 sm:px-4">
+        <div className="relative">
+          <button
+            onClick={() => setHistoryOpen((was) => !was)}
+            aria-haspopup="dialog"
+            aria-expanded={historyOpen}
+            className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
+              historyOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
+            }`}
+          >
+            <Clock className="h-3 w-3" aria-hidden="true" />
+            Recent
+            {history.length > 0 && <span className="no-underline">({history.length})</span>}
+          </button>
+
+          <HistoryPanel
+            open={historyOpen}
+            entries={history}
+            placement="up"
+            onClose={() => setHistoryOpen(false)}
+            onClear={onClearHistory}
+          />
+        </div>
+
+        {/*
+          Connections, beside Recent. Only when signed in: the list belongs to
+          an account, and a control that always opens "sign in to see this"
+          would be the disabled-but-present shape `features.ts` argues against.
+        */}
+        {ACCOUNTS_ENABLED && signedIn && (
+          <div className="relative">
+            <button
+              onClick={() => setFriendsOpen((was) => !was)}
+              aria-haspopup="dialog"
+              aria-expanded={friendsOpen}
+              className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
+                friendsOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
+              }`}
+            >
+              <Users className="h-3 w-3" aria-hidden="true" />
+              Connections
+            </button>
+
+            <FriendsPanel
+              open={friendsOpen}
+              connections={connections}
+              failed={connectionsFailed}
+              onClose={() => setFriendsOpen(false)}
+              onRemove={async (handle) => {
+                const done = await removeConnection(handle);
+                // Only drop the row once the server confirmed it, or the panel
+                // would show a connection as gone that is still there.
+                if (done) {
+                  setConnections((was) => (was ?? []).filter((c) => c.handle !== handle));
+                }
+                return done;
+              }}
+            />
+          </div>
+        )}
+      </div>
+      )}
+
+      {/*
         One row above the composer: the choice on the left, the action on the
         right. Both are about moving on, so they belong together and beside the
         thing you are typing in — and both are deliberately far from Block,
@@ -403,83 +490,6 @@ export function ChatShell({
           </span>
         </div>
       )}
-
-      {/*
-        Recent strangers, as a link rather than a header icon.
-
-        It belongs to the conversation surface: it is a list of people you met
-        while chatting, it is empty until you have chatted, and on the landing
-        screen it would be a control for something that has not happened yet.
-        Beside the composer it sits where somebody already is.
-
-        A link and not a button, because it opens a list rather than performing
-        an action, and the row above the composer is not a place for another
-        piece of chrome competing with Skip and Block.
-
-        The panel opens upward — this is near the bottom of the viewport, and a
-        panel dropping from here would open off-screen on a phone.
-      */}
-      <div className="mx-auto flex w-full max-w-3xl items-center justify-end gap-4 px-1 pb-1">
-        <div className="relative">
-          <button
-            onClick={() => setHistoryOpen((was) => !was)}
-            aria-haspopup="dialog"
-            aria-expanded={historyOpen}
-            className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
-              historyOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
-            }`}
-          >
-            <Clock className="h-3 w-3" aria-hidden="true" />
-            Recent
-            {history.length > 0 && <span className="no-underline">({history.length})</span>}
-          </button>
-
-          <HistoryPanel
-            open={historyOpen}
-            entries={history}
-            placement="up"
-            onClose={() => setHistoryOpen(false)}
-            onClear={onClearHistory}
-          />
-        </div>
-
-        {/*
-          Connections, beside Recent. Only when signed in: the list belongs to
-          an account, and a control that always opens "sign in to see this"
-          would be the disabled-but-present shape `features.ts` argues against.
-        */}
-        {ACCOUNTS_ENABLED && signedIn && (
-          <div className="relative">
-            <button
-              onClick={() => setFriendsOpen((was) => !was)}
-              aria-haspopup="dialog"
-              aria-expanded={friendsOpen}
-              className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
-                friendsOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
-              }`}
-            >
-              <Users className="h-3 w-3" aria-hidden="true" />
-              Connections
-            </button>
-
-            <FriendsPanel
-              open={friendsOpen}
-              connections={connections}
-              failed={connectionsFailed}
-              onClose={() => setFriendsOpen(false)}
-              onRemove={async (handle) => {
-                const done = await removeConnection(handle);
-                // Only drop the row once the server confirmed it, or the panel
-                // would show a connection as gone that is still there.
-                if (done) {
-                  setConnections((was) => (was ?? []).filter((c) => c.handle !== handle));
-                }
-                return done;
-              }}
-            />
-          </div>
-        )}
-      </div>
 
       <MessageInput
         maxLength={state.limits?.maxMessageLength ?? 500}
