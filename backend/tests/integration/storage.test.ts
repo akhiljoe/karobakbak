@@ -103,6 +103,7 @@ describe('migrations', () => {
       'admin_audit',
       'admin_sessions',
       'blocks',
+      'connection_labels',
       'connections',
       'conversations',
       'enforcement',
