@@ -44,6 +44,7 @@
     "prod:logs": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs -f backend",
     "unblock:loadtest": "docker compose --env-file .env.loadtest -p karobakbak-loadtest exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
     "unblock": "docker compose exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
+    "tunnel": "cloudflared tunnel run --url http://localhost:3001 karobakbak-dev",
     "where": "node scripts/where.mjs"
   }
 }
