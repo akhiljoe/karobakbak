@@ -49,6 +49,8 @@ import { ACCOUNTS_ENABLED } from '../features';
 export interface Session {
   /** Whether the server confirmed a working credential. */
   readonly signedIn: boolean;
+  /** Whether `/auth/avatar` has an image to serve. Never a provider URL. */
+  readonly avatar: boolean;
   /** True until the first answer arrives, so the header can avoid flickering. */
   readonly checking: boolean;
   /** What the callback just reported, once, or null. */
@@ -63,6 +65,7 @@ export interface Session {
 
 export function useSession(): Session {
   const [signedIn, setSignedIn] = useState(false);
+  const [avatar, setAvatar] = useState(false);
   const [checking, setChecking] = useState(ACCOUNTS_ENABLED);
   const [outcome, setOutcome] = useState<SigninOutcome | null>(null);
 
@@ -81,7 +84,8 @@ export function useSession(): Session {
     let live = true;
     void readSession().then((result) => {
       if (!live) return;
-      setSignedIn(result);
+      setSignedIn(result.signedIn);
+      setAvatar(result.avatar);
       setChecking(false);
     });
     return () => {
@@ -133,7 +137,10 @@ export function useSession(): Session {
       window.clearInterval(watcher);
       window.removeEventListener('message', onMessage);
       if (found !== null) setOutcome(found);
-      void readSession().then(setSignedIn);
+      void readSession().then((result) => {
+        setSignedIn(result.signedIn);
+        setAvatar(result.avatar);
+      });
     };
 
     const onMessage = (event: MessageEvent): void => {
@@ -153,11 +160,14 @@ export function useSession(): Session {
     const confirmed = await endSession();
     // Only on confirmation. Clearing this optimistically would tell somebody on
     // a shared machine they had signed out while the credential still worked.
-    if (confirmed) setSignedIn(false);
+    if (confirmed) {
+      setSignedIn(false);
+      setAvatar(false);
+    }
     return confirmed;
   }, []);
 
   const dismissOutcome = useCallback((): void => setOutcome(null), []);
 
-  return { signedIn, checking, outcome, signIn, signOut, dismissOutcome };
+  return { signedIn, avatar, checking, outcome, signIn, signOut, dismissOutcome };
 }

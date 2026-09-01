@@ -68,14 +68,32 @@ describe('withoutSigninOutcome', () => {
 });
 
 describe('readSession', () => {
-  it('is true only when the server said exactly true', async () => {
+  /** Every failure answers this exact shape. */
+  const OUT = { signedIn: false, avatar: false };
+
+  it('is signed in only when the server said exactly true', async () => {
     respondWith({ signedIn: true });
-    await expect(readSession()).resolves.toBe(true);
+    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false });
   });
 
-  it('is false when the server said so', async () => {
+  it('reports an avatar only when the server said exactly true', async () => {
+    /*
+     * A boolean, never a URL. The provider's CDN address must not reach the
+     * page: an <img> at it would be blocked by `img-src` and would report every
+     * visitor to the vendor on every render.
+     */
+    respondWith({ signedIn: true, avatar: true });
+    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: true });
+
+    for (const value of ['true', 1, {}, 'yes']) {
+      respondWith({ signedIn: true, avatar: value });
+      await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false });
+    }
+  });
+
+  it('is signed out when the server said so', async () => {
     respondWith({ signedIn: false });
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
   });
 
   it('refuses a truthy value that is not true', async () => {
@@ -88,7 +106,7 @@ describe('readSession', () => {
      */
     for (const value of ['true', 'no', 1, {}, []]) {
       respondWith({ signedIn: value });
-      await expect(readSession()).resolves.toBe(false);
+      await expect(readSession()).resolves.toEqual(OUT);
     }
   });
 
@@ -96,14 +114,14 @@ describe('readSession', () => {
     // `try_files` serving index.html for /auth/session is exactly this case:
     // a 200 whose body is a page. It must not read as signed in.
     respondWith(null);
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
     respondWith('signed in');
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
   });
 
   it('is false on a refusal and on unreadable JSON', async () => {
     respondWith({ signedIn: true }, false);
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
 
     vi.stubGlobal(
       'fetch',
@@ -114,12 +132,12 @@ describe('readSession', () => {
         },
       }),
     );
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
   });
 
   it('is false when the network throws', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('failed to fetch')));
-    await expect(readSession()).resolves.toBe(false);
+    await expect(readSession()).resolves.toEqual(OUT);
   });
 
   it('sends the cookie', async () => {

@@ -51,6 +51,9 @@ import type { Config } from '../config';
 import { errorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
 import { accountForSubject, bearerToken, mintCredential, resolveAccount, revokeCredential } from './credentials';
+import { fetchAvatar } from './avatar';
+import { createKeys } from '../redis/keys';
+import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
 
 /** Carries state, nonce, the PKCE verifier and the landing mode across the redirect. */
@@ -79,12 +82,22 @@ export interface AuthRoutesDeps {
   readonly logger: Logger;
   readonly db: Database;
   readonly oidc: OidcClient;
+  /**
+   * The command connection, for the avatar URL cache only.
+   *
+   * Sign-in itself touches no Redis — it is a PostgreSQL flow — so this is
+   * optional and every path treats its absence as "no avatar", the same as a
+   * provider that returned no picture.
+   */
+  readonly redis?: Redis;
 }
 
 export interface AuthRoutes {
   start(req: IncomingMessage, res: ServerResponse): Promise<void>;
   callback(req: IncomingMessage, res: ServerResponse): Promise<void>;
   session(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Relays the provider's profile image from this origin. */
+  avatar(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -130,8 +143,41 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc } = deps;
+  const { config, logger, db, oidc, redis } = deps;
   const auth = config.auth;
+  const keys = createKeys(config.redis.keyPrefix);
+
+  /**
+   * Remember where this account's picture lives, for as long as the session.
+   *
+   * Best effort in both directions. Redis being unavailable costs an avatar and
+   * must never cost a sign-in, which is the same rule `/ready` encodes about
+   * PostgreSQL in reverse: a subsystem that is not on the critical path may not
+   * be allowed onto it by an error handler.
+   */
+  /** Whether there is a cached URL to serve. Any failure answers false. */
+  async function avatarUrl(accountId: string): Promise<string | null> {
+    if (redis === undefined || !auth.avatars) return null;
+    try {
+      return await redis.get(keys.avatar(accountId));
+    } catch (err) {
+      logger.warn('could not read an avatar url', errorFields(err));
+      return null;
+    }
+  }
+
+  async function hasAvatar(accountId: string): Promise<boolean> {
+    return (await avatarUrl(accountId)) !== null;
+  }
+
+  async function rememberAvatar(accountId: string, url: string | null): Promise<void> {
+    if (redis === undefined || !auth.avatars || url === null) return;
+    try {
+      await redis.set(keys.avatar(accountId), url, 'EX', auth.sessionTtlSeconds);
+    } catch (err) {
+      logger.warn('could not cache an avatar url', errorFields(err));
+    }
+  }
 
   /**
    * `__Host-` requires Secure, Path=/ and no Domain, and browsers enforce it.
@@ -298,7 +344,9 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         return;
       }
 
-      const token = await mintCredential(db, logger, account.accountId, auth.sessionTtlSeconds);
+      await rememberAvatar(account.accountId, identity.picture);
+
+    const token = await mintCredential(db, logger, account.accountId, auth.sessionTtlSeconds);
       if (token === null) {
         home(res, 'failed', mode);
         return;
@@ -313,7 +361,15 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // Deliberately no account id in the body. The interface needs to know
       // *whether* somebody is signed in, and an opaque identifier in a page is
       // one more thing that can be copied into a bug report or a screenshot.
-      json(res, 200, { signedIn: resolved.ok });
+      //
+      // `avatar` is a boolean for the same reason: it says whether `/auth/avatar`
+      // has anything to serve, and never where the image came from. The
+      // provider's CDN URL is not something a page should carry.
+      if (!resolved.ok) {
+        json(res, 200, { signedIn: false, avatar: false });
+        return;
+      }
+      json(res, 200, { signedIn: true, avatar: await hasAvatar(resolved.accountId) });
     },
 
     async accountForRequest(req: IncomingMessage): Promise<string | null> {
@@ -321,8 +377,57 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       return resolved.ok ? resolved.accountId : null;
     },
 
+    /**
+     * Relay the provider's profile image.
+     *
+     * Authenticated, because the URL is cached against an account and an
+     * unauthenticated route would let anybody enumerate accounts by asking for
+     * their pictures. It answers 404 for every absence — no session, no cached
+     * URL, a fetch that failed — because the interface's only question is
+     * whether an image appeared, and distinguishing "you are not signed in"
+     * from "there is no picture" here tells a caller something it has no
+     * business learning from an image endpoint.
+     */
+    async avatar(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      if (!resolved.ok) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+
+      const url = await avatarUrl(resolved.accountId);
+      const image = url === null ? null : await fetchAvatar(url, logger);
+      if (image === null) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+
+      res.statusCode = 200;
+      res.setHeader('content-type', image.contentType);
+      res.setHeader('content-length', image.body.byteLength);
+      // `private`, so no shared cache holds one person's picture, and a day,
+      // so the steady state is one upstream fetch per person per day rather
+      // than one per page view. `no-transform` because a proxy that
+      // recompresses an avatar is a proxy that has read it.
+      res.setHeader('cache-control', 'private, max-age=86400, no-transform');
+      res.end(image.body);
+    },
+
     async signout(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      // Read before the credential dies, or there is no account to forget for.
+      const resolved = await resolveAccount(db, logger, credentialOf(req));
       await revokeCredential(db, logger, credentialOf(req));
+      if (resolved.ok && redis !== undefined) {
+        // Signing out should not leave a picture of somebody behind on a
+        // machine they have just finished using.
+        try {
+          await redis.del(keys.avatar(resolved.accountId));
+        } catch (err) {
+          logger.warn('could not clear a cached avatar url', errorFields(err));
+        }
+      }
       clearCookie(res, SESSION_COOKIE);
       // Always 200. Signing out when not signed in is success — the caller's
       // goal is that this browser holds no working credential, and it does not.
