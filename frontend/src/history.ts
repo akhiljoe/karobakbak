@@ -211,6 +211,27 @@ export function clearHistory(): HistoryEntry[] {
   return [];
 }
 
+/**
+ * Refuse a request and stop them reaching you again.
+ *
+ * Sends nothing back to the asker: they learn exactly what an ignore tells
+ * them, which is nothing. Somebody blocking should not have to announce it to
+ * the person they are blocking.
+ */
+export async function blockReconnect(offer: string): Promise<boolean> {
+  try {
+    const response = await fetch('/auth/reconnect/block', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ offer }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function isEntry(value: unknown): value is HistoryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Partial<HistoryEntry>;
