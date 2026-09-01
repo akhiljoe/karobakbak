@@ -641,6 +641,8 @@ export function ChatShell({
               open={historyOpen}
               entries={history}
               placement="up"
+              signedIn={signedIn}
+              onSignIn={onOpenAuth}
               onClose={() => setHistoryOpen(false)}
               onClear={onClearHistory}
             />
