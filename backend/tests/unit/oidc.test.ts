@@ -111,9 +111,11 @@ describe('starting a sign-in', () => {
     // The default. Cognito shows its hosted UI, with whatever it is configured
     // to offer, and the parameter is absent rather than empty — an empty
     // `identity_provider` is not the same request.
-    expect(new URL(client().start().authorizeUrl).searchParams.has('identity_provider')).toBe(
-      false,
-    );
+    const url = new URL(client().start().authorizeUrl);
+    expect(url.searchParams.has('identity_provider')).toBe(false);
+    // And no `prompt` either. It describes what a federated provider should do
+    // with its own chooser, so it travels with the IdP or not at all.
+    expect(url.searchParams.has('prompt')).toBe(false);
   });
 
   it('goes straight to a named IdP, skipping the hosted form', () => {
@@ -126,6 +128,16 @@ describe('starting a sign-in', () => {
      */
     const url = new URL(client({ AUTH_IDENTITY_PROVIDER: 'Google' }).start().authorizeUrl);
     expect(url.searchParams.get('identity_provider')).toBe('Google');
+    /*
+     * The account chooser, always. Without it the provider reuses whoever is
+     * already signed in on the device and returns with no screen shown — so on
+     * a shared machine you are signed in as the last person who used it, having
+     * been asked nothing.
+     *
+     * `select_account`, not `login`: the question is which account, not prove
+     * it is you again.
+     */
+    expect(url.searchParams.get('prompt')).toBe('select_account');
     // Everything else is unchanged: this is one more parameter on the same
     // flow, not a different one.
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
