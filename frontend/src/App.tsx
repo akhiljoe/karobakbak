@@ -253,6 +253,22 @@ export function App(): JSX.Element {
     path is reconnect-specific, which is why every guard that applies to a
     random match applies here too.
   */
+  /*
+    Signing in has to reach the socket, and it cannot on its own: the account is
+    read from the cookie at the handshake, so a connection opened while signed
+    out stays signed out until it is replaced. The sign-in popup does not reload
+    this page — that is what keeps a conversation alive across it — so nothing
+    else would ever tell the server.
+
+    Only on the transition into signed-in. Running on every render, or on the
+    way out, would close a healthy socket for no reason.
+  */
+  const wasSignedIn = useRef(session.signedIn);
+  useEffect(() => {
+    if (session.signedIn && !wasSignedIn.current) chat.reauthenticate();
+    wasSignedIn.current = session.signedIn;
+  }, [session.signedIn]);
+
   useEffect(() => {
     if (!state.reconnectReady) return;
     chat.reconnectStarted();
