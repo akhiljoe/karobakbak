@@ -34,6 +34,10 @@ interface HistoryPanelProps {
   entries: readonly HistoryEntry[];
   onClose(): void;
   onClear(): void;
+  /** Whether asking somebody to chat again is possible at all. */
+  signedIn: boolean;
+  /** Opens the sign-in dialog, saying why it appeared. */
+  onSignIn(reason: string): void;
   /**
    * Which way it opens.
    *
@@ -49,6 +53,8 @@ export function HistoryPanel({
   entries,
   onClose,
   onClear,
+  signedIn,
+  onSignIn,
   placement = 'down',
 }: HistoryPanelProps): JSX.Element | null {
   const container = useRef<HTMLDivElement>(null);
@@ -266,6 +272,21 @@ export function HistoryPanel({
                   */}
                   <button
                     onClick={() => {
+                      /*
+                        Signed out, this asks rather than fails. The route
+                        refuses without a credential and always will — that
+                        check stays, because a client is not where a rule lives
+                        — but a person pressing a button should not have to
+                        deduce the rule from nothing happening.
+
+                        A `title` was the first attempt and is invisible on a
+                        phone, which is where this was reported.
+                      */
+                      if (!signedIn) {
+                        onClose();
+                        onSignIn('Sign in to chat with someone again. Your place here is kept.');
+                        return;
+                      }
                       const token = entry.presence;
                       if (token === null) {
                         const key = String(entry.at);
@@ -280,7 +301,7 @@ export function HistoryPanel({
                       });
                     }}
                     disabled={askedFor(entry) === 'asked'}
-                    aria-label="Ask to chat again"
+                    aria-label={signedIn ? 'Ask to chat again' : 'Sign in to chat again'}
                     title={
                       askedFor(entry) === 'asked'
                         ? 'Asked'
@@ -291,8 +312,10 @@ export function HistoryPanel({
                             : 'Ask to chat again'
                     }
                     className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${
-                      askedFor(entry) === 'away' || askedFor(entry) === 'signin'
-                        ? 'border-ink-700 text-ink-600'
+                      !signedIn
+                        ? 'border-ink-600 text-ink-300 hover:border-amber-400/60 hover:text-amber-300'
+                        : askedFor(entry) === 'away' || askedFor(entry) === 'signin'
+                          ? 'border-ink-700 text-ink-600'
                         : askedFor(entry) === 'asked'
                           ? 'border-green-500/50 bg-green-500/10 text-green-300'
                           : 'border-ink-600 text-ink-300 hover:border-green-500/50 hover:bg-green-500/10 hover:text-green-300'
@@ -318,6 +341,14 @@ export function HistoryPanel({
       )}
 
       <p className="border-t border-ink-800 px-3 py-2 text-xs leading-relaxed text-ink-500">
+        {/*
+          Said before anything is pressed, not only after. A control whose
+          requirement is discoverable solely by failing it is a control people
+          learn by being refused.
+        */}
+        {!signedIn && (
+          <span className="mb-1 block text-ink-400">Sign in to chat with someone again.</span>
+        )}
         Kept in this tab only, and gone when you close it. Never sent to us.
       </p>
     </div>
