@@ -46,6 +46,12 @@ Redis, PostgreSQL, a one-shot migration job, Prometheus and Grafana.
 | Grafana | http://localhost:3000 | `admin` / `admin` by default; dashboard **karobakbak — overview** |
 | Backends, Redis, PostgreSQL | — | private network, no published host port |
 
+`npm run where` prints the URL to open and lists every address this machine
+answers on, marking each with whether `ALLOWED_ORIGINS` will accept a socket
+from it. It runs at the end of `npm run up`. The mark is the point: an origin
+that is missing from the list serves the page perfectly and then refuses the
+WebSocket upgrade with a 403, so the site loads and pressing start does nothing.
+
 `FRONTEND_PORT` is the whole application origin, not a cosmetic setting. It is
 what `AUTH_REDIRECT_URI` and the provider's registered sign-out URL are built
 from, and every entry in `ALLOWED_ORIGINS` has to carry the same port or the
