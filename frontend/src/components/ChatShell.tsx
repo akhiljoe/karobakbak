@@ -98,6 +98,26 @@ export function ChatShell({
   onBack,
 }: ChatShellProps): JSX.Element {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // The overflow menu closes on Escape and on any click outside the header, the
+  // same as every other menu here. It also closes when the conversation ends,
+  // because it is a menu about a stranger who is no longer there.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const close = (): void => setMoreOpen(false);
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMoreOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+    };
+  }, [moreOpen]);
+
+
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [connections, setConnections] = useState<readonly Connection[] | null>(null);
   const [connectionsFailed, setConnectionsFailed] = useState(false);
@@ -124,6 +144,11 @@ export function ChatShell({
     };
   }, [friendsOpen]);
   const chatting = state.screen === 'chatting';
+
+  // A menu about a stranger who has gone should not still be open.
+  useEffect(() => {
+    if (!chatting) setMoreOpen(false);
+  }, [chatting]);
   const duration = useDuration(chatting ? state.matchStartedAt : null);
   // What they said about themselves, as a subtitle. Null when they declared
   // nothing, which is the common case and the one the copy defaults to.
@@ -228,6 +253,67 @@ export function ChatShell({
             by somebody who is uncomfortable, and an unlabelled icon is only
             discoverable to people who already know what it does.
           */}
+          {/*
+            The overflow menu, for the one control that is a choice about a
+            person rather than about the conversation. Adding somebody is not
+            urgent and not frequent, so it costs a tap; Block stays out here for
+            the opposite reason — see the note above.
+          */}
+          {chatting && ACCOUNTS_ENABLED && (
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setMoreOpen((was) => !was)}
+                aria-label="More about this stranger"
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                className={`inline-flex h-12 w-10 shrink-0 items-center justify-center rounded-xl border transition-all active:scale-95 ${
+                  moreOpen
+                    ? 'border-amber-400/60 text-amber-300'
+                    : 'border-ink-700 text-ink-300 hover:border-ink-600 hover:bg-ink-800'
+                }`}
+              >
+                <MoreVertical className="h-4 w-4" aria-hidden="true" />
+              </button>
+
+              {moreOpen && (
+                <div
+                  role="menu"
+                  aria-label="This stranger"
+                  className="absolute right-0 top-full z-40 mt-2 w-48 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 p-1 shadow-lift"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      onSaveConnection(!state.connectionSaved);
+                      setMoreOpen(false);
+                    }}
+                    disabled={state.connectionMade}
+                    aria-pressed={state.connectionSaved}
+                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors disabled:cursor-default ${
+                      state.connectionSaved
+                        ? 'text-amber-300 hover:bg-ink-800'
+                        : 'text-ink-200 hover:bg-ink-800 hover:text-ink-50'
+                    }`}
+                  >
+                    <UserPlus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    {/*
+                      Three labels for three genuinely different states, and
+                      never a fourth for "they added you". That frame does not
+                      exist: a request is disclosed only on reciprocity, so
+                      there is nothing between "requested" and "friends" for the
+                      interface to show.
+                    */}
+                    {state.connectionMade
+                      ? 'Friends'
+                      : state.connectionSaved
+                        ? 'Request sent'
+                        : 'Add friend'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {chatting && state.features.block && (
             <button
               onClick={onBlockAndNext}
@@ -311,7 +397,7 @@ export function ChatShell({
       </div>
 
       {/*
-        Recent and Connections: two lists, and neither is an action.
+        Connections: a list, and not an action.
 
         They belong to the conversation surface — both are about people you met
         while chatting, and on the landing screen they would be controls for
@@ -335,31 +421,8 @@ export function ChatShell({
       */}
       {chatting && (
       <div className="flex items-center gap-4 px-3 pt-1 sm:px-4">
-        <div className="relative">
-          <button
-            onClick={() => setHistoryOpen((was) => !was)}
-            aria-haspopup="dialog"
-            aria-expanded={historyOpen}
-            className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
-              historyOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
-            }`}
-          >
-            <Clock className="h-3 w-3" aria-hidden="true" />
-            Recent
-            {history.length > 0 && <span className="no-underline">({history.length})</span>}
-          </button>
-
-          <HistoryPanel
-            open={historyOpen}
-            entries={history}
-            placement="up"
-            onClose={() => setHistoryOpen(false)}
-            onClear={onClearHistory}
-          />
-        </div>
-
         {/*
-          Connections, beside Recent. Only when signed in: the list belongs to
+          Connections. Only when signed in: the list belongs to
           an account, and a control that always opens "sign in to see this"
           would be the disabled-but-present shape `features.ts` argues against.
         */}
@@ -420,45 +483,38 @@ export function ChatShell({
           </label>
 
           {/*
-            Absent, not disabled, while accounts are off — the rule the filter
-            control and Premium already follow. A save button that renders and
-            refuses still takes focus and still announces itself to a screen
-            reader before saying no.
+            Recent sits in the middle: between the checkbox on the left and the
+            action on the right, touching neither. It used to be a link off to
+            one side; the middle is where a list belongs when the two things
+            around it are a preference and a reflex.
 
-            It sits with the conversation controls rather than beside Block: it
-            is the one *positive* thing you can do about a stranger, and putting
-            it next to the destructive control would be a strange pair of
-            neighbours. It is deliberately not near "Next stranger" either —
-            see the note above about reflexes and adjacency.
+            "Add friend" used to be here and has moved to the overflow menu in
+            the header, beside the person it is about.
           */}
-          {ACCOUNTS_ENABLED && (
+          <div className="relative">
             <button
-              onClick={() => onSaveConnection(!state.connectionSaved)}
-              disabled={state.connectionMade}
-              aria-pressed={state.connectionSaved}
-              title={
-                state.connectionMade
-                  ? 'Connected'
-                  : state.connectionSaved
-                    ? 'Saved. Tap to undo.'
-                    : 'Save this stranger'
-              }
+              onClick={() => setHistoryOpen((was) => !was)}
+              aria-haspopup="dialog"
+              aria-expanded={historyOpen}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-all active:scale-95 ${
-                state.connectionSaved
-                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                historyOpen
+                  ? 'border-amber-400/60 bg-ink-900 text-amber-300'
                   : 'border-ink-700 bg-ink-900 text-ink-200 hover:border-ink-600 hover:bg-ink-800'
-              } ${state.connectionMade ? 'cursor-default' : ''}`}
+              }`}
             >
-              <UserPlus className="h-3.5 w-3.5" />
-              {/*
-                Three labels for three genuinely different states, and never a
-                fourth for "they saved you". That frame does not exist: a save
-                is disclosed only on reciprocity, so there is nothing between
-                "saved" and "connected" for the interface to show.
-              */}
-              {state.connectionMade ? 'Connected' : state.connectionSaved ? 'Saved' : 'Save'}
+              <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+              Recent
+              {history.length > 0 && <span className="text-ink-500">{history.length}</span>}
             </button>
-          )}
+
+            <HistoryPanel
+              open={historyOpen}
+              entries={history}
+              placement="up"
+              onClose={() => setHistoryOpen(false)}
+              onClear={onClearHistory}
+            />
+          </div>
 
           <button
             onClick={onSkip}
