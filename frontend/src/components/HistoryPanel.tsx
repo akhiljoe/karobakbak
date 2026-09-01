@@ -23,11 +23,11 @@
  * a memory aid, and being only that is what keeps it free of every question the
  * durable version would have to answer.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Clock, Trash2, X } from 'lucide-react';
 
 import { COUNTRY_NAMES } from '../protocol/types';
-import { flagOf, type HistoryEntry } from '../history';
+import { flagOf, onlineFrom, type HistoryEntry } from '../history';
 
 interface HistoryPanelProps {
   open: boolean;
@@ -52,6 +52,25 @@ export function HistoryPanel({
   placement = 'down',
 }: HistoryPanelProps): JSX.Element | null {
   const container = useRef<HTMLDivElement>(null);
+  const [online, setOnline] = useState<ReadonlySet<string>>(new Set());
+
+  /*
+    Asked once, when the panel opens, and never on a timer. A list somebody
+    glances at does not need to update while they look at it, and polling would
+    turn a glance into a request every few seconds for the life of the tab.
+
+    Only entries carrying a token are asked about, and most will not have one.
+  */
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void onlineFrom(entries).then((here) => {
+      if (live) setOnline(here);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, entries]);
 
   useEffect(() => {
     if (!open) return;
@@ -123,9 +142,19 @@ export function HistoryPanel({
               <li key={`${entry.at}-${entry.nickname}`} className="px-1">
                 <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
                   {/* The accent that conversation used, so the row is recognisable. */}
+                  {/*
+                    The conversation's own accent, and a ring when they are here
+                    now. A second dot would be two circles saying different
+                    things side by side; the ring keeps one mark meaning one
+                    person and adds the state to it.
+                  */}
                   <span
                     aria-hidden="true"
-                    className="h-2 w-2 shrink-0 rounded-full"
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      entry.presence !== null && online.has(entry.presence)
+                        ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-ink-900'
+                        : ''
+                    }`}
                     style={{ backgroundColor: entry.colour }}
                   />
                   <div className="min-w-0 flex-1">
@@ -145,7 +174,9 @@ export function HistoryPanel({
                       `minor-safety-policy.md` §6 is written about.
                     */}
                     <p className="text-xs text-ink-500">
-                      {entry.country === null ? (
+                      {entry.presence !== null && online.has(entry.presence) ? (
+                        <span className="text-green-400">Online</span>
+                      ) : entry.country === null ? (
                         'Somewhere'
                       ) : (
                         <>

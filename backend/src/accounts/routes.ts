@@ -120,6 +120,8 @@ export interface AuthRoutes {
   labelConnection(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Reads or changes whether this account appears online. */
   presence(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  /** Which of a set of presence tokens point at somebody online now. */
+  presenceLookup(req: IncomingMessage, res: ServerResponse): Promise<void>;
   signout(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /**
    * The account behind a WebSocket upgrade, or null.
@@ -737,6 +739,50 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       } catch (err) {
         logger.error('could not read or change presence sharing', errorFields(err));
         json(res, 500, { error: 'internal_error' });
+      }
+    },
+
+    /**
+     * Which of these tokens are online.
+     *
+     * Deliberately open to signed-out callers. A token is minted only for
+     * somebody who chose to share presence, it expires on its own, and it
+     * answers exactly one question — so requiring an account here would gate a
+     * capability the person was already handed, for no gain. Holding the token
+     * *is* the authorisation.
+     *
+     * Answers only the tokens that are online. An unknown or expired token is
+     * indistinguishable from an offline one, which is what stops this being a
+     * way to test whether a token was ever real.
+     */
+    async presenceLookup(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      if (presence === undefined) {
+        json(res, 200, { online: [] });
+        return;
+      }
+
+      const body = await readBody(req);
+      const raw = body?.tokens;
+      if (!Array.isArray(raw)) {
+        json(res, 400, { error: 'bad_request' });
+        return;
+      }
+      // Bounded and shape-checked. The panel asks about at most fifteen, which
+      // is the cap on the list it is drawn from.
+      const tokens = raw
+        .filter((t): t is string => typeof t === 'string' && /^[0-9a-f]{32}$/.test(t))
+        .slice(0, 15);
+      if (tokens.length === 0) {
+        json(res, 200, { online: [] });
+        return;
+      }
+
+      try {
+        const here = await presence.resolveTokens(tokens);
+        json(res, 200, { online: [...here] });
+      } catch (err) {
+        logger.error('could not resolve presence tokens', errorFields(err));
+        json(res, 200, { online: [] });
       }
     },
 

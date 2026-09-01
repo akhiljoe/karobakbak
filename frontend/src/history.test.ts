@@ -29,7 +29,7 @@ function fakeStorage(initial: Record<string, string> = {}) {
 }
 
 function entry(n: number): HistoryEntry {
-  return { at: n, nickname: `Stranger ${n}`, colour: '#ffb420', country: 'IN' };
+  return { at: n, nickname: `Stranger ${n}`, colour: '#ffb420', country: 'IN', presence: null };
 }
 
 beforeEach(() => {
@@ -101,7 +101,7 @@ describe('readHistory', () => {
           { nickname: 'no timestamp', colour: '#fff', country: null },
           null,
           'a string',
-          { at: 2, nickname: 'ok', colour: '#fff', country: null },
+          { at: 2, nickname: 'ok', colour: '#fff', country: null, presence: null },
         ]),
       }),
     });

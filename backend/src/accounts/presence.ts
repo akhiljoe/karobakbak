@@ -33,6 +33,8 @@ import type { Redis } from 'ioredis';
 
 import { dbErrorFields, errorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
+import { randomBytes } from 'node:crypto';
+
 import { createKeys } from '../redis/keys';
 
 /**
@@ -43,6 +45,15 @@ import { createKeys } from '../redis/keys';
  * laptop stops claiming to be here within about a minute.
  */
 export const PRESENCE_TTL_SECONDS = 75;
+
+/**
+ * How long a presence token stays usable.
+ *
+ * Twelve hours, which comfortably outlives the tab that holds it — Recent lives
+ * in `sessionStorage` and dies when the tab closes — and is far short of a
+ * lasting handle. Nothing revokes these; the TTL is the whole of the bound.
+ */
+export const PRESENCE_TOKEN_TTL_SECONDS = 12 * 60 * 60;
 
 export interface PresenceService {
   /** Publish, or refresh, that this account is here. Respects the setting. */
@@ -55,6 +66,16 @@ export interface PresenceService {
   sharing(accountId: string): Promise<boolean>;
   /** Change the setting. Turning it off withdraws immediately. */
   setSharing(accountId: string, share: boolean): Promise<void>;
+  /**
+   * Mint a token a viewer can later use to ask whether this account is here.
+   *
+   * Null when the account is not sharing presence, so somebody who has turned
+   * it off is never remembered by the people they meet — no token, nothing to
+   * store, nothing to ask.
+   */
+  mintToken(accountId: string): Promise<string | null>;
+  /** Which of these tokens point at somebody who is online right now. */
+  resolveTokens(tokens: readonly string[]): Promise<Set<string>>;
 }
 
 export function createPresenceService(
@@ -122,6 +143,51 @@ export function createPresenceService(
         // do not show them.
         return false;
       }
+    },
+
+    async mintToken(accountId) {
+      try {
+        if (!(await this.sharing(accountId))) return null;
+        // Random, not derived. A derived token would be the same every time the
+        // same two people met, which is a stable identifier for a pair — the
+        // thing this is careful not to be.
+        const token = randomBytes(16).toString('hex');
+        await redis.set(
+          keys.presenceToken(token),
+          accountId,
+          'EX',
+          PRESENCE_TOKEN_TTL_SECONDS,
+        );
+        return token;
+      } catch (err) {
+        // No token is an ordinary outcome, so a failure here is simply one more
+        // conversation that does not get a dot.
+        logger.warn('could not mint a presence token', errorFields(err));
+        return null;
+      }
+    },
+
+    async resolveTokens(tokens) {
+      const here = new Set<string>();
+      if (tokens.length === 0) return here;
+      try {
+        const accounts = await redis.mget(...tokens.map((t) => keys.presenceToken(t)));
+        const pairs = tokens
+          .map((token, i) => ({ token, account: accounts[i] }))
+          .filter((pair): pair is { token: string; account: string } => typeof pair.account === 'string');
+        if (pairs.length === 0) return here;
+
+        // Two round trips for the whole list rather than two per row.
+        const live = await redis.mget(...pairs.map((pair) => keys.presence(pair.account)));
+        pairs.forEach((pair, i) => {
+          if (live[i] !== null && live[i] !== undefined) here.add(pair.token);
+        });
+      } catch (err) {
+        // Everybody offline, which is the safe direction — showing somebody as
+        // here when they are not invites a message into silence.
+        logger.warn('could not resolve presence tokens', errorFields(err));
+      }
+      return here;
     },
 
     async setSharing(accountId, share) {

@@ -25,7 +25,15 @@ import { serverFrame } from '../protocol/envelope';
 export const SESSION_EVENT_VERSION = 1;
 
 export type SessionEvent =
-  | { event: 'matched'; matchId: string; startedAt: string; you: Identity; partner: Identity }
+  | {
+      event: 'matched';
+      matchId: string;
+      startedAt: string;
+      you: Identity;
+      partner: Identity;
+      /** Opaque token for asking later whether this partner is online, or null. */
+      partnerPresence?: string | null;
+    }
   | {
       event: 'message';
       matchId: string;
@@ -151,6 +159,9 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
           colour: data.partner.colour,
           profile: readProfile(data.partner.profile),
         },
+        // Absent is the ordinary case — most partners are signed out — so a
+        // missing or malformed value is null rather than a rejected frame.
+        partnerPresence: typeof data.partnerPresence === 'string' ? data.partnerPresence : null,
       };
     case 'message':
       if (typeof data.messageId !== 'string' || typeof data.text !== 'string') return null;
@@ -214,6 +225,7 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
         startedAt: event.startedAt,
         you: event.you,
         partner: event.partner,
+        partnerPresence: event.partnerPresence ?? null,
       });
     case 'message':
       return serverFrame('message', {

@@ -89,6 +89,13 @@ export interface ChatState {
   readonly matchStartedAt: string | null;
   readonly you: Identity | null;
   readonly partner: Identity | null;
+  /**
+   * Token for asking whether this partner is online later, or null.
+   *
+   * Held only so it can be written into Recent when the conversation ends.
+   * Nothing renders it, and it is cleared with the conversation.
+   */
+  readonly partnerPresence: string | null;
   readonly messages: readonly ChatMessage[];
   readonly partnerTyping: boolean;
   readonly waiting: number;
@@ -222,6 +229,7 @@ export const initialState: ChatState = {
   resumeGraceSeconds: 0,
   partnerAway: null,
   reportSent: false,
+  partnerPresence: null,
   connectionSaved: false,
   connectionMade: false,
   connectionAsked: false,
@@ -290,6 +298,7 @@ function clearedConversation(state: ChatState): ChatState {
     // conversation. A saved flag surviving into the next one would show a
     // pressed button for a stranger who was never saved, and a `connectionMade`
     // surviving would claim a connection with somebody who does not have one.
+    partnerPresence: null,
     connectionSaved: false,
     connectionMade: false,
     connectionAsked: false,
@@ -409,6 +418,9 @@ export function reduce(state: ChatState, action: Action): ChatState {
         matchStartedAt: action.payload.startedAt,
         you: action.payload.you,
         partner: action.payload.partner,
+        // Kept only to be written into Recent when this ends. Absent whenever
+        // the partner was signed out or had presence turned off.
+        partnerPresence: action.payload.partnerPresence ?? null,
         endReason: null,
         notice: null,
       };

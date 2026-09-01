@@ -76,6 +76,9 @@ export function App(): JSX.Element {
       nickname: state.partner.nickname,
       colour: state.partner.colour,
       country: state.partner.profile?.country ?? null,
+      // Null for a partner who was signed out, or who turned presence off. No
+      // token means no dot, and nothing about them is remembered.
+      presence: state.partnerPresence,
     };
   }, [state.partner]);
 

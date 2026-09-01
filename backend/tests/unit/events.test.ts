@@ -15,6 +15,10 @@ const matched: SessionEvent = {
   startedAt: AT,
   you: { nickname: 'Quiet Heron', colour: '#2DD4BF', profile: null },
   partner: { nickname: 'Amber Fox', colour: '#7C5CFF', profile: null },
+  // Absent on the wire and null after decoding: most partners are signed out,
+  // so the decoder normalises rather than rejecting, and the round trip has to
+  // say which of the two shapes it expects back.
+  partnerPresence: null,
 };
 
 function roundTrip(event: SessionEvent): SessionEvent | null {

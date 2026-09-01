@@ -1020,6 +1020,41 @@ export class RedisStore {
     };
   }
 
+  /**
+   * Record which account a session is signed in as.
+   *
+   * A plain `HSET`, and that is not an exception to the Lua rule. That rule is
+   * about *state transitions*, which must not interleave across instances. This
+   * is a fact about one connection, written once by the connection itself, that
+   * nothing in matchmaking branches on — the same category as the declared
+   * profile, and written the same way.
+   *
+   * It exists so the other side of a conversation can be offered a presence
+   * token. Nothing reads it to decide a match, and it must stay out of
+   * `readProfiles`, whose field list is exhaustive precisely so that a value
+   * never read there can never reach a stranger's screen.
+   */
+  async setAccount(sessionId: string, accountId: string): Promise<void> {
+    await this.client.hset(this.keys.session(sessionId), 'account', accountId);
+  }
+
+  /** Each side's account, or null where that side is signed out. */
+  async readAccounts(
+    sessionA: string,
+    sessionB: string,
+  ): Promise<{ a: string | null; b: string | null }> {
+    const results = await this.client
+      .pipeline()
+      .hget(this.keys.session(sessionA), 'account')
+      .hget(this.keys.session(sessionB), 'account')
+      .exec();
+    const read = (i: number): string | null => {
+      const value = results?.[i]?.[1];
+      return typeof value === 'string' && value !== '' ? value : null;
+    };
+    return { a: read(0), b: read(1) };
+  }
+
   /* --- enforcement -------------------------------------------------------- */
 
   /**
