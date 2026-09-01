@@ -12,7 +12,7 @@
 import type { Logger } from '../../src/logger';
 import { EMPTY_PREFERENCES } from '../../src/protocol/types';
 import type { MatchPreferences, Profile } from '../../src/protocol/types';
-import type { ResumeSessionResult } from '../../src/redis/store';
+import type { PreferenceAllowance, ResumeSessionResult } from '../../src/redis/store';
 import type {
   BlockPartnerResult,
   CloseSessionResult,
@@ -178,6 +178,21 @@ export class FakeStore implements LifecycleStore {
     if (existing === undefined) return { status: 'match_gone' };
     this.matchRecords.set(matchId, { ...existing, identA: identityA, identB: identityB });
     return { status: 'ok' };
+  }
+
+  /**
+   * What `preferenceAllowance` should answer next, and what it was asked.
+   *
+   * Granted by default so every test that is not about the §29.4 limits keeps
+   * exercising the preference path — a fake that refused by default would make
+   * the limits look tested while quietly disabling the feature everywhere else.
+   */
+  preferenceAllowanceResult: PreferenceAllowance = { granted: true };
+  readonly preferenceAllowanceCalls: string[] = [];
+
+  async preferenceAllowance(sessionId: string): Promise<PreferenceAllowance> {
+    this.preferenceAllowanceCalls.push(sessionId);
+    return this.preferenceAllowanceResult;
   }
 
   /** Session-scoped nicknames, keyed by session, as the real store holds them. */

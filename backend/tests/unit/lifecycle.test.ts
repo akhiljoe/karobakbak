@@ -528,6 +528,7 @@ describe('counting declared genders', () => {
     const registry = new ConnectionRegistry(logger);
     const dispatcher = new EventDispatcher(registry, new FakePublisher(), logger);
     const declared: string[] = [];
+    const limited: string[] = [];
     const lifecycle = new SessionLifecycle(
       store,
       dispatcher,
@@ -540,10 +541,61 @@ describe('counting declared genders', () => {
         aborted: () => {},
         conversationEnded: () => {},
         profileDeclared: (gender) => declared.push(gender),
+        preferenceLimited: (reason) => limited.push(reason),
       },
     );
-    return { store, lifecycle, declared };
+    return { store, lifecycle, declared, limited };
   }
+
+  it('writes the preference when the §29.4 limits allow it', async () => {
+    const ctx = buildObserved();
+    ctx.store.seedSession({ sessionId: 's_a' });
+
+    await ctx.lifecycle.joinQueue('s_a', undefined, { genders: ['female'], countries: [] });
+
+    expect(ctx.store.preferenceAllowanceCalls).toEqual(['s_a']);
+    expect(ctx.store.preferences.get('s_a')).toEqual({ genders: ['female'], countries: [] });
+    expect(ctx.limited).toEqual([]);
+  });
+
+  it.each(['cooldown', 'budget', 'no_session'] as const)(
+    'drops the preference and still searches when the limit says %s',
+    async (reason) => {
+      /*
+       * The whole of §29.4's "degrades, never refuses". The join must succeed
+       * and the preference must simply not be written — `tryMatch` then scores
+       * every candidate at zero and takes the longest-waiting one, which is
+       * what a preference matching nobody already does (D44).
+       *
+       * Asserting the outcome is `searching` matters as much as the missing
+       * preference: a limit that returned an error here would be visible to a
+       * paying user as their search failing.
+       */
+      const ctx = buildObserved();
+      ctx.store.seedSession({ sessionId: 's_a' });
+      ctx.store.preferenceAllowanceResult = { granted: false, reason };
+
+      const outcome = await ctx.lifecycle.joinQueue('s_a', undefined, {
+        genders: ['female'],
+        countries: [],
+      });
+
+      expect(outcome.kind).toBe('searching');
+      expect(ctx.store.preferences.has('s_a')).toBe(false);
+      expect(ctx.limited).toEqual([reason]);
+    },
+  );
+
+  it('does not spend a token on a search that declared no preference', async () => {
+    // A free user must not be able to exhaust a budget belonging to a feature
+    // they do not have, and every ordinary search would otherwise consume one.
+    const ctx = buildObserved();
+    ctx.store.seedSession({ sessionId: 's_a' });
+
+    await ctx.lifecycle.joinQueue('s_a');
+
+    expect(ctx.store.preferenceAllowanceCalls).toEqual([]);
+  });
 
   it('records the declared gender, and "none" for declining it', async () => {
     const ctx = buildObserved();

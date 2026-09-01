@@ -72,6 +72,18 @@ export interface RedisKeys {
   /** STRING — connection attempts from one IP hash in the current window. */
   connRate(ipHash: string): string;
   /**
+   * STRING — when this IP hash last had a matching preference applied.
+   *
+   * Keyed on the IP hash rather than the session, unlike every other limiter
+   * here, and the difference is the point. The per-command buckets bound
+   * *flooding*, and a flood ends when the socket does; these two bound
+   * **hunting** (§29.4, D37), which is a thing somebody does deliberately over
+   * time and would simply reconnect to reset. A session id is one connection.
+   */
+  preferenceCooldown(ipHash: string): string;
+  /** HASH — the hourly preference budget for one IP hash: `t` tokens, `ts` refill. */
+  preferenceBudget(ipHash: string): string;
+  /**
    * STRING — order-creation attempts from one IP hash in the current window.
    *
    * A separate window from `connRate` on purpose. Creating an order costs a
@@ -178,6 +190,10 @@ export function createKeys(prefix: string): RedisKeys {
     rateLimit: (command, sid) =>
       `${prefix}:rl:${assertComponent(command, 'command')}:${assertComponent(sid, 'session id')}`,
     connRate: (ipHash) => `${prefix}:rl:conn:${assertComponent(ipHash, 'ip hash')}`,
+    preferenceCooldown: (ipHash) =>
+      `${prefix}:pref:cd:${assertComponent(ipHash, 'ip hash')}`,
+    preferenceBudget: (ipHash) =>
+      `${prefix}:rl:pref:${assertComponent(ipHash, 'ip hash')}`,
     paymentRate: (ipHash) => `${prefix}:rl:pay:${assertComponent(ipHash, 'ip hash')}`,
     connSessions: (ipHash) => `${prefix}:conn:${assertComponent(ipHash, 'ip hash')}`,
     blocks: (blockKey) => `${prefix}:blocks:${assertComponent(blockKey, 'block key')}`,

@@ -1,4 +1,10 @@
-import { ConfigError, configWarnings, loadConfig, type Env } from '../../src/config';
+import {
+  ConfigError,
+  configWarnings,
+  loadConfig,
+  PREFERENCE_LIMITS_ENFORCED,
+  type Env,
+} from '../../src/config';
 
 /** A minimal environment that satisfies every cross-field constraint. */
 function baseEnv(overrides: Env = {}): Env {
@@ -438,28 +444,39 @@ describe('loadConfig — preference matching (D44)', () => {
     });
   });
 
-  it('refuses to ship the preference in production without its rate limits', () => {
-    // The pairing §29.4 records: the cooldown and the hourly budget are part of
-    // D44, not later hardening, because they are what answers D37's targeting
-    // objection. `FILTERS_ENABLED` is one environment variable, and the person
-    // most likely to set it — somebody holding two weeks of data — is the least
-    // likely to remember the limits were never written.
+  it('enforces its rate limits, which is what lets it ship at all', () => {
+    /*
+     * §29.4 records the cooldown and the hourly budget as part of D44 rather
+     * than later hardening, because they are what answers D37's targeting
+     * objection. The constant was false while they were unbuilt and production
+     * refused to start; both exist now, so it is true and production starts.
+     *
+     * Asserted on the constant directly, the same shape the frontend uses for
+     * its feature flags: turning it back off is a decision about whether a paid
+     * preference has anything bounding it, and it should fail a test rather
+     * than change behaviour quietly.
+     */
+    expect(PREFERENCE_LIMITS_ENFORCED).toBe(true);
+  });
+
+  it('starts in production with the preference on', () => {
     const live = baseEnv({
       NODE_ENV: 'production',
       FILTERS_ENABLED: 'true',
       IP_HASH_SALT: 'a-long-enough-production-salt-value',
       ALLOWED_ORIGINS: 'https://karobakbak.example',
     });
-    expect(() => loadConfig(live)).toThrow(ConfigError);
-    expect(() => loadConfig(live)).toThrow(/PREFERENCE_LIMITS_ENFORCED/);
+    expect(() => loadConfig(live)).not.toThrow();
+    expect(loadConfig(live).preference.enabled).toBe(true);
   });
 
-  it('allows it outside production, and says so out loud', () => {
-    // Turning it on locally is how the feature is exercised and how it will be
-    // judged against real numbers. Legal, and never silent.
+  it('no longer warns that the limits are unbuilt', () => {
+    // The warning was the non-production half of the same guard. A warning that
+    // outlived the thing it warned about is worse than none: it trains whoever
+    // reads the startup log to skip that line.
     const config = loadConfig(baseEnv({ FILTERS_ENABLED: 'true' }));
     expect(config.preference.enabled).toBe(true);
-    expect(configWarnings(config).join(' ')).toMatch(/no rate limits yet/);
+    expect(configWarnings(config).join(' ')).not.toMatch(/rate limits/);
   });
 
   it('refuses a wide sample that is not wider than the ordinary one', () => {

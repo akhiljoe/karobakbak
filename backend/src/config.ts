@@ -809,30 +809,36 @@ function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): 
  * typo in either would silently disable the check that matters.
  */
 /**
- * Whether the two limits D44 depends on are actually enforced yet.
+ * Whether the two limits D44 depends on are actually enforced.
  *
  * ---------------------------------------------------------------------------
- * FLIP THIS IN THE COMMIT THAT BUILDS THEM, AND NOT BEFORE
+ * IT WAS FALSE UNTIL THE LIMITS EXISTED, AND IT IS THE SEAM EITHER WAY
  * ---------------------------------------------------------------------------
  * §29.4 records the cooldown and the hourly budget as **part of** the preference
  * decision rather than as later hardening, because they are what answers D37's
  * second objection: a preference is a preference, but a preference plus fast
  * re-rolling is a scanning tool aimed at whichever group is preferred for.
  *
- * They are configured — `PREFERENCE_COOLDOWN_MS` and `PREFERENCE_HOURLY_BUDGET`
- * both parse and both have defaults — and nothing reads them. Configuration that
- * looks applied and is not is the failure this repository keeps finding: it is
- * `SPOOL_BACKEND=redis` accepted and ignored (F-006), and it is a Sentinel
- * topology that quietly falls back to one node.
+ * **Both are built now, and this is true.** `preferenceAllowance` is one Lua
+ * script — cooldown first, then an hourly token bucket — and `joinQueue` writes
+ * the preference only when it grants. Both refusals degrade to an ordinary
+ * search rather than to an error, so nothing a paying user can see
+ * distinguishes a limited search from one whose preference matched nobody.
  *
- * `FILTERS_ENABLED` is one environment variable. Somebody with two weeks of data
- * in hand is exactly the person who would set it, and exactly the person who
- * would not remember that these two were never written. So the process refuses
- * to start instead of relying on them remembering.
+ * They key on the **IP hash read from the session's own row**, not the session
+ * id. Every other limiter here keys on the session, which is one connection —
+ * and reconnecting is free, so a session-keyed limit would be reset by the first
+ * thing somebody hunting would do without thinking. That is the same dimension a
+ * block uses (D18), and `preference-limits.test.ts` asserts it against real
+ * Redis rather than against a fake that would agree with itself.
  *
- * Deleting the check is not the way to satisfy it. Building the limits is.
+ * The constant stays rather than being deleted with the check it guarded. It is
+ * what the next person reads to learn that the two settings are *live* — the
+ * failure it was written against was configuration that looks applied and is
+ * not (`SPOOL_BACKEND=redis`, F-006), and an unexplained `true` is one refactor
+ * away from becoming that again.
  */
-export const PREFERENCE_LIMITS_ENFORCED = false;
+export const PREFERENCE_LIMITS_ENFORCED = true;
 
 export const DEFAULT_IP_HASH_SALT = 'change-me-in-production';
 
@@ -1489,11 +1495,12 @@ function assertCoherent(config: Config): void {
 
   if (config.isProduction && config.preference.enabled && !PREFERENCE_LIMITS_ENFORCED) {
     throw new ConfigError(
-      'FILTERS_ENABLED=true, but preference matching has no rate limits yet. ' +
-        'PREFERENCE_COOLDOWN_MS and PREFERENCE_HOURLY_BUDGET are configured and ' +
-        'nothing reads them, so a preference plus fast re-rolling is a scanning ' +
-        'tool with nothing bounding it (DESIGN.md §29.4, D37). Build the two ' +
-        'limits and set PREFERENCE_LIMITS_ENFORCED to true in the same commit.',
+      'FILTERS_ENABLED=true while PREFERENCE_LIMITS_ENFORCED is false. That ' +
+        'constant is true in this tree, so reaching this means the preference ' +
+        'limits were removed or disabled: without them a preference plus fast ' +
+        're-rolling is a scanning tool aimed at whichever group is preferred ' +
+        'for, with nothing bounding it (DESIGN.md §29.4, D37). Restore ' +
+        '`preferenceAllowance` and the gate in joinQueue, or turn FILTERS_ENABLED off.',
     );
   }
 
@@ -1540,10 +1547,11 @@ export function configWarnings(config: Config): string[] {
   }
   if (config.preference.enabled && !PREFERENCE_LIMITS_ENFORCED) {
     warnings.push(
-      'FILTERS_ENABLED is on and preference matching has no rate limits yet: ' +
-        'PREFERENCE_COOLDOWN_MS and PREFERENCE_HOURLY_BUDGET are configured and ' +
-        'nothing reads them. Fine for evaluating the feature; it is a startup ' +
-        'failure under NODE_ENV=production (DESIGN.md §29.4).',
+      'FILTERS_ENABLED is on while PREFERENCE_LIMITS_ENFORCED is false, so the ' +
+        'preference cooldown and hourly budget are not being applied. That ' +
+        'constant ships true, so this means they were removed. Fine for ' +
+        'evaluating something locally; it is a startup failure under ' +
+        'NODE_ENV=production (DESIGN.md §29.4).',
     );
   }
   if (config.isProduction && config.redis.sentinels.length === 0) {

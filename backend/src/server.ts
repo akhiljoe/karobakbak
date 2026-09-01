@@ -183,6 +183,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     attempt: () => metrics.matchAttempts.inc(),
     profileDeclared: (gender) => metrics.profilesDeclared.labels(gender).inc(),
     aborted: (reason) => metrics.matchmakingFailures.labels(reason).inc(),
+    preferenceLimited: (reason) => metrics.preferenceLimited.labels(reason).inc(),
     conversationEnded: (reason, seconds) => {
       // Nothing is recorded when the duration is unknown. A zero here would be
       // indistinguishable from an instant skip, which is the exact signal this

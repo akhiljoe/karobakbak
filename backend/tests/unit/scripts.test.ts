@@ -23,6 +23,12 @@ describe('script registry', () => {
         'janitorSessions',
         'joinQueue',
         'leaveQueue',
+        // Not a transition either, and here for the same reason as
+        // `saveMatchIdentities` below: it is a conditional write, and it has to
+        // be one script rather than a read and a write from TypeScript. Two
+        // instances asking at once would each see a budget with room in it and
+        // each spend the last token (rule 2).
+        'preferenceAllowance',
         'rateLimit',
         'resolvePartner',
         'resolveRoute',
