@@ -45,6 +45,7 @@ import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
 import { useSession } from './hooks/useSession';
+import { clearHistory, readHistory, recordHistory, type HistoryEntry } from './history';
 import type { ReportCategory } from './protocol/types';
 import { connectionOf, phaseOf } from './view/presentation';
 
@@ -53,6 +54,40 @@ export function App(): JSX.Element {
   const { state } = chat;
   const { preferences, set: setPreference } = usePreferences();
   const session = useSession();
+
+  const [history, setHistory] = useState<readonly HistoryEntry[]>(() => readHistory());
+
+  /**
+   * Remember the stranger while the conversation is live, and file them when it
+   * ends.
+   *
+   * A ref rather than state, because writing it must not re-render: it changes
+   * on every match and nothing displays it. The reducer clears `partner` as
+   * part of ending a conversation — correctly, since nothing should still be
+   * rendering a stranger who has gone — so by the time the end is observable
+   * the thing worth recording is already gone from state. This holds it.
+   */
+  const met = useRef<HistoryEntry | null>(null);
+
+  useEffect(() => {
+    if (state.partner === null) return;
+    met.current = {
+      at: Date.now(),
+      nickname: state.partner.nickname,
+      colour: state.partner.colour,
+      country: state.partner.profile?.country ?? null,
+    };
+  }, [state.partner]);
+
+  useEffect(() => {
+    // `matchId` going null is the one signal that means "that conversation is
+    // over", and it covers every ending: they left, you skipped, you blocked,
+    // the socket dropped past its grace window. Watching `screen` instead would
+    // miss the transitions that go straight back to searching.
+    if (state.matchId !== null || met.current === null) return;
+    setHistory(recordHistory(met.current));
+    met.current = null;
+  }, [state.matchId]);
 
   /**
    * What to say about a sign-in that has just come back from the provider.
@@ -328,6 +363,8 @@ export function App(): JSX.Element {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenAuth={() => setAuthOpen(true)}
         session={session}
+        history={history}
+        onClearHistory={() => setHistory(clearHistory())}
       />
 
       <main className="flex flex-1 overflow-hidden">
