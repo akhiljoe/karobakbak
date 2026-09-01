@@ -23,10 +23,13 @@
  * filters both exist and can be paid for; Premium is described on its own page,
  * which is where somebody goes to find out what it costs.
  */
-import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
+import { useState } from 'react';
+import { Clock, Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
 import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from '../features';
 import { AccountMenu } from './AccountMenu';
+import { HistoryPanel } from './HistoryPanel';
+import type { HistoryEntry } from '../history';
 import type { Session } from '../hooks/useSession';
 import { LogoMark } from './Logo';
 import { SiteNav, SiteNavLinks } from './SiteNav';
@@ -40,6 +43,9 @@ interface AppHeaderProps {
   onOpenSettings(): void;
   onOpenAuth(): void;
   session: Session;
+  /** Strangers met in this session. Client-side only; see `history.ts`. */
+  history: readonly HistoryEntry[];
+  onClearHistory(): void;
 }
 
 export function AppHeader({
@@ -49,7 +55,10 @@ export function AppHeader({
   onOpenSettings,
   onOpenAuth,
   session,
+  history,
+  onClearHistory,
 }: AppHeaderProps): JSX.Element {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const presence = state.features.presence ? state.presence : null;
 
   return (
@@ -123,6 +132,35 @@ export function AppHeader({
             </span>
         </button>
         )}
+
+        {/*
+          Recent strangers. Sits beside Settings rather than in the account
+          menu, because it has nothing to do with having an account — the list
+          is per-tab and works signed out, which is the whole design.
+        */}
+        <div className="relative">
+          <button
+            onClick={() => setHistoryOpen((was) => !was)}
+            aria-label="Recent strangers"
+            aria-haspopup="dialog"
+            aria-expanded={historyOpen}
+            className={`inline-flex h-9 items-center gap-1 rounded-lg border bg-ink-900 px-2.5 text-sm transition-all active:scale-95 ${
+              historyOpen
+                ? 'border-amber-400/60 text-amber-300'
+                : 'border-ink-700 text-ink-200 hover:border-ink-600 hover:bg-ink-800'
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            {history.length > 0 && <span className="text-xs">{history.length}</span>}
+          </button>
+
+          <HistoryPanel
+            open={historyOpen}
+            entries={history}
+            onClose={() => setHistoryOpen(false)}
+            onClear={onClearHistory}
+          />
+        </div>
 
         <button
           onClick={onOpenSettings}
