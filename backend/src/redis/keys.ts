@@ -135,6 +135,17 @@ export interface RedisKeys {
    * there is no revocation to remember to perform.
    */
   presenceToken(token: string): string;
+  /**
+   * Where an account's live session is, for routing.
+   *
+   * Separate from `presence` on purpose: that one answers "may other people see
+   * this person", and is absent for anybody who turned sharing off. This one
+   * answers "where do I deliver something they asked for", which is a question
+   * about the caller's own session and has nothing to do with what they show
+   * other people. Conflating them meant somebody who hid their presence could
+   * not be routed to at all, including by themselves.
+   */
+  accountSession(accountId: string): string;
   /** STRING — liveness beacon for one backend instance. */
   instance(iid: string): string;
   /** SET — known instance ids. */
@@ -175,6 +186,7 @@ export function createKeys(prefix: string): RedisKeys {
     avatar: (accountId) => `${prefix}:avatar:${assertComponent(accountId, 'account id')}`,
     presence: (accountId) => `${prefix}:online:${assertComponent(accountId, 'account id')}`,
     presenceToken: (token) => `${prefix}:ptok:${assertComponent(token, 'presence token')}`,
+    accountSession: (accountId) => `${prefix}:sess:${assertComponent(accountId, 'account id')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,

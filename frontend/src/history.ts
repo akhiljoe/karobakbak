@@ -114,7 +114,7 @@ export async function onlineFrom(entries: readonly HistoryEntry[]): Promise<Set<
 }
 
 /** What happened when we asked somebody to talk again. */
-export type AskResult = 'asked' | 'away' | 'failed';
+export type AskResult = 'asked' | 'away' | 'failed' | 'signin';
 
 /**
  * Ask a past partner to talk again.
@@ -130,9 +130,15 @@ export async function askToReconnect(token: string): Promise<AskResult> {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ token, from: 'me' }),
+      // Only the token. Which session is asking is the server's to decide, from
+              // the credential on this request — a client that could name it
+              // could put two other people into a conversation.
+              body: JSON.stringify({ token }),
     });
-    if (!response.ok) return 'failed';
+    // 401 means signing in is required for this, which the caller renders as
+    // "away" rather than an error: the button is a nicety, not a flow to
+    // interrupt somebody with.
+    if (!response.ok) return response.status === 401 ? 'signin' : 'failed';
     const body: unknown = await response.json();
     return (body as { asked?: unknown }).asked === true ? 'asked' : 'away';
   } catch {
