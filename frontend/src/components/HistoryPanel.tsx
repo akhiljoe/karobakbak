@@ -34,9 +34,23 @@ interface HistoryPanelProps {
   entries: readonly HistoryEntry[];
   onClose(): void;
   onClear(): void;
+  /**
+   * Which way it opens.
+   *
+   * `up` is for the link above the composer, which sits near the bottom of the
+   * viewport — a panel dropping from there would open off the screen on a
+   * phone, and the list would be unreachable rather than merely awkward.
+   */
+  placement?: 'down' | 'up';
 }
 
-export function HistoryPanel({ open, entries, onClose, onClear }: HistoryPanelProps): JSX.Element | null {
+export function HistoryPanel({
+  open,
+  entries,
+  onClose,
+  onClear,
+  placement = 'down',
+}: HistoryPanelProps): JSX.Element | null {
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -64,7 +78,9 @@ export function HistoryPanel({ open, entries, onClose, onClear }: HistoryPanelPr
       ref={container}
       role="dialog"
       aria-label="Recent strangers"
-      className="absolute right-0 top-full z-40 mt-2 w-72 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift"
+      className={`absolute right-0 z-40 w-72 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift ${
+        placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
+      }`}
     >
       <div className="flex items-center justify-between gap-2 border-b border-ink-800 px-3 py-2.5">
         <span className="inline-flex items-center gap-2 text-sm font-medium text-ink-100">
