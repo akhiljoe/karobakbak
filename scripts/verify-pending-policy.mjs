@@ -80,14 +80,21 @@ const PERSONA_BLOCKS = [
  * switched on, which is the whole reason the patch is staged rather than
  * applied. If one of them disappears from the published policy without this
  * file being updated, the flip loses the correction it needs.
+ *
+ * Both third-party anchors were re-worded once already, by sign-in (§32, D48).
+ * The claim used to be about "the site" and is now about "our pages", because
+ * signing in deliberately sends the browser to another origin — so the sentence
+ * payments narrow is no longer quite the sentence that was written. That is the
+ * guard working: the wording moved, this file failed, and the staged patch was
+ * rebased in the same commit rather than discovered to be stale years later.
  */
 const PAYMENT_ANCHORS = [
   // --- privacy-policy.md ---
-  ['privacy-policy.md', 'requests to any third party at all', 'the unconditional claim that must narrow'],
+  ['privacy-policy.md', 'make no requests to any third party', 'the claim that must narrow'],
   ['privacy-policy.md', 'One cookie, nothing loaded from a third party into your browser, no analytics,', 'the cookie note that gains the payment-form exception'],
   ['privacy-policy.md', '## Other companies', 'the processor list heading'],
   ['privacy-policy.md', '**One, and only for conversations with an automated account.**', 'the count that becomes two'],
-  ['privacy-policy.md', '- The site makes **no requests to any third party** from your browser — no', 'the bullet that narrows'],
+  ['privacy-policy.md', '- Our pages make **no requests to any third party** from your browser — no', 'the bullet that narrows'],
   ['privacy-policy.md', 'There is no payment provider, because nothing is for sale.', 'the bullet that is deleted outright'],
   ['privacy-policy.md', '### What we deliberately do not collect', 'insertion point for the new "If you pay for something" subsection'],
 
