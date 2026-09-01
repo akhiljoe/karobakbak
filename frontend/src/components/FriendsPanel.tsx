@@ -87,7 +87,11 @@ export function FriendsPanel({
       aria-label="Saved connections"
       // Same fix as HistoryPanel: this hangs off a link on the left of a row,
       // so `right-0` grew leftwards off a narrow screen. Centred and clamped.
-      className="absolute bottom-full left-1/2 z-40 mb-2 w-72 max-w-[calc(100vw_-_1.5rem)] -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-lift"
+      // Same treatment as HistoryPanel, and the same reason: a panel anchored to
+      // a control on a narrow screen hangs off the edge however tightly its
+      // width is clamped. Fixed to the viewport on a phone, hung off the button
+      // from `sm` upwards.
+      className="fixed inset-x-3 bottom-24 z-40 max-h-[60vh] overflow-y-auto animate-fade-in overflow-hidden rounded-xl border border-ink-600 bg-ink-950 shadow-2xl ring-1 ring-black/50 sm:absolute sm:inset-x-auto sm:bottom-full sm:left-1/2 sm:mb-2 sm:w-72 sm:-translate-x-1/2"
     >
       <div className="flex items-center justify-between gap-2 border-b border-ink-800 px-3 py-2.5">
         <span className="inline-flex items-center gap-2 text-sm font-medium text-ink-100">
