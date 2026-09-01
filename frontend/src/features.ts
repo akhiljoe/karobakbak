@@ -123,3 +123,21 @@ export const PAYMENTS_ENABLED = false;
  * on its own page, which is where somebody goes to find out what it costs.
  */
 export const FILTERS_AVAILABLE = FILTERS_ENABLED && PAYMENTS_ENABLED;
+
+/**
+ * Which sign-in the button should describe.
+ *
+ * `google` when the backend sets `AUTH_IDENTITY_PROVIDER=Google`, which makes
+ * Cognito redirect straight past its own login form to Google. `hosted` when it
+ * is empty and the provider renders its own page with whatever it offers.
+ *
+ * A constant rather than a `VITE_` variable for the reason the flags above give:
+ * a build arg would have to be threaded through the Dockerfile and compose, and
+ * it bakes into the bundle anyway, so it is a commit either way.
+ *
+ * A mismatch is cosmetic and nothing else — the button would name Google and
+ * the provider would show its own form. Nothing about the protocol, the
+ * credential or what is stored depends on this; it exists so the button
+ * describes what actually happens next.
+ */
+export const SIGNIN_PROVIDER: 'google' | 'hosted' = 'google';

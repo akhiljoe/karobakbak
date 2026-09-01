@@ -50,9 +50,68 @@ const OUTCOME_PARAM = 'signin';
  * `assign` rather than `replace`: the landing page stays in history, so Back
  * from the provider's page returns here rather than to whatever came before.
  * Somebody who changes their mind at the login screen expects to come back.
+ *
+ * This is now the fallback rather than the ordinary path. It runs when a popup
+ * is refused, which is a real case: a browser blocks `window.open` when it
+ * cannot attribute the call to a click, and some are stricter than others.
+ * Falling back to a full-page redirect is strictly better than telling somebody
+ * to go and find their popup blocker.
  */
 export function beginSignIn(): void {
   window.location.assign(START_URL);
+}
+
+/** The `source` field on the message the popup posts back. */
+const SIGNIN_MESSAGE = 'karobakbak-signin';
+
+/**
+ * Open the provider in a popup and hand back the window, or null if it was
+ * refused.
+ *
+ * MUST be called synchronously from the click handler. A browser allows
+ * `window.open` only while it can attribute the call to a user gesture, and an
+ * `await` before it — even one that resolves immediately — loses that
+ * attribution and the popup is blocked.
+ *
+ * Centred on the window rather than the screen, because a maximised browser on
+ * a second monitor otherwise puts the popup on the first one.
+ */
+export function openSignInPopup(): Window | null {
+  const width = 480;
+  const height = 640;
+  const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+  const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+
+  return window.open(
+    `${START_URL}?mode=popup`,
+    // A name, so a second click focuses the window that is already open rather
+    // than starting a second flow whose state cookie overwrites the first.
+    'karobakbak-signin',
+    `popup=yes,width=${width},height=${height},left=${Math.round(left)},top=${Math.round(top)}`,
+  );
+}
+
+/**
+ * The outcome carried by a message from the popup, or null if this is not one.
+ *
+ * Pure and tested, because it is the only place a `message` event — which any
+ * page, extension or embedded frame can fire — is turned into something the
+ * application acts on. Every field is checked: a different origin, a missing
+ * marker, or an outcome we did not write all answer null.
+ *
+ * What it returns is still only a hint. The caller re-asks `/auth/session`,
+ * because the server holding a credential is the only thing that decides
+ * whether somebody is signed in, and a message is not evidence of that.
+ */
+export function signinMessageOutcome(event: MessageEvent): SigninOutcome | null {
+  if (event.origin !== window.location.origin) return null;
+  const data: unknown = event.data;
+  if (typeof data !== 'object' || data === null) return null;
+  const shape = data as { source?: unknown; outcome?: unknown };
+  if (shape.source !== SIGNIN_MESSAGE) return null;
+  if (shape.outcome === 'ok') return 'ok';
+  if (shape.outcome === 'failed') return 'failed';
+  return null;
 }
 
 /**

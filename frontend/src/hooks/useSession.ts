@@ -13,6 +13,10 @@
  * ---------------------------------------------------------------------------
  * THE MARKER IS READ ONCE AND THEN REMOVED FROM THE URL
  * ---------------------------------------------------------------------------
+ * This still matters with a popup, because the popup is not guaranteed: a
+ * blocked `window.open` falls back to a full-page redirect and the browser
+ * comes back to `/?signin=ok` exactly as before.
+ *
  * The callback sends the browser to `/?signin=ok`. If that parameter is left in
  * place it survives a refresh, a bookmark and a shared link, so the page would
  * announce a sign-in that happened last week — or announce one to whoever the
@@ -30,7 +34,16 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { beginSignIn, endSession, readSession, readSigninOutcome, withoutSigninOutcome, type SigninOutcome } from '../auth';
+import {
+  beginSignIn,
+  endSession,
+  openSignInPopup,
+  readSession,
+  readSigninOutcome,
+  signinMessageOutcome,
+  withoutSigninOutcome,
+  type SigninOutcome,
+} from '../auth';
 import { ACCOUNTS_ENABLED } from '../features';
 
 export interface Session {
@@ -76,6 +89,66 @@ export function useSession(): Session {
     };
   }, []);
 
+  /**
+   * Sign in without leaving the page.
+   *
+   * The popup runs the ordinary redirect flow — our `/auth/start`, the
+   * provider, our `/auth/callback` — and lands on `/signin-done.html`, which
+   * posts the outcome back and closes. Nothing about the protocol changes; the
+   * cookie it sets belongs to this origin and is therefore already ours when
+   * the popup goes away.
+   *
+   * TWO WAYS OF FINDING OUT, ON PURPOSE
+   * The message is the fast path. The close watcher is the one that always
+   * works: `window.close()` can be refused, a `Cross-Origin-Opener-Policy`
+   * header added later would sever `opener` and silently kill `postMessage`,
+   * and somebody can simply close the window themselves half way through. In
+   * every one of those the poll notices the window is gone and re-checks the
+   * session, so the failure mode is "a second slower", never "signed in and the
+   * page never noticed".
+   *
+   * Neither path trusts what it is told. Both end in `readSession`.
+   */
+  const signIn = useCallback((): void => {
+    const popup = openSignInPopup();
+    if (popup === null) {
+      // Refused. A full-page redirect is a worse experience and a working one.
+      beginSignIn();
+      return;
+    }
+
+    popup.focus();
+
+    let settled = false;
+    // Declared before `finish` closes over it. A `const` assigned further down
+    // would be in the temporal dead zone if a message arrived first, and the
+    // popup posting before this function returns is unlikely rather than
+    // impossible — the failure would be a thrown ReferenceError inside an
+    // event listener, which is invisible.
+    let watcher = 0;
+
+    const finish = (found: SigninOutcome | null): void => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(watcher);
+      window.removeEventListener('message', onMessage);
+      if (found !== null) setOutcome(found);
+      void readSession().then(setSignedIn);
+    };
+
+    const onMessage = (event: MessageEvent): void => {
+      const found = signinMessageOutcome(event);
+      if (found !== null) finish(found);
+    };
+    window.addEventListener('message', onMessage);
+
+    // `closed` is readable across origins, which is the whole reason this
+    // works while the popup is sitting on the provider's domain.
+    watcher = window.setInterval(() => {
+      if (popup.closed) finish(null);
+    }, 400);
+  }, []);
+
   const signOut = useCallback(async (): Promise<boolean> => {
     const confirmed = await endSession();
     // Only on confirmation. Clearing this optimistically would tell somebody on
@@ -86,5 +159,5 @@ export function useSession(): Session {
 
   const dismissOutcome = useCallback((): void => setOutcome(null), []);
 
-  return { signedIn, checking, outcome, signIn: beginSignIn, signOut, dismissOutcome };
+  return { signedIn, checking, outcome, signIn, signOut, dismissOutcome };
 }

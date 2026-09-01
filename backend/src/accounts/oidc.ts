@@ -245,6 +245,26 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
       url.searchParams.set('code_challenge', challenge);
       url.searchParams.set('code_challenge_method', 'S256');
 
+      /*
+       * Skip the provider's own account chooser and go straight to one
+       * federated identity.
+       *
+       * Cognito reads `identity_provider` on the authorize endpoint and issues
+       * a second redirect to that IdP, so the hosted UI — its email field, its
+       * password field, its "create an account" link — is never rendered. With
+       * this empty the hosted UI appears as before, which is the right default:
+       * a pool with no federated IdP configured and this set to `Google`
+       * answers with an error page instead of a login form, and that is a
+       * misconfiguration worth having to opt into.
+       *
+       * It carries no user input. The value is operator configuration, so it
+       * cannot be used to point a victim's sign-in at an attacker's IdP — the
+       * thing that would be possible if this were read off the query string.
+       */
+      if (auth.identityProvider !== '') {
+        url.searchParams.set('identity_provider', auth.identityProvider);
+      }
+
       return { authorizeUrl: url.toString(), state, nonce, codeVerifier };
     },
 
