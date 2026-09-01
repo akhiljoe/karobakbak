@@ -126,6 +126,15 @@ export interface RedisKeys {
    * survived a restart would be presence that was wrong.
    */
   presence(accountId: string): string;
+  /**
+   * A presence token, resolving to the account it was minted for.
+   *
+   * Minted per match and per viewer, so two people who met the same person hold
+   * different tokens for them and cannot discover that by comparing. It expires
+   * on its own, which is what bounds how long a past partner stays observable —
+   * there is no revocation to remember to perform.
+   */
+  presenceToken(token: string): string;
   /** STRING — liveness beacon for one backend instance. */
   instance(iid: string): string;
   /** SET — known instance ids. */
@@ -165,6 +174,7 @@ export function createKeys(prefix: string): RedisKeys {
     resume: (tokenHash) => `${prefix}:resume:${assertComponent(tokenHash, 'resume hash')}`,
     avatar: (accountId) => `${prefix}:avatar:${assertComponent(accountId, 'account id')}`,
     presence: (accountId) => `${prefix}:online:${assertComponent(accountId, 'account id')}`,
+    presenceToken: (token) => `${prefix}:ptok:${assertComponent(token, 'presence token')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,
     instances: () => `${prefix}:instances`,
     janitorLock: () => `${prefix}:janitor:lock`,

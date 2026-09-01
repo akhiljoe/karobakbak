@@ -105,6 +105,14 @@ export class FakeStore implements LifecycleStore {
 
   /* --- LifecycleStore ------------------------------------------------------ */
 
+  /**
+   * Nobody is signed in, which is the ordinary case and the one every existing
+   * lifecycle test assumes. A test that wants a presence token overrides this.
+   */
+  async readAccounts(): Promise<{ a: string | null; b: string | null }> {
+    return { a: null, b: null };
+  }
+
   async createSession(identity: SessionIdentity, _segment: string): Promise<CreateSessionResult> {
     void _segment;
     this.seedSession({ ...identity });

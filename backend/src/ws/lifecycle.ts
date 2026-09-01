@@ -55,6 +55,8 @@ import type { Connection, ConnectionRegistry } from './registry';
  * mid-operation.
  */
 export interface LifecycleStore {
+  /** Each side's account, or null where that side is signed out. */
+  readAccounts(sessionA: string, sessionB: string): Promise<{ a: string | null; b: string | null }>;
   createSession(
     identity: SessionIdentity,
     segment: string,
@@ -116,6 +118,8 @@ export interface MatchedOutcome {
   matchId: string;
   startedAt: string;
   partnerSessionId: string;
+  /** Opaque token for asking later whether the partner is online, or null. */
+  partnerPresence?: string | null;
   /** This caller's identity for the match. */
   you: Identity;
   /** The partner's identity, as this caller should display it. */
@@ -222,6 +226,12 @@ export class SessionLifecycle {
     private readonly retention: RetentionSink,
     /** Optional, and last, so every existing construction site is unchanged. */
     private readonly observer?: MatchmakingObserver,
+    /**
+     * Mints presence tokens. Optional for the same reason: absent means no
+     * conversation carries one, which is exactly how it behaves for a partner
+     * who is signed out.
+     */
+    private readonly presence?: { mintToken(accountId: string): Promise<string | null> },
   ) {
     this.segment = config.matchmaking.defaultSegment;
     this.resumeEnabled = config.resume.graceSeconds > 0;
@@ -718,6 +728,24 @@ export class SessionLifecycle {
       return { kind: 'idle' };
     }
 
+    /*
+      A token each, for asking later whether the other person is here.
+
+      Read beside the match rather than inside its Lua, the same rule the
+      profile follows: the script is the most race-tested code here and widening
+      its positionally-parsed reply means re-verifying every matchmaking race
+      for something no matchmaking decision depends on.
+
+      Null whenever the other side is signed out, or has turned presence off —
+      `mintToken` refuses in that case, so somebody who opted out is never
+      remembered by the people they meet. No token, nothing stored, no dot.
+    */
+    const accounts = await this.store.readAccounts(sessionId, partnerSessionId);
+    const [tokenForMe, tokenForThem] = await Promise.all([
+      accounts.b === null ? null : (this.presence?.mintToken(accounts.b) ?? null),
+      accounts.a === null ? null : (this.presence?.mintToken(accounts.a) ?? null),
+    ]);
+
     const partnerRoute = await this.notify(partnerSessionId, {
       event: 'matched',
       matchId,
@@ -725,6 +753,7 @@ export class SessionLifecycle {
       // Swapped: the partner's "you" is this caller's "partner".
       you: identities.partner,
       partner: identities.you,
+      partnerPresence: tokenForThem,
     });
 
     return {
@@ -732,6 +761,7 @@ export class SessionLifecycle {
       matchId,
       startedAt,
       partnerSessionId,
+      partnerPresence: tokenForMe,
       you: identities.you,
       partner: identities.partner,
       partnerRoute,

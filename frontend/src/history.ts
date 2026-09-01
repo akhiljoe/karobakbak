@@ -56,6 +56,19 @@ export interface HistoryEntry {
   readonly colour: string;
   /** ISO country code the stranger declared, or null. Declared, never verified. */
   readonly country: string | null;
+  /**
+   * Token for asking whether they are here now, or null.
+   *
+   * Given by the server at match time, and only when that person was signed in
+   * *and* had chosen to share presence — so somebody who opted out is never
+   * remembered by the people they meet. It expires server-side; nothing here
+   * needs to forget it.
+   *
+   * It is not an identity. It resolves to one account, answers one question,
+   * and differs for every viewer, so two people cannot compare tokens and
+   * discover they met the same person.
+   */
+  readonly presence: string | null;
 }
 
 const KEY = 'kbb_recent';
@@ -68,6 +81,37 @@ const KEY = 'kbb_recent';
  * there is no retention period, because there is nothing durable to retain.
  */
 export const HISTORY_LIMIT = 15;
+
+/**
+ * Ask which of the remembered people are online.
+ *
+ * Answers an empty set for every failure. Everybody reads as offline, which is
+ * the safe direction — showing somebody as here when they are not invites a
+ * message into a silence.
+ */
+export async function onlineFrom(entries: readonly HistoryEntry[]): Promise<Set<string>> {
+  const tokens = entries
+    .map((entry) => entry.presence)
+    .filter((token): token is string => token !== null);
+  if (tokens.length === 0) return new Set();
+
+  try {
+    const response = await fetch('/auth/presence/lookup', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ tokens }),
+      cache: 'no-store',
+    });
+    if (!response.ok) return new Set();
+    const body: unknown = await response.json();
+    const online = (body as { online?: unknown }).online;
+    if (!Array.isArray(online)) return new Set();
+    return new Set(online.filter((t): t is string => typeof t === 'string'));
+  } catch {
+    return new Set();
+  }
+}
 
 /**
  * Read the list, newest first.

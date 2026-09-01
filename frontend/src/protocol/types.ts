@@ -902,6 +902,20 @@ export interface MatchedPayload {
   startedAt: string;
   you: Identity;
   partner: Identity;
+  /**
+   * An opaque token for asking, later, whether this partner is online.
+   *
+   * Present only when the partner is signed in; null otherwise, which is most
+   * conversations. It is **not** an identifier: it resolves server-side to an
+   * account and expires on its own, so a client holding one can ask a single
+   * question — "is this person here" — and learn nothing else, including
+   * whether the token still refers to anybody.
+   *
+   * Deliberately not on `Profile`. `Profile` is defined as the thing sent to
+   * the other side, and everything on it is rendered to a stranger and stored
+   * in evidence. This is neither: it is a capability handed to one viewer.
+   */
+  partnerPresence?: string | null;
 }
 
 /**

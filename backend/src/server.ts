@@ -190,7 +190,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       if (seconds === null) return;
       metrics.conversationDuration.labels(reason).observe(seconds);
     },
-  });
+  },
+  // Mints the presence tokens the matched frame carries. Null when sign-in is
+  // not configured, which is the same as every partner being signed out.
+  accountPresence ?? undefined,
+  );
 
   /**
    * When each locally-attached session started looking, for the wait histogram.
@@ -424,6 +428,8 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
                           : (req.method === 'GET' || req.method === 'POST') &&
                               path === '/auth/presence'
                             ? auth.presence
+                            : req.method === 'POST' && path === '/auth/presence/lookup'
+                              ? auth.presenceLookup
               : req.method === 'POST' && path === '/auth/signout'
                 ? auth.signout
                 : null;
@@ -1044,6 +1050,15 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
         // Null when there is no CDN in front, which is every laptop. The field
         // is simply absent then, exactly as it was when somebody declined to
         // pick one.
+        // Recorded before the join, so a match that happens on the next tick
+        // can offer the other side a presence token. Written on every join
+        // rather than once at connect: a session can be resumed onto a
+        // different connection, and this is one small HSET against a row the
+        // join is about to touch anyway.
+        if (connection.accountId !== null) {
+          await store.setAccount(connection.sessionId, connection.accountId);
+        }
+
         const outcome = await lifecycle.joinQueue(
           connection.sessionId,
           { ...command.profile, country: connection.country },
