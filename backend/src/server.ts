@@ -50,7 +50,7 @@ const COMPOSITION_LABELS: readonly string[] = [...GENDERS, 'none'];
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
-import type { Metrics } from './metrics/registry';
+import { PREFERENCE_DIMENSION_WEIGHTS, type Metrics } from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
 import type { EntitlementService } from './accounts/entitlement';
 import type { PresenceService } from './accounts/presence';
@@ -62,6 +62,7 @@ import { monotonicMs, nowIso, secondsSince } from './util/time';
 import { SocketConnection } from './ws/connection';
 import { EventDispatcher } from './ws/dispatch';
 import { SessionLifecycle, type SearchOutcome } from './ws/lifecycle';
+import { ConversationTally } from './metrics/conversation';
 import { MessagePipeline, type MessageOutcome } from './ws/messages';
 import { ConnectionRegistry } from './ws/registry';
 import { Janitor } from './ws/janitor';
@@ -203,6 +204,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     if (startedAt === undefined) return;
     searchStartedAt.delete(sessionId);
     metrics.matchmakingLatency.observe(secondsSince(startedAt));
+    // The waiting side's funnel step. The other side counts its own in
+    // `replyToSearch`, so both halves of every conversation are counted once
+    // each, on whichever instance holds that socket.
+    metrics.funnel.labels('matched').inc();
+    conversations.matched(sessionId);
   }
 
   const dispatcher = new EventDispatcher(registry, store, logger, onEventDelivered);
@@ -211,6 +217,26 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     profileDeclared: (gender) => metrics.profilesDeclared.labels(gender).inc(),
     aborted: (reason) => metrics.matchmakingFailures.labels(reason).inc(),
     preferenceLimited: (reason) => metrics.preferenceLimited.labels(reason).inc(),
+    intentDeclared: (intent) => metrics.intentsDeclared.labels(intent).inc(),
+    /*
+      The score is a bitfield by construction, so the dimensions come out of it
+      without the Lua having to report them separately -- which matters, because
+      `tryMatch`'s reply is parsed by position and widening it means
+      re-verifying every matchmaking race for the sake of a metric.
+
+      Only a score that won a partner is decomposed. A score computed on an
+      attempt that found nobody says what the searcher wanted, not what the
+      preference achieved, and mixing the two would make a preference that never
+      works look identical to one that always does.
+    */
+    preferenceScored: (score, widened, matched) => {
+      if (widened) metrics.preferenceWidened.inc();
+      if (!matched) return;
+      for (const [dimension, weight] of PREFERENCE_DIMENSION_WEIGHTS) {
+        if ((score & weight) !== 0) metrics.preferenceApplied.labels(dimension).inc();
+      }
+    },
+    searchAbandoned: () => metrics.searchAbandoned.inc(),
     conversationEnded: (reason, seconds) => {
       // Nothing is recorded when the duration is unknown. A zero here would be
       // indistinguishable from an instant skip, which is the exact signal this
@@ -247,6 +273,26 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
    * starts and is removed when the match is announced or the socket closes.
    */
   const searchStartedAt = new Map<string, number>();
+
+  /**
+   * The product funnel's second half, and what each side did in a conversation.
+   *
+   * Per session rather than per conversation, for the reasons in
+   * `metrics/conversation.ts`: counting a *conversation's* messages needs
+   * either a Redis write on the message hot path or a wider `endMatch` reply,
+   * and the per-side numbers are strictly more informative anyway.
+   */
+  const conversations = new ConversationTally(
+    {
+      spoke: (seconds) => {
+        metrics.funnel.labels('spoke').inc();
+        metrics.firstMessageLatency.observe(seconds);
+      },
+      conversed: () => metrics.funnel.labels('conversed').inc(),
+      finished: (messages) => metrics.conversationMessages.observe(messages),
+    },
+    monotonicMs,
+  );
   const subscriber = new SessionSubscriber(
     clients.subscriber,
     keys,
@@ -864,6 +910,12 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       onClose: async (conn) => {
         // Whatever this socket was waiting for, it is not waiting any more.
         searchStartedAt.delete(conn.sessionId);
+        // Flushes the conversation tally if one is open. Every session reaches
+        // either this or its next match, which is what makes the histogram
+        // complete without hanging it off a conversation ending — that is
+        // reported once, by whichever side won the race (D6), and would record
+        // one side of some conversations and neither side of others.
+        conversations.closed(conn.sessionId);
         // A socket closing while Redis is unavailable — a restart, a failover,
         // a test tearing its server down — must not produce an unhandled
         // rejection. The TTLs and the janitor are the recovery net for whatever
@@ -1031,6 +1083,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           command.text,
         );
         if (outcome.kind === 'accepted') {
+          // Counted on acceptance rather than on delivery: this measures what
+          // the person did, and a message the server accepted was typed and
+          // sent whatever happened to it afterwards.
+          conversations.sent(connection.sessionId);
           // The route it actually took, which is what `dropped` means here:
           // routed at a session whose socket was gone. Previously this read the
           // moderation verdict, so a message that reached nobody was counted as
@@ -1342,9 +1398,24 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     if (outcome.kind === 'searching') {
       searchStartedAt.set(connection.sessionId, monotonicMs());
     }
+    /*
+      The funnel's first step, and the definition of "a search".
+
+      Only the two outcomes that mean this session actually looked. `idle` and
+      `session_gone` are not searches, and `matched_elsewhere` is a peer having
+      won a match against a search that was already counted when it started —
+      counting it again would put one search in the funnel twice.
+    */
+    if (outcome.kind === 'searching' || outcome.kind === 'matched') {
+      metrics.funnel.labels('searched').inc();
+    }
     switch (outcome.kind) {
       case 'matched':
         metrics.matchesCreated.inc();
+        // This side's own step. The partner was waiting and counts its own in
+        // `onEventDelivered`, so a conversation contributes exactly two.
+        metrics.funnel.labels('matched').inc();
+        conversations.matched(connection.sessionId);
         connection.sendEvent('matched', {
           matchId: outcome.matchId,
           startedAt: outcome.startedAt,

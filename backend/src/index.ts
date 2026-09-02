@@ -194,6 +194,27 @@ async function main(): Promise<void> {
       blocks: accountBlocks,
       presence,
       /*
+        Sign-in, the avatar relay and reconnect wrote no metrics at all until
+        now — nor did anything else in `accounts/`, so phases 20 to 24 shipped
+        entirely unlit and "is anybody signing in" was not a question the
+        running system could answer.
+
+        Callbacks rather than the registry, so these routes can reach exactly
+        the counters they were handed. Nothing here counts a refusal: an ignored
+        reconnect and a connection that was not saved back are private
+        decisions, and `RECONNECT_FAILURES` records why an aggregate of them is
+        still the wrong thing to publish.
+      */
+      observer: {
+        authStarted: () => metrics.authStarts.inc(),
+        authCallback: (outcome) => metrics.authCallbacks.labels(outcome).inc(),
+        accountCreated: () => metrics.accountsCreated.inc(),
+        reconnectPaired: () => metrics.reconnectPaired.inc(),
+        reconnectFailed: (reason) => metrics.reconnectFailures.labels(reason).inc(),
+        connectionRemoved: () => metrics.connectionsRemoved.inc(),
+        avatarRelayed: (outcome) => metrics.avatarRelay.labels(outcome).inc(),
+      },
+      /*
         The whole of what an HTTP handler may do to matchmaking: deliver one
         event to one session, and put two sessions in a lane. Deliberately not
         the lifecycle itself — a route that could reach the rest of it is a

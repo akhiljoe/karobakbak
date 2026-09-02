@@ -139,7 +139,10 @@ export async function accountForSubject(
   logger: Logger,
   subject: string,
   retentionDays: number,
-): Promise<{ ok: true; accountId: string } | { ok: false; reason: 'suspended' | 'error' }> {
+): Promise<
+  | { ok: true; accountId: string; created: boolean }
+  | { ok: false; reason: 'suspended' | 'error' }
+> {
   const expires = new Date(Date.now() + retentionDays * 86_400_000);
 
   try {
@@ -156,6 +159,10 @@ export async function accountForSubject(
     );
 
     let row = created.rows[0];
+    // The insert returning a row is the only place a first sign-in is
+    // distinguishable from a returning one — the update below cannot tell them
+    // apart, because by then the row exists either way.
+    const isNew = row !== undefined;
     if (row === undefined) {
       const found = await db.query<{ id: string; status: string }>(
         `update accounts
@@ -172,7 +179,7 @@ export async function accountForSubject(
     // for one would produce an account that can save connections and cannot be
     // matched, which is worse than a refusal it can act on.
     if (row.status !== 'active') return { ok: false, reason: 'suspended' };
-    return { ok: true, accountId: row.id };
+    return { ok: true, accountId: row.id, created: isNew };
   } catch (err) {
     logger.error('could not resolve an account for a subject', dbErrorFields(err));
     return { ok: false, reason: 'error' };
