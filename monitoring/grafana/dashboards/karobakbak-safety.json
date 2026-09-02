@@ -1,0 +1,526 @@
+{
+  "uid": "karobakbak-safety",
+  "title": "karobakbak \u2014 safety",
+  "tags": [
+    "karobakbak",
+    "safety"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Reports and the response target",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Oldest untriaged report against the target",
+      "description": "The pair that makes a response target measurable rather than intended. The target is exported as a metric so this compares two series instead of hardcoding a number that drifts out of step with configuration.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(chat_report_queue_oldest_seconds)",
+          "legendFormat": "oldest waiting"
+        },
+        {
+          "refId": "B",
+          "expr": "max(chat_report_response_target_seconds)",
+          "legendFormat": "target"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Reports raised, and the open queue",
+      "description": "Reports are the only route into a stranger's conversation \u2014 there is no browsing and no search. A conversation with a persona is the documented exception (D-AI-12).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_reports_total[$__rate_interval])) * 3600",
+          "legendFormat": "raised per hour"
+        },
+        {
+          "refId": "B",
+          "expr": "max(chat_reports_open)",
+          "legendFormat": "open"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "What the rules and the users caught",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Moderation actions",
+      "description": "A message is flagged and delivered; a declared NAME is refused outright (D20 vs D35), because a name is a label shown to everyone the user meets rather than one utterance in context.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (action) (rate(chat_moderation_flags_total[$__rate_interval]))",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks, by dimension",
+      "description": "A block keys on the salted IP hash AND the client token hash, both dimensions and both directions, because a session-id block would expire the instant the blocked user reconnected (D18).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (dimension) (rate(chat_blocks_total[$__rate_interval]))",
+          "legendFormat": "{{dimension}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Declared profiles refused",
+      "description": "`age_below_minimum` is the one to watch: it counts people who told this service they are under 18. A count only, never who or what age. It is a safety signal and an input to the minor-safety policy \u2014 and it is NOT age assurance, which nothing here provides.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_below_minimum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(chat_profiles_refused_total[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Connections refused at the door",
+      "description": "`banned` is an enforcement decision taken before a session exists. Every reason is zero-initialised, because this is where a misfiring ban would otherwise read as a capacity problem.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(chat_connections_rejected_total[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Abuse of the protocol itself",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Refused frames and rate limits",
+      "description": "Ten invalid frames disconnect a socket with 4003. An over-length message is a protocol strike; a refused name is not.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(chat_invalid_frames_total[$__rate_interval]))",
+          "legendFormat": "invalid: {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_oversized_frames_total[$__rate_interval]))",
+          "legendFormat": "oversized"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (command) (rate(chat_rate_limited_total[$__rate_interval]))",
+          "legendFormat": "limited: {{command}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Socket errors and disconnects",
+      "description": "A transport error is ordinary \u2014 a client vanishing mid-frame produces one. A step change is not.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_socket_errors_total[$__rate_interval]))",
+          "legendFormat": "socket errors"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_disconnects_total[$__rate_interval]))",
+          "legendFormat": "disconnects"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Evidence survives \u2014 the retention promise",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Records dropped under overload, by priority",
+      "description": "The claim D26 and D27 make, and the one a 5,000-bot run demonstrated: 2,657 records dropped and every one of them P3, ordinary chat. Any P0 or P1 here is safety evidence being lost and is the most serious line on this dashboard.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "p[01]"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (class) (rate(chat_retention_dropped_total[$__rate_interval]))",
+          "legendFormat": "{{class}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue conservation: queued = flushed + dropped",
+      "description": "Read as three lines rather than asserted, so a divergence is visible rather than discovered by an oracle after a run.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_retention_queued_total[$__rate_interval]))",
+          "legendFormat": "queued"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_retention_flushed_total[$__rate_interval]))",
+          "legendFormat": "flushed"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_retention_dropped_total[$__rate_interval]))",
+          "legendFormat": "dropped"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(chat_retention_session_quota_evictions_total[$__rate_interval]))",
+          "legendFormat": "quota evictions"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows past their deadline that still exist",
+      "description": "The number that proves the deletion promise is being kept. Throughput is the wrong instrument: a worker falling behind still deletes steadily, so it looks healthy while the backlog grows. A worker keeping up has a backlog of approximately zero, whatever the volume. EMPTY IS NOT ZERO ON THIS PANEL. `publishBacklog` refuses to publish a sample that has never succeeded \u2014 a zero backlog from a monitor that could not read the database is the most reassuring thing this process could wrongly claim \u2014 so no data here means the deletion worker has not completed a sample yet, not that nothing is overdue. It is the one panel on these decks where absence is deliberately not zero-initialised.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (table) (chat_retention_backlog)",
+          "legendFormat": "{{table}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (table) (rate(chat_retention_deleted_total[$__rate_interval]))",
+          "legendFormat": "deleted: {{table}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Backup freshness against its limit",
+      "description": "A backup living on the machine it protects is not a backup, and an unobserved one reports `unknown` for ever.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(chat_backup_last_success_timestamp)",
+          "legendFormat": "age"
+        },
+        {
+          "refId": "B",
+          "expr": "max(chat_backup_max_age_seconds)",
+          "legendFormat": "limit"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_backup_failures_total[$__rate_interval])) * 3600",
+          "legendFormat": "failures per hour"
+        }
+      ]
+    }
+  ]
+}

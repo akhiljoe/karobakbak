@@ -1,0 +1,712 @@
+{
+  "uid": "karobakbak-product",
+  "title": "karobakbak \u2014 product",
+  "tags": [
+    "karobakbak",
+    "product"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "The funnel",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Searches through to conversations, last 24h",
+      "description": "One session, one search, all four steps (D61). Assembled from a single counter on purpose: chat_connections_total counts sockets including resumptions and chat_matches_created_total counts pairs, so a funnel built from those would divide three different denominators.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (step) (increase(chat_funnel_total[24h]))",
+          "legendFormat": "{{step}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Conversion",
+      "description": "matched/searched is how often a search finds somebody. spoke/matched is how often a conversation starts. conversed/spoke is how often it becomes one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(chat_funnel_total{step=\"matched\"}[24h])) / clamp_min(sum(increase(chat_funnel_total{step=\"searched\"}[24h])), 1)",
+          "legendFormat": "search \u2192 match"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(chat_funnel_total{step=\"spoke\"}[24h])) / clamp_min(sum(increase(chat_funnel_total{step=\"matched\"}[24h])), 1)",
+          "legendFormat": "match \u2192 spoke"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(increase(chat_funnel_total{step=\"conversed\"}[24h])) / clamp_min(sum(increase(chat_funnel_total{step=\"spoke\"}[24h])), 1)",
+          "legendFormat": "spoke \u2192 conversed"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Conversation quality",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "The bounce \u2014 matched, nobody spoke",
+      "description": "Bucket zero of chat_conversation_messages, counted per side. One side at zero is somebody being ignored; both sides at zero is a conversation nobody wanted. A conversation-level total would hide the first case entirely. The le matcher carries an `or` because the scrape emits le=\"0\" and Prometheus normalises the boundary to le=\"0.0\" \u2014 an exact match on either alone is silently empty, and a regex needs an escape PromQL's string parser rejects. Verified against the stored series, not the scrape.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(chat_conversation_messages_bucket{le=\"0.0\"}[$__rate_interval])) or sum(rate(chat_conversation_messages_bucket{le=\"0\"}[$__rate_interval]))) / clamp_min(sum(rate(chat_conversation_messages_count[$__rate_interval])), 0.0001)",
+          "legendFormat": "sides that never spoke"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages per side, percentiles",
+      "description": "Per side rather than per conversation: counting a conversation's messages would need a Redis write on the message hot path or a wider endMatch reply, and the sum of the two sides is the same number anyway.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chat_conversation_messages_bucket[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(chat_conversation_messages_bucket[$__rate_interval])))",
+          "legendFormat": "p90"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chat_conversation_messages_bucket[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "How long conversations lasted, by how they ended",
+      "description": "A three-second skip and a twenty-minute conversation are otherwise the same event. The _count per reason also gives the end-reason breakdown, so there is no separate counter to keep in step.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, reason) (rate(chat_conversation_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le, reason) (rate(chat_conversation_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p90 {{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Match to first message",
+      "description": "The hesitation the interface causes, and the one part of a conversation that copy can actually change.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chat_conversation_first_message_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(chat_conversation_first_message_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p90"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Matchmaking",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Time to find somebody",
+      "description": "The product's headline indicator. It depends on who else is waiting, not on server speed \u2014 read it beside queue depth.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chat_matchmaking_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chat_matchmaking_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chat_matchmaking_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Skips, abandoned searches and failures",
+      "description": "chat_search_abandoned_total is counted when the queue is actually left, so it is exact \u2014 searched minus matched would also count everybody still waiting at the scrape boundary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_skips_total[$__rate_interval]))",
+          "legendFormat": "skips"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_search_abandoned_total[$__rate_interval]))",
+          "legendFormat": "abandoned"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (reason) (rate(chat_matchmaking_failures_total[$__rate_interval]))",
+          "legendFormat": "failed: {{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Who is waiting, by declared gender",
+      "description": "The denominator for every preference number. A fallback rate means nothing unless you know whether the pool was 5% preferred or 40%. Cluster-wide, written by the janitor's lock holder.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (gender) (chat_queue_composition)",
+          "legendFormat": "{{gender}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Who arrives, by declared gender",
+      "description": "Not the same question as the panel beside it, and the difference is the point. The queue is biased by how long each group waits: a group that matches quickly is under-represented in any snapshot. Divergence between the two is the \u00a729.6 signal.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (gender) (rate(chat_profiles_declared_total[$__rate_interval]))",
+          "legendFormat": "{{gender}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Declarations, preference and premium",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "What people say they are here for",
+      "description": "Intent is symmetric and free \u2014 matched by equality, so both sides asked for the same thing. The distribution is the argument for or against `flirty` staying in the list.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (intent) (rate(chat_intents_declared_total[$__rate_interval]))",
+          "legendFormat": "{{intent}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Preference dimensions that won a match",
+      "description": "The honest answer to whether premium does anything. \u00a729 warns that a preference matching nobody is invisible, because the fallback still works and the user is never told. Decomposed from the score tryMatch already returns.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (dimension) (rate(chat_preference_applied_total[$__rate_interval]))",
+          "legendFormat": "{{dimension}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Preferences refused, and wide-sample escalations",
+      "description": "A steady `cooldown` rate is the limit doing its job. A rising `budget` rate is either somebody hunting or the hourly number being too small. `not_premium` is every preference-carrying search while nothing can be bought.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 44
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(chat_preference_limited_total[$__rate_interval]))",
+          "legendFormat": "refused: {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_preference_widened_total[$__rate_interval]))",
+          "legendFormat": "wide sample"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Accounts \u2014 sign-in, connections, reconnect",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Sign-in: started against completed",
+      "description": "The drop-off, and the number that says whether sign-in works for people who are not the developer. A provider misconfiguration looks exactly like disinterest without it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_auth_starts_total[$__rate_interval]))",
+          "legendFormat": "started"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (outcome) (rate(chat_auth_callbacks_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Accounts, connections and reconnects",
+      "description": "Successes only. There is deliberately no count of requests that were ignored or not saved back: consent is mutual, and an aggregate of refusals turns a private decision into an operational statistic.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_accounts_created_total[$__rate_interval]))",
+          "legendFormat": "accounts created"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_connections_made_total[$__rate_interval]))",
+          "legendFormat": "connections made"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_connections_removed_total[$__rate_interval]))",
+          "legendFormat": "connections removed"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(chat_reconnect_paired_total[$__rate_interval]))",
+          "legendFormat": "reconnects paired"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Reconnect faults and avatar relays",
+      "description": "Faults, never refusals \u2014 `blocked` is absent because a request stopped by a block is the block working, and blocks are already counted.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(chat_reconnect_failures_total[$__rate_interval]))",
+          "legendFormat": "reconnect: {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (outcome) (rate(chat_avatar_relay_total[$__rate_interval]))",
+          "legendFormat": "avatar: {{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sessions resumed, and reactions",
+      "description": "A high `expired` ratio means the grace window is shorter than the reconnections people actually make, and every one of those was a conversation that ended when it did not have to.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(chat_session_resumes_total[$__rate_interval]))",
+          "legendFormat": "resume: {{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_reactions_total[$__rate_interval]))",
+          "legendFormat": "reactions"
+        }
+      ]
+    }
+  ]
+}
