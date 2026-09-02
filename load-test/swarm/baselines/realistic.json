@@ -1,0 +1,14 @@
+{
+  "conversationsPerBotPerMinute": 1.975,
+  "messagesPerBotPerMinute": 5.8,
+  "connectedShare": 1,
+  "ackLatencyP95Ms": 48,
+  "matchLatencyP95Ms": 1155,
+  "lagP99Ms": 20.447231,
+  "profile": "realistic",
+  "recordedAt": "2026-09-02T17:34:02.574Z",
+  "commit": "ab2ce4e",
+  "bots": 40,
+  "durationSeconds": 60,
+  "note": "phase 33; load stack, 2 backend replicas, tracing and filters on"
+}

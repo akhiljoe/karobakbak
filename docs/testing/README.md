@@ -48,6 +48,36 @@ including the log-leak check, which is the strongest safety assertion the swarm
 makes. A run that skips them is not a smaller version of a full run; it is a
 different, much weaker claim.
 
+### Catching a regression
+
+The oracles judge a run against its own internal consistency. None of them can
+see the run *before* this one, so a change that halves throughput or doubles the
+time to find somebody passes every one of them and the verdict says PASS.
+
+```bash
+# freeze a run you are happy with
+npm run swarm -- --bots 400 --duration 300 --profile realistic   --record-baseline --baseline-note "why this run was worth freezing"
+
+# and from then on
+npm run swarm -- --bots 400 --duration 300 --profile realistic --compare
+```
+
+A regression fails the verdict and sets a non-zero exit code, the same as a
+failed oracle.
+
+**Baselines are recorded deliberately and never learned.** A baseline updated
+automatically from each green run is a ratchet in the wrong direction: a
+regression arriving in small enough steps is absorbed one run at a time, and the
+file ends up describing whatever the system currently does — the one thing a
+baseline must not be. `baselines/<profile>.json` carries the commit it was taken
+at and a note saying why.
+
+Metrics are **per bot per minute**, so a baseline recorded at 400 bots over 300
+seconds still means something at 40 over 60. Tolerances are wide on purpose —
+they catch a step change, not a drift. Drift is what the dashboards are for, and
+a check that fails on a busy afternoon is one that gets run with `|| true`
+inside a month.
+
 ### The failover drill
 
 ```bash

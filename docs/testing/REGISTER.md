@@ -28,6 +28,7 @@ Read `docs/testing/README.md` for how to run any of this,
 | Security probes | `npm run security:probe` | a running stack | no |
 | Log hygiene | `npm run verify:logs` | a running stack with Loki | no |
 | Redis failover | `npm run sentinel:up` then the swarm | its own stack | no |
+| Regression against a baseline | `npm run swarm -- … --compare` | the load stack | no |
 
 The bottom four need a running system and are deliberately outside CI. They are
 the ones most likely to go stale, and `RESULTS.md` records when each last ran.
