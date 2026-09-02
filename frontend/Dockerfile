@@ -49,8 +49,9 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 
 # Runs before nginx starts. `worker_connections` is in the main config's
 # `events` block, which no site config can reach, and its stock 1024 caps this
-# edge at roughly 512 concurrent conversations — a proxied WebSocket costs two
-# connections. See the script for the full reasoning.
+# edge at 512 people — 256 conversations, since a proxied WebSocket costs two
+# connections and a conversation is two people. See the script for the full
+# reasoning.
 COPY tune-worker-connections.sh /docker-entrypoint.d/20-tune-worker-connections.sh
 RUN chmod +x /docker-entrypoint.d/20-tune-worker-connections.sh
 

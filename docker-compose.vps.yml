@@ -98,6 +98,18 @@ services:
         hard: ${VPS_NOFILE:-32768}
 
   backend:
+    environment:
+      # Not passed by any other compose file, so setting it in an env file is
+      # silent: the process keeps its compiled-in 20000 and every dashboard
+      # agrees with itself. Confirmed by asking the running container rather
+      # than by reading a file -- `loadConfig(process.env).timers` reported
+      # 20000 while `.env.vps` said 40000. Same shape as SPOOL_BACKEND=redis
+      # (F-006): configuration that looks applied and is not.
+      #
+      # The sweep it drives is what a connection costs while doing nothing, and
+      # that dominates CPU here. Must stay below half of SESSION_TTL_SECONDS or
+      # `assertCoherent` refuses to start.
+      HEARTBEAT_INTERVAL_MS: "${HEARTBEAT_INTERVAL_MS:-20000}"
     # One, because `docker-compose.prod.yml` runs one. The base compose runs two
     # so cross-instance routing is exercised on a laptop, which is right there.
     # But two Node processes contending for a single core is not a deployment
