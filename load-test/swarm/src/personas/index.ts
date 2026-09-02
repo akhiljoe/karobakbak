@@ -135,7 +135,11 @@ export type ProfileName =
   | 'capacity'
   | 'lifecycle'
   | 'human'
-  | 'tiny';
+  | 'tiny'
+  // E6 and E1/E10. The two shapes the catalogue says to run before believing
+  // any capacity number.
+  | 'idle'
+  | 'endurance';
 
 /**
  * `realistic` — the default, and the only profile whose latency numbers are
@@ -349,6 +353,55 @@ const HUMAN: readonly MixEntry[] = [
   { scenario: 'L1', weight: 2 },
 ];
 
+/**
+ * `idle` — scenario E6, 80% connected and quiet, 20% doing something.
+ *
+ * The realistic connected-user profile, and the one the catalogue names as
+ * mandatory before believing any capacity number: "a capacity figure taken from
+ * a shape nobody experiences is a number about the load generator's
+ * preferences".
+ *
+ * The catalogue calls E6 a *shape* rather than a mix and says a shape is not
+ * expressible as a persona. That is true of the arrival shapes — E2's steps,
+ * E3's stampede — and it is not true of this one, because L6 already exists:
+ * connects, never joins the queue, fiddles with the typing indicator the way an
+ * abandoned text box does. Proportion is exactly what a mix expresses, so E6 is
+ * a mix and needs no new machinery.
+ *
+ * What it costs is the point. An idle socket still holds a file descriptor,
+ * still heartbeats, still refreshes its session TTL, and is still counted in
+ * presence. Every capacity number this project has came from a population where
+ * everybody was searching, which is not what a live service looks like.
+ */
+const IDLE: readonly MixEntry[] = [
+  { scenario: 'L6', weight: 80 },
+  { scenario: 'N1', weight: 10 },
+  { scenario: 'N6', weight: 4 },
+  { scenario: 'S1', weight: 4 },
+  { scenario: 'L1', weight: 2 },
+];
+
+/**
+ * `endurance` — scenarios E1 and E10, for a run measured in hours.
+ *
+ * Deliberately dull: long conversations, low churn, and nothing that trips a
+ * limit. Anything that grows monotonically across a run of this shape is a
+ * leak, and a mix full of interesting behaviour makes that impossible to see —
+ * the growth has to be attributable to time rather than to whatever the
+ * adversaries happened to do.
+ *
+ * Read `chat_process_resident_memory_bytes` and `chat_retention_queue_depth`
+ * across the whole run rather than the verdict at the end. A leak that is
+ * visible in a verdict is one that has already become an outage.
+ */
+const ENDURANCE: readonly MixEntry[] = [
+  { scenario: 'N1', weight: 40 },
+  { scenario: 'N6', weight: 25 },
+  { scenario: 'L6', weight: 20 },
+  { scenario: 'S1', weight: 10 },
+  { scenario: 'L1', weight: 5 },
+];
+
 export const PROFILES: Record<ProfileName, readonly MixEntry[]> = {
   realistic: REALISTIC,
   adversarial: ADVERSARIAL,
@@ -356,6 +409,8 @@ export const PROFILES: Record<ProfileName, readonly MixEntry[]> = {
   lifecycle: LIFECYCLE,
   human: HUMAN,
   tiny: TINY,
+  idle: IDLE,
+  endurance: ENDURANCE,
 };
 
 export function isProfileName(value: string): value is ProfileName {
