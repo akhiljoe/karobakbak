@@ -631,6 +631,25 @@ export interface Config {
    * is the same lie a fabricated default would have told, arrived at from the
    * other direction.
    */
+  /**
+   * Distributed tracing (phase 29).
+   *
+   * Off by default, and that is not caution for its own sake: this is the one
+   * part of the observability stack that adds code to the address space holding
+   * every WebSocket file descriptor, and it is the path §18.1 identifies as the
+   * most likely way message content leaves the trusted boundary. A deployment
+   * that is not looking at traces should not carry the risk of producing them.
+   *
+   * `src/tracing/` is the only place the SDK may be imported, the same rule the
+   * payment gateway and the model providers follow.
+   */
+  readonly tracing: {
+    readonly enabled: boolean;
+    /** OTLP/HTTP base; `/v1/traces` is appended. */
+    readonly endpoint: string;
+    readonly serviceName: string;
+  };
+
   readonly cost: {
     /** Per vCPU-hour. */
     readonly vcpuHourMicroCents: number;
@@ -1246,6 +1265,12 @@ export function loadConfig(env: Env = process.env): Config {
     moderation_response: {
       targetSeconds: int(env, 'REPORT_RESPONSE_TARGET_SECONDS', 86_400, 60, 2_592_000),
       sampleIntervalMs: int(env, 'REPORT_QUEUE_SAMPLE_MS', 60_000, 5_000, 3_600_000),
+    },
+
+    tracing: {
+      enabled: bool(env, 'TRACING_ENABLED', false),
+      endpoint: str(env, 'TRACING_ENDPOINT', 'http://tempo:4318'),
+      serviceName: str(env, 'TRACING_SERVICE_NAME', 'karobakbak-backend'),
     },
 
     cost: costModel(env),

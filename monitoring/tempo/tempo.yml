@@ -1,0 +1,54 @@
+# Tempo — where spans go.
+#
+# Single binary, local filesystem, one replica. The same shape as the Loki
+# beside it and for the same reason: a microservices tracing deployment would be
+# more infrastructure than the thing it observes.
+#
+# ---------------------------------------------------------------------------
+# ONLY OTLP, AND ONLY HTTP
+# ---------------------------------------------------------------------------
+# Tempo can accept Jaeger, Zipkin and OpenCensus as well. Every one of those is
+# another unauthenticated port on a service that will hold spans describing this
+# system's internals, enabled to receive traffic nothing here sends. The
+# application speaks OTLP/HTTP and nothing else, so that is the only receiver
+# configured.
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # A trace is complete when nothing has been added for this long. Short,
+  # because the spans here are HTTP requests and database writes measured in
+  # milliseconds — not batch jobs.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Shorter than Loki's seven days and much shorter than the thirty-day
+    # conversation window, deliberately. A trace answers "why was this slow",
+    # which is a question asked within hours; it is not evidence, and it should
+    # not be kept as though it were. Spans are also the newest and least
+    # battle-tested path out of the trusted boundary, so the window in which a
+    # mistake is retained is kept small on purpose.
+    block_retention: 48h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+# Tempo reports usage statistics to Grafana Labs by default. Off here for the
+# same reason it is off in Loki: a monitoring component quietly phoning home is
+# awkward to defend on a service whose privacy policy is this specific.
+usage_report:
+  reporting_enabled: false

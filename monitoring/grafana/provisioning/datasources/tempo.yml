@@ -1,0 +1,30 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    # Pinned, like the other two. A provisioned dashboard or a derived field
+    # that names a datasource by uid resolves the same way on every machine.
+    uid: karobakbak-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    editable: false
+    jsonData:
+      # Jump from a span to the logs of the same service and time window. Not a
+      # trace-id join: nothing writes a trace id into a log line yet, and
+      # claiming a correlation that does not exist is worse than not offering
+      # one. Service and time is honest and is most of the value.
+      tracesToLogsV2:
+        datasourceUid: karobakbak-loki
+        spanStartTimeShift: "-2m"
+        spanEndTimeShift: "2m"
+        filterByTraceID: false
+        filterBySpanID: false
+        tags:
+          - key: "service.name"
+            value: "service"
+      tracesToMetrics:
+        datasourceUid: karobakbak-prometheus
+        spanStartTimeShift: "-2m"
+        spanEndTimeShift: "2m"

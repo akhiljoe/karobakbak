@@ -59,4 +59,12 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "dist/index.js"]
+# `--require` and not a plain start, because OpenTelemetry patches a module by
+# replacing its exports: anything already imported when the SDK starts is never
+# instrumented. Starting it from inside `index.ts` produced no spans at all and
+# reported no error, which is the failure mode a tracing pipeline has.
+#
+# The preload reads TRACING_ENABLED itself and requires nothing OpenTelemetry
+# when it is off, so a deployment with tracing disabled still never loads the
+# SDK into the process holding every WebSocket file descriptor.
+CMD ["node", "--require", "./dist/tracing/preload.js", "dist/index.js"]
