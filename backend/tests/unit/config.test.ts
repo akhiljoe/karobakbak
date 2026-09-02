@@ -932,3 +932,54 @@ describe('loadConfig — sign-in', () => {
     expect(config.payments.enabled).toBe(false);
   });
 });
+
+/**
+ * The connection ceiling is derived, and the derivation is the point.
+ *
+ * A flat 5000 was wrong in both directions at once: about four times what a
+ * 1 vCPU box serves, and well under what eight cores could. A cap wrong in both
+ * directions never binds before the machine is already collapsing, which is
+ * exactly what `docs/testing/RESULTS.md` measured.
+ *
+ * `cores` is a parameter rather than a call to `os` inside `loadConfig`, so
+ * these tests describe boxes this suite is not running on. That is also what
+ * keeps `loadConfig` a pure function of its arguments.
+ */
+describe('the connection ceiling', () => {
+  it('scales with the cores the box actually has', () => {
+    expect(loadConfig(baseEnv(), 1).limits.maxConnections).toBe(1400);
+    expect(loadConfig(baseEnv(), 2).limits.maxConnections).toBe(2800);
+    expect(loadConfig(baseEnv(), 8).limits.maxConnections).toBe(11_200);
+  });
+
+  it('takes CONNECTIONS_PER_CORE as the per-core figure', () => {
+    const cfg = loadConfig(baseEnv({ CONNECTIONS_PER_CORE: '900' }), 2);
+    expect(cfg.limits.maxConnections).toBe(1800);
+  });
+
+  /**
+   * An explicit value wins, because a deployment may know something the
+   * arithmetic does not - a box shared with another service, or a population
+   * measured to be talkative enough that the derived figure is too generous.
+   */
+  it('lets MAX_CONNECTIONS override the derivation entirely', () => {
+    const cfg = loadConfig(baseEnv({ MAX_CONNECTIONS: '250', CONNECTIONS_PER_CORE: '900' }), 8);
+    expect(cfg.limits.maxConnections).toBe(250);
+  });
+
+  /**
+   * Zero or a negative core count comes back as one machine's worth rather than
+   * zero. A ceiling of zero refuses every connection, and it would arrive as a
+   * total outage that no health check reports - the failure shape this project
+   * has already been bitten by twice (F-044, F-045).
+   */
+  it('never derives a ceiling of zero from a nonsense core count', () => {
+    expect(loadConfig(baseEnv(), 0).limits.maxConnections).toBe(1400);
+    expect(loadConfig(baseEnv(), -4).limits.maxConnections).toBe(1400);
+  });
+
+  it('still validates an explicit value rather than trusting it', () => {
+    expect(() => loadConfig(baseEnv({ MAX_CONNECTIONS: 'lots' }), 1)).toThrow(/must be an integer/);
+    expect(() => loadConfig(baseEnv({ MAX_CONNECTIONS: '0' }), 1)).toThrow(/must be between/);
+  });
+});

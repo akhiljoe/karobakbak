@@ -211,6 +211,19 @@ services:
       # `.env.loadtest`. Production keeps the shipped defaults.
       CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-60}"
       MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-40}"
+      # The aggregate ceiling, as opposed to the per-IP one above. These two
+      # answer different questions: MAX_CONNECTIONS_PER_IP stops one actor,
+      # MAX_CONNECTIONS stops legitimate demand exceeding the box.
+      #
+      # Both are blank by default so `config.ts` derives the ceiling from the
+      # core count it can see. Set MAX_CONNECTIONS only to override that.
+      #
+      # They are listed here at all because until now they were not: F-045 found
+      # 109 settings that `config.ts` reads and no compose file passes, so they
+      # could be set in an env file, were documented as supported, and reached
+      # nothing.
+      CONNECTIONS_PER_CORE: "${CONNECTIONS_PER_CORE:-}"
+      MAX_CONNECTIONS: "${MAX_CONNECTIONS:-}"
       # Session resumption (§28, D42) and the late-block window (D38).
       #
       # Both ship with defaults `loadConfig` already applies, and both are here

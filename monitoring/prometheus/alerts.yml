@@ -510,3 +510,45 @@ groups:
             Retention deadlines are stamped from the application clock and checked
             against the database clock, so every deadline written while this persists
             is wrong by the skew. Check NTP on both hosts.
+
+  # ---------------------------------------------------------------------------
+  # Capacity
+  # ---------------------------------------------------------------------------
+  # The connection ceiling is derived per box (cores x CONNECTIONS_PER_CORE),
+  # so these are written against the ratio and never against a literal count.
+  # An alert with the number baked in would be wrong on every tier but one, and
+  # wrong in the reassuring direction.
+  #
+  # Measured on 1 vCPU (docs/testing/RESULTS.md, 2026-09-02): the core saturates
+  # around 2,000 concurrent, and latency is what degrades - ack p99 went 150ms
+  # to 598ms between 1,000 and 2,000. Nothing errors, nothing restarts. So the
+  # warning has to come from headroom, because the service does not report this
+  # failure any other way.
+  - name: karobakbak-capacity
+    rules:
+      - alert: ConnectionHeadroomLow
+        expr: max(chat_connections_active / chat_connections_limit) > 0.7
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "An instance is holding over 70% of the connections it will accept"
+          description: >-
+            Not urgent, and not a fault. This is the point at which the next tier
+            should be bought rather than the point at which anything breaks.
+            Check the Capacity row on the overview dashboard: if the population
+            is conversation-heavy, latency degrades before the ceiling binds.
+
+      - alert: RefusingConnectionsAtCapacity
+        expr: sum(rate(chat_connections_rejected_total{reason="at_capacity"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "People are being turned away — the connection ceiling is binding"
+          description: >-
+            Every refusal here is somebody who could not get in. Raising
+            CONNECTIONS_PER_CORE is not automatically the fix: the ceiling exists
+            to stop the box collapsing, and raising it past what the cores serve
+            converts a refusal into latency for everybody already inside. Add a
+            core, or accept the refusals deliberately as a cost ceiling.

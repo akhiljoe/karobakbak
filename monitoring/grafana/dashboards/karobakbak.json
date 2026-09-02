@@ -1,6 +1,6 @@
 {
   "uid": "karobakbak-overview",
-  "title": "karobakbak \u2014 overview",
+  "title": "karobakbak — overview",
   "tags": [
     "karobakbak"
   ],
@@ -281,7 +281,7 @@
     {
       "type": "stat",
       "title": "Database circuit breaker",
-      "description": "0 closed \u00b7 1 half-open \u00b7 2 open. Open means chat is fine and retention is degraded (D25).",
+      "description": "0 closed · 1 half-open · 2 open. Open means chat is fine and retention is degraded (D25).",
       "gridPos": {
         "h": 5,
         "w": 6,
@@ -422,7 +422,7 @@
     {
       "type": "timeseries",
       "title": "Declared profiles refused",
-      "description": "A declared name is refused outright when any moderation rule fires (D35), unlike a message, which is flagged and delivered. `age_below_minimum` is a minor-safety signal and a count only \u2014 never who, never what age.",
+      "description": "A declared name is refused outright when any moderation rule fires (D35), unlike a message, which is flagged and delivered. `age_below_minimum` is a minor-safety signal and a count only — never who, never what age.",
       "gridPos": {
         "h": 7,
         "w": 12,
@@ -541,7 +541,7 @@
     {
       "type": "timeseries",
       "title": "Batch write latency and failures",
-      "description": "Never log a pg error object \u2014 driver errors echo parameter values, which on this path is the row that was just being inserted. `dbErrorFields()` emits SQLSTATE only, and that code is the label here.",
+      "description": "Never log a pg error object — driver errors echo parameter values, which on this path is the row that was just being inserted. `dbErrorFields()` emits SQLSTATE only, and that code is the label here.",
       "datasource": {
         "type": "prometheus",
         "uid": "karobakbak-prometheus"
@@ -583,7 +583,7 @@
     {
       "type": "timeseries",
       "title": "Breaker transitions",
-      "description": "The breaker's reaction time is BREAKER_FAILURE_THRESHOLD x DATABASE_STATEMENT_TIMEOUT_MS \u2014 50s at the defaults. That is the outage that must elapse before the spool comes into play; change one and the other needs revisiting.",
+      "description": "The breaker's reaction time is BREAKER_FAILURE_THRESHOLD x DATABASE_STATEMENT_TIMEOUT_MS — 50s at the defaults. That is the outage that must elapse before the spool comes into play; change one and the other needs revisiting.",
       "datasource": {
         "type": "prometheus",
         "uid": "karobakbak-prometheus"
@@ -614,7 +614,7 @@
     {
       "type": "timeseries",
       "title": "Spool writes, drains and expiries",
-      "description": "The spool is bounded outage tolerance and NOT durable storage (D28) \u2014 a host failure loses it. Never describe it otherwise here or anywhere else.",
+      "description": "The spool is bounded outage tolerance and NOT durable storage (D28) — a host failure loses it. Never describe it otherwise here or anywhere else.",
       "datasource": {
         "type": "prometheus",
         "uid": "karobakbak-prometheus"
@@ -661,7 +661,7 @@
     {
       "type": "timeseries",
       "title": "Match attempts against matches made",
-      "description": "An attempt is one tryMatch invocation whatever came back. A rising ratio of attempts to matches is the retry loop working harder \u2014 usually stale queue entries or blocked candidates being walked past.",
+      "description": "An attempt is one tryMatch invocation whatever came back. A rising ratio of attempts to matches is the retry loop working harder — usually stale queue entries or blocked candidates being walked past.",
       "datasource": {
         "type": "prometheus",
         "uid": "karobakbak-prometheus"
@@ -697,7 +697,7 @@
     },
     {
       "type": "row",
-      "title": "AI personas \u2014 off by default, absent is correct",
+      "title": "AI personas — off by default, absent is correct",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -823,7 +823,7 @@
     {
       "type": "timeseries",
       "title": "Limit trips and fill suppression",
-      "description": "A fill policy that has quietly stopped filling looks identical to one with nothing to fill, unless every reason is already on the graph at zero \u2014 which is why they are zero-initialised.",
+      "description": "A fill policy that has quietly stopped filling looks identical to one with nothing to fill, unless every reason is already on the graph at zero — which is why they are zero-initialised.",
       "datasource": {
         "type": "prometheus",
         "uid": "karobakbak-prometheus"
@@ -859,6 +859,99 @@
           "refId": "C",
           "expr": "sum(rate(chat_persona_fill_dispatched_total[$__rate_interval]))",
           "legendFormat": "dispatched"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Capacity",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 98
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Headroom — connections against the derived ceiling",
+      "description": "chat_connections_limit is derived from the box's core count (cores x CONNECTIONS_PER_CORE), so it differs per deployment. Charting the ratio rather than the count is what keeps this panel true when the tier changes. Measured on 1 vCPU: the core saturates around 2,000 concurrent, and the default ceiling of 1400/core sits below that deliberately.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "max by (instance) (chat_connections_active / chat_connections_limit)",
+          "legendFormat": "{{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Refused at capacity",
+      "description": "chat_connections_rejected_total{reason=\"at_capacity\"} is zero-initialised, so a flat zero means the ceiling has never bound rather than that nothing is watching. Any value above zero is people being turned away: check the headroom panel beside this one before raising the ceiling, because the ceiling exists to stop the box collapsing and raising it past what the cores serve just moves the failure from a refusal to latency for everybody.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_connections_rejected_total{reason=\"at_capacity\"}[$__rate_interval]))",
+          "legendFormat": "refused at capacity"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(chat_connections_active)",
+          "legendFormat": "connections held"
         }
       ]
     }

@@ -238,6 +238,17 @@ export interface Metrics {
   readonly connectionsActive: Gauge<string>;
   readonly connectionsTotal: Counter<string>;
   readonly connectionsRejected: Counter<'reason'>;
+  /**
+   * The ceiling `connectionsActive` is measured against.
+   *
+   * Exported as a series rather than written into a dashboard because it is
+   * derived per box now (cores x `CONNECTIONS_PER_CORE`), so a panel with the
+   * number baked in would be silently wrong on every machine but the one it was
+   * written for - and wrong in the reassuring direction, showing headroom that
+   * does not exist. `chat_connections_active / chat_connections_limit` is the
+   * only expression that stays true when the tier changes.
+   */
+  readonly connectionsLimit: Gauge;
   readonly disconnects: Counter<string>;
   readonly oversizedFrames: Counter<string>;
   readonly invalidFrames: Counter<'reason'>;
@@ -677,6 +688,7 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     connectionsActive: gauge('chat_connections_active', 'WebSocket connections attached to this instance'),
     connectionsTotal: counter('chat_connections_total', 'WebSocket connections accepted'),
     connectionsRejected: counter('chat_connections_rejected_total', 'Upgrades refused, by reason', ['reason']),
+    connectionsLimit: gauge('chat_connections_limit', 'Connections this instance will hold before refusing new ones'),
     disconnects: counter('chat_disconnects_total', 'Sockets closed'),
     oversizedFrames: counter('chat_oversized_frames_total', 'Frames refused for exceeding the size limit'),
     invalidFrames: counter('chat_invalid_frames_total', 'Malformed protocol frames, by reason', [

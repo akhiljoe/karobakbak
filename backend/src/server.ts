@@ -1559,6 +1559,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       const address = httpServer.address();
       if (address !== null && typeof address === 'object') boundPort = address.port;
 
+      // Published once, here, because it is derived from the box's core count
+      // and is therefore different per deployment. A dashboard that hard-coded
+      // it would read as headroom that does not exist.
+      metrics.connectionsLimit.set(config.limits.maxConnections);
+
       heartbeatTimer = setInterval(() => {
         void heartbeatSweep();
       }, config.timers.heartbeatIntervalMs);
