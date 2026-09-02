@@ -22,4 +22,13 @@ export function publishLimits(metrics: Metrics, config: Config): void {
   metrics.spoolMaxRecords.set(config.spool.maxRecords);
   metrics.spoolMaxBytes.set(config.spool.maxBytes);
   metrics.backupMaxAge.set(config.backup.maxAgeSeconds);
+
+  // The price model, published the same way and for the same reason: a rate
+  // that lives only in a dashboard query drifts silently from the one the
+  // operator is actually paying.
+  metrics.costUnitPrice.labels('vcpu_hour').set(config.cost.vcpuHourMicroCents);
+  metrics.costUnitPrice.labels('memory_gb_hour').set(config.cost.memoryGbHourMicroCents);
+  metrics.costUnitPrice.labels('egress_gb').set(config.cost.egressGbMicroCents);
+  metrics.costUnitPrice.labels('disk_gb_month').set(config.cost.diskGbMonthMicroCents);
+  metrics.costModelConfigured.set(config.cost.configured ? 1 : 0);
 }

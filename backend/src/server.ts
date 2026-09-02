@@ -906,6 +906,7 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
           metrics.invalidFrames.labels(reason).inc();
         },
         socketError: () => metrics.socketErrors.inc(),
+        bytes: (direction, count) => metrics.wsBytes.labels(direction).inc(count),
       },
       onClose: async (conn) => {
         // Whatever this socket was waiting for, it is not waiting any more.

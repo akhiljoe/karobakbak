@@ -65,6 +65,16 @@ export interface SocketConnectionDeps {
     frameRejected(reason: 'unreadable' | 'invalid' | 'oversized'): void;
     /** A transport-level error on this socket. */
     socketError(): void;
+    /**
+     * Application payload bytes over this socket, for the cost deck.
+     *
+     * **Not wire bytes.** This is the length of the frame this process handed
+     * to or took from `ws`, before WebSocket framing, TLS and TCP headers, and
+     * before any compression. Egress is billed on the wire, so this is a floor
+     * on the bill rather than the bill — which is the useful direction to be
+     * wrong in, and is stated on the metric so nobody reads it as exact.
+     */
+    bytes(direction: 'in' | 'out', count: number): void;
   };
 }
 
@@ -162,6 +172,9 @@ export class SocketConnection implements Connection {
     }
 
     this.socket.send(frame);
+    // After the write, so a frame refused for backpressure is not counted as
+    // egress that never left.
+    this.deps.observe?.bytes('out', Buffer.byteLength(frame, 'utf8'));
     return true;
   }
 
@@ -220,6 +233,26 @@ export class SocketConnection implements Connection {
 
   private async handleFrame(data: unknown, isBinary: boolean): Promise<void> {
     const raw = toFrameData(data);
+    /*
+      Counted before validation, deliberately: a malformed frame still crossed
+      the network and still cost bandwidth. Counting only accepted frames would
+      understate ingress exactly when somebody is abusing the socket, which is
+      when the number matters.
+
+      Both branches, and that is not defensive typing. `ws` delivers a **Buffer**
+      unless the socket was created with `{ binary: false }`, so the first
+      version of this counted only the string case and reported ingress as a
+      flat zero on a stack that was moving 133kB out. A counter that is present,
+      plausible and permanently zero is the exact failure `metrics-wiring.test.ts`
+      exists for, arriving through a route that test cannot see — it checks that
+      something writes the metric, not that the write is reachable.
+    */
+    if (raw !== null) {
+      this.deps.observe?.bytes(
+        'in',
+        typeof raw === 'string' ? Buffer.byteLength(raw, 'utf8') : raw.byteLength,
+      );
+    }
     if (raw === null) {
       this.deps.observe?.frameRejected('unreadable');
       this.strike('BAD_ENVELOPE', 'unreadable frame');

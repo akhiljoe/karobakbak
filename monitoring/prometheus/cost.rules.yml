@@ -1,0 +1,175 @@
+# Unit economics (D62).
+#
+# ---------------------------------------------------------------------------
+# ONE UNIT THROUGHOUT: MICRO-CENTS OF US DOLLARS
+# ---------------------------------------------------------------------------
+# `chat_persona_cost_micro_cents_total` already existed and `MODEL_PRICES` is
+# written in dollars, so persona spend is USD micro-cents whatever else happens.
+# The application publishes infrastructure prices in the same unit for exactly
+# that reason — see `Config['cost']`. Every expression below is therefore
+# summable without a conversion, and the single division into dollars happens
+# at the end, once, in `kbb:cost_dollars_per_hour:total`.
+#
+# Mixing currencies here would not fail. It would produce a number that is
+# neither, on a panel that looks right.
+#
+# ---------------------------------------------------------------------------
+# WHY THESE ARE RECORDING RULES AND NOT PANEL QUERIES
+# ---------------------------------------------------------------------------
+# The same reason `chat_report_response_target_seconds` is exported rather than
+# hardcoded in an alert: a number repeated in nine places drifts the first time
+# somebody changes one of them. Evaluated once here, every panel reads the same
+# arithmetic, and changing the model means changing this file.
+#
+# ---------------------------------------------------------------------------
+# READING A ZERO
+# ---------------------------------------------------------------------------
+# A zero here means one of two very different things, and `chat_cost_model_configured`
+# is what tells them apart: 0 means nobody has said what anything costs, and the
+# whole deck is unpriced rather than free. A panel that renders these without
+# checking that gauge is claiming a bill of $0.00 on no evidence.
+
+groups:
+  - name: karobakbak-cost
+    interval: 30s
+    rules:
+      # ---------------------------------------------------------------------
+      # PROVISIONED, NOT CONSUMED — AND THAT IS THE BILLING MODEL, NOT A PROXY
+      # ---------------------------------------------------------------------
+      # The first draft of these rules multiplied *used* CPU by a vCPU-hour
+      # price, and it was wrong for the deployment this project actually
+      # describes. The cost plan's Scenario A is "1 modest VM": that VM costs
+      # its full vCPU count every hour whether the process is busy or idle, so
+      # a usage-based figure would report a bill that drops overnight while the
+      # invoice does not move.
+      #
+      # Usage-based pricing exists — serverless, autoscaling — and if this ever
+      # runs on it, the rule to change is this one, deliberately, rather than
+      # discovering that the number never matched the invoice.
+      #
+      # `machine_*` also happens to be what cAdvisor can report here. On Docker
+      # Desktop and WSL2 it sees only the root cgroup (`id="/"`) and emits no
+      # per-container series at all, so a `name=~".+"` selector returns nothing
+      # — which is how the modelling error above was found rather than shipped.
+      - record: kbb:vcpu:provisioned
+        expr: max(machine_cpu_cores)
+
+      - record: kbb:memory_gb:provisioned
+        expr: max(machine_memory_bytes) / 1024 / 1024 / 1024
+
+      # Utilisation, kept apart from the cost arithmetic and never multiplied
+      # by a price. It answers a different question — is the machine the right
+      # size — which is how a *future* bill gets smaller, and is the number to
+      # read before changing the one above.
+      #
+      # `id="/"` is the whole host, which is what is being paid for. Per
+      # container would be an attribution detail and is unavailable here anyway.
+      - record: kbb:vcpu:used
+        expr: sum(rate(container_cpu_usage_seconds_total{id="/"}[5m]))
+
+      # Working set rather than RSS: it is what the kernel would struggle to
+      # reclaim, which is the number a host is actually sized on.
+      - record: kbb:memory_gb:used
+        expr: sum(container_memory_working_set_bytes{id="/"}) / 1024 / 1024 / 1024
+
+      # Egress per second, from the application's own counter rather than from
+      # cAdvisor's interface bytes. cAdvisor would count container-to-container
+      # traffic — every Redis round trip and every Pub/Sub publish — as though
+      # it left the host, and on this architecture that is most of the bytes.
+      #
+      # It is a floor: application payload only, before framing and TLS.
+      - record: kbb:egress_gb_per_second
+        expr: sum(rate(chat_ws_bytes_total{direction="out"}[5m])) / 1024 / 1024 / 1024
+
+      # Everything the retention promise is keeping. `pg_database_size_bytes`
+      # is the whole database, which is the thing that is billed.
+      - record: kbb:disk_gb:used
+        expr: sum(pg_database_size_bytes) / 1024 / 1024 / 1024
+
+      # ---------------------------------------------------------------------
+      # WHAT IT COSTS, PER HOUR
+      # ---------------------------------------------------------------------
+      - record: kbb:cost_micro_cents_per_hour:compute
+        expr: |
+          kbb:vcpu:provisioned
+            * on() group_left() max(chat_cost_unit_price_micro_cents{resource="vcpu_hour"})
+
+      - record: kbb:cost_micro_cents_per_hour:memory
+        expr: |
+          kbb:memory_gb:provisioned
+            * on() group_left() max(chat_cost_unit_price_micro_cents{resource="memory_gb_hour"})
+
+      - record: kbb:cost_micro_cents_per_hour:egress
+        expr: |
+          kbb:egress_gb_per_second * 3600
+            * on() group_left() max(chat_cost_unit_price_micro_cents{resource="egress_gb"})
+
+      # A monthly rate spread over the hours in an average month, so it can be
+      # added to the three above without a unit mismatch. 730 is 8760/12.
+      - record: kbb:cost_micro_cents_per_hour:disk
+        expr: |
+          kbb:disk_gb:used
+            * on() group_left() max(chat_cost_unit_price_micro_cents{resource="disk_gb_month"})
+            / 730
+
+      # Persona spend, which is the one category that was already measured.
+      # Already micro-cents, already USD, so it joins the sum directly.
+      - record: kbb:cost_micro_cents_per_hour:personas
+        expr: sum(rate(chat_persona_cost_micro_cents_total[5m])) * 3600
+
+      # `or vector(0)` on each term, so a category with no exporter running
+      # contributes zero instead of removing the whole sum. Without it, a single
+      # absent series makes the total disappear — which on a graph is
+      # indistinguishable from a bill of nothing.
+      - record: kbb:cost_micro_cents_per_hour:total
+        expr: |
+          (kbb:cost_micro_cents_per_hour:compute or vector(0))
+          + (kbb:cost_micro_cents_per_hour:memory or vector(0))
+          + (kbb:cost_micro_cents_per_hour:egress or vector(0))
+          + (kbb:cost_micro_cents_per_hour:disk or vector(0))
+          + (kbb:cost_micro_cents_per_hour:personas or vector(0))
+
+      # The one conversion, applied once. A micro-cent is 1e-8 dollars.
+      - record: kbb:cost_dollars_per_hour:total
+        expr: kbb:cost_micro_cents_per_hour:total / 100000000
+
+      - record: kbb:cost_dollars_per_month:projected
+        expr: kbb:cost_dollars_per_hour:total * 730
+
+      # ---------------------------------------------------------------------
+      # WHAT IT COSTS PER UNIT OF PRODUCT
+      # ---------------------------------------------------------------------
+      # The numbers the phase exists for, and the reason phase 26 came first:
+      # these denominators did not exist until the product deck was built.
+      #
+      # `matched` rather than `chat_matches_created_total`, because the funnel
+      # step is per session — two per conversation — and dividing by matches
+      # would be dividing by a different population than every other panel on
+      # the deck. Halved explicitly so the figure is per *conversation*, which
+      # is what somebody asking this question means.
+      - record: kbb:cost_dollars_per_conversation
+        expr: |
+          kbb:cost_dollars_per_hour:total
+            / clamp_min(sum(rate(chat_funnel_total{step="matched"}[1h])) * 3600 / 2, 1)
+
+      - record: kbb:cost_dollars_per_1k_messages
+        expr: |
+          kbb:cost_dollars_per_hour:total
+            / clamp_min(sum(rate(chat_messages_received_total[1h])) * 3600 / 1000, 1)
+
+      # `clamp_min(..., 1)` throughout, and it is a deliberate distortion rather
+      # than a guard against dividing by zero — Prometheus would return +Inf,
+      # which charts as a gap. It means a quiet hour reports the whole hourly
+      # cost as the price of one conversation, which is both arithmetically
+      # honest and the correct product signal: infrastructure that runs for
+      # nobody costs exactly what it costs.
+
+      # ---------------------------------------------------------------------
+      # WHETHER STORED DATA REACHES A STEADY STATE
+      # ---------------------------------------------------------------------
+      # A design claim (D17, section 18.2) that has never been watched: rows are
+      # deleted on a deadline stamped at insert, so the database should level
+      # off rather than grow for ever. This is the number that would show it
+      # failing, and it goes negative while a backlog is being worked off.
+      - record: kbb:storage_growth_bytes_per_day
+        expr: deriv(sum(pg_database_size_bytes)[6h:30m]) * 86400
