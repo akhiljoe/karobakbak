@@ -54,7 +54,7 @@ does not need load, and a test that needs no load should run on every push.
 | **R — races** | **10** | 15 | `tests/integration/races.test.ts` |
 | **C — chaos** | **4** | 16 | swarm + `docker-compose.sentinel-app.yml` |
 | **D — data integrity** | **3** | 10 | `tests/integration/retention-integrity.test.ts` |
-| E — load shapes | `--ramp`/`--duration` only | 10 | swarm |
+| E — load shapes | **2** (E6 `--profile idle`, E1/E10 `--profile endurance`) | 10 | swarm |
 
 ### What is genuinely missing, in the order worth doing it
 
@@ -62,9 +62,12 @@ does not need load, and a test that needs no load should run on every push.
    memory pressure to eviction. Chaos is where every product bug in this
    repository has come from — F-031 and F-032 both came out of C1, and nothing
    else had ever made the spool engage under load.
-2. **The E group (load shapes).** E6 (80% idle / 20% active) and E10 (endurance)
-   are where capacity numbers should come from rather than from a flat ramp.
-   Everything currently claimed about capacity comes from one 5,000-bot run.
+2. **The E group (load shapes), 2 of 10.** E6 is done and produced the first
+   honest per-connection cost — an idle socket is ~9 KB and one file descriptor.
+   `--profile endurance` exists for E1 and E10 and **has not been run for long
+   enough to mean anything**: a leak is what an hour shows and a two-minute run
+   cannot. E2's steps and E3's stampede need arrival-shape machinery the swarm
+   does not have.
 3. **The remaining D rows (7 of 10).** D1-D4 and D6-D8. D3 (a message accepted
    in the instant before the database fails) and D8 (restart between ack and
    persistence) are the two that keep the durability promise honest.
