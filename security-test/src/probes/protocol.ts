@@ -114,12 +114,16 @@ export const clientCannotNameASubject: Probe = {
   async run(ctx): Promise<Result> {
     const session = await connect(ctx, syntheticAddress(203));
     // A well-formed join carrying fields the server must ignore.
+    // The real envelope shape — `{ type, version, payload }`. The first version
+    // of this probe used `{ v, type, id, data }`, which is refused as
+    // BAD_ENVELOPE before anything is read, so it passed without ever testing
+    // what it claimed to: a frame that is never parsed cannot echo a field.
     session.socket.send(
       JSON.stringify({
-        v: 1,
         type: 'join_queue',
+        version: 1,
         id: 'probe-1',
-        data: {
+        payload: {
           sessionId: 'sess_someone_else',
           partnerSessionId: 'sess_victim',
           matchId: 'm_forged',
