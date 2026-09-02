@@ -599,6 +599,51 @@ export interface Config {
     readonly sampleIntervalMs: number;
   };
 
+  /**
+   * What the infrastructure costs, so a dashboard can multiply it by what the
+   * infrastructure is doing (D62).
+   *
+   * ---------------------------------------------------------------------------
+   * ONE UNIT FOR THE WHOLE DECK: MICRO-CENTS OF US DOLLARS
+   * ---------------------------------------------------------------------------
+   * Not a preference. `chat_persona_cost_micro_cents_total` already exists and
+   * `MODEL_PRICES` is written with a `dollars()` helper, so persona spend is
+   * USD micro-cents whatever else happens. An infrastructure price expressed in
+   * any other currency would be summed with it by a recording rule, silently,
+   * producing a number that is neither — and the failure would be invisible,
+   * because a wrong total looks exactly like a right one.
+   *
+   * So these are read from the environment as decimal US dollars, which is how
+   * a hosting invoice is written, and converted here. Displaying the result in
+   * another currency is a job for the dashboard, applied once at the end, not
+   * for these inputs.
+   *
+   * ---------------------------------------------------------------------------
+   * EVERY PRICE DEFAULTS TO ZERO, AND ZERO MEANS UNPRICED
+   * ---------------------------------------------------------------------------
+   * A plausible default price is the same mistake as a plausible-looking detail
+   * in a policy document: it would be believed, it would be wrong, and nothing
+   * would say so. A laptop has no bill and a real deployment's rates are known
+   * only to its operator.
+   *
+   * `chat_cost_model_configured` is published beside these so a panel can say
+   * "no prices configured" rather than rendering a confident $0.00/hour — which
+   * is the same lie a fabricated default would have told, arrived at from the
+   * other direction.
+   */
+  readonly cost: {
+    /** Per vCPU-hour. */
+    readonly vcpuHourMicroCents: number;
+    /** Per GB of resident memory, per hour. */
+    readonly memoryGbHourMicroCents: number;
+    /** Per GB leaving the network. The line that scales with users. */
+    readonly egressGbMicroCents: number;
+    /** Per GB of persistent disk, per month. */
+    readonly diskGbMonthMicroCents: number;
+    /** True when any price above is non-zero. */
+    readonly configured: boolean;
+  };
+
   readonly backup: {
     /**
      * Shared secret the backup job presents when it reports in.
@@ -644,6 +689,43 @@ function str(env: Env, key: string, fallback: string): string {
   const value = env[key];
   if (value === undefined || value.trim() === '') return fallback;
   return value.trim();
+}
+
+/**
+ * The price model, read as decimal US dollars and stored as micro-cents.
+ *
+ * One micro-cent is 1e-8 dollars, which is the unit `MODEL_PRICES` already uses
+ * for persona spend — so every number on the cost deck is directly summable and
+ * no recording rule has to know a conversion. See `Config['cost']` for why that
+ * matters more than it looks like it should.
+ *
+ * The upper bound is deliberately generous rather than tight: nothing here is a
+ * safety limit, and a bound that refuses a legitimately expensive resource
+ * would turn a pricing decision into a startup failure.
+ */
+function costModel(env: Env): Config['cost'] {
+  const dollars = (key: string): number =>
+    Math.round(num(env, key, 0, 0, 1_000) * 100 * 1_000_000);
+
+  const vcpuHourMicroCents = dollars('COST_PER_VCPU_HOUR_USD');
+  const memoryGbHourMicroCents = dollars('COST_PER_GB_MEMORY_HOUR_USD');
+  const egressGbMicroCents = dollars('COST_PER_GB_EGRESS_USD');
+  const diskGbMonthMicroCents = dollars('COST_PER_GB_DISK_MONTH_USD');
+
+  return {
+    vcpuHourMicroCents,
+    memoryGbHourMicroCents,
+    egressGbMicroCents,
+    diskGbMonthMicroCents,
+    // Any one price is enough to make the deck meaningful. Requiring all four
+    // would report "unpriced" for an operator who has priced the only line
+    // that moves, which on this system is egress.
+    configured:
+      vcpuHourMicroCents > 0 ||
+      memoryGbHourMicroCents > 0 ||
+      egressGbMicroCents > 0 ||
+      diskGbMonthMicroCents > 0,
+  };
 }
 
 function int(env: Env, key: string, fallback: number, min: number, max: number): number {
@@ -1165,6 +1247,8 @@ export function loadConfig(env: Env = process.env): Config {
       targetSeconds: int(env, 'REPORT_RESPONSE_TARGET_SECONDS', 86_400, 60, 2_592_000),
       sampleIntervalMs: int(env, 'REPORT_QUEUE_SAMPLE_MS', 60_000, 5_000, 3_600_000),
     },
+
+    cost: costModel(env),
 
     backup: {
       reportToken: str(env, 'BACKUP_REPORT_TOKEN', ''),

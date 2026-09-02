@@ -8,6 +8,10 @@ global:
 
 rule_files:
   - /etc/prometheus/alerts.yml
+  # Unit economics. Evaluated once here rather than repeated in every panel,
+  # so the price model and the usage it multiplies cannot disagree between two
+  # dashboards.
+  - /etc/prometheus/cost.rules.yml
 
 # Where a firing rule goes.
 #
@@ -67,6 +71,25 @@ scrape_configs:
     # these — a second would double-dispatch against the same queue.
     static_configs:
       - targets: ["personas:8090"]
+
+  # ---------------------------------------------------------------------------
+  # THE COST DECK'S MULTIPLICANDS
+  # ---------------------------------------------------------------------------
+  # These three answer "what is the infrastructure doing"; the application
+  # publishes "what does it cost" as `chat_cost_unit_price_micro_cents`, and
+  # `cost.rules.yml` multiplies them. None is on a request path, so all three
+  # are allowed to be down without anything else being wrong.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
 
   - job_name: prometheus
     static_configs:

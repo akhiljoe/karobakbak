@@ -355,6 +355,29 @@ export class Bot {
       'X-Forwarded-For': this.spec.address,
       Origin: this.deps.origin,
     };
+
+    /*
+      The country this bot will be seen as being in (F-037).
+
+      `c043479` made country come from the connection rather than from what the
+      client sends: `server.ts` builds the join profile as
+      `{ ...command.profile, country: connection.country }`, so a declared
+      country is discarded and `clientCountry()` reads `CF-IPCountry` instead.
+      nginx forwards that header, and `TRUST_PROXY_HOPS` is above zero here, so
+      this is the only way a bot can be in a country at all.
+
+      Without it every bot that declared a country — 48% of them — was echoed a
+      null and the profile oracle read it as the server failing to echo a
+      declaration. That is what turned the swarm red on 2026-08-26 and kept it
+      red: the last green run predates that commit by two days.
+
+      Sending the header rather than dropping country out of the hash, because
+      dropping it would make a genuine country-crossing bug invisible — and
+      country is one of the two fields a moderator reads first.
+    */
+    if (this.declared.country !== null) {
+      headers['CF-IPCountry'] = this.declared.country;
+    }
     if (this.clientToken) {
       headers['Cookie'] = `${CLIENT_TOKEN_COOKIE}=${this.clientToken}`;
     }

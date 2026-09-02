@@ -539,6 +539,44 @@ export interface Metrics {
   readonly dbWriteLatency: Histogram<string>;
   readonly dbWriteFailures: Counter<'code'>;
 
+  /* ---------------------------------------------------------------------- */
+  /* cost (D62)                                                              */
+  /* ---------------------------------------------------------------------- */
+  /**
+   * Application payload bytes over the WebSockets, by direction.
+   *
+   * Measured in the application rather than at nginx on purpose: it is the
+   * line that scales with exactly the number everyone is trying to grow, it is
+   * free to count where the frames already are, and it does not depend on a log
+   * format that somebody may reasonably change.
+   *
+   * **A floor, not the bill.** This is the frame this process handed to `ws`,
+   * before WebSocket framing, TLS and TCP headers, and before compression.
+   * Egress is billed on the wire. Wrong in the useful direction, and said out
+   * loud here so nobody reads it as exact.
+   */
+  readonly wsBytes: Counter<'direction'>;
+  /**
+   * What each resource costs, in micro-cents of US dollars.
+   *
+   * Exported rather than written into a dashboard query, for the reason
+   * `spoolMaxRecords` gives about limits: a number copied into a rule file
+   * drifts the moment somebody changes one and not the other. As a gauge it is
+   * visible, versioned with the configuration, and multiplied by measured usage
+   * inside the same expression — so the currency figure on the dashboard cannot
+   * disagree with either the running system or the pricing decision.
+   */
+  readonly costUnitPrice: Gauge<'resource'>;
+  /**
+   * 1 when any price is configured, 0 when none is.
+   *
+   * Without it a dashboard cannot tell "this costs nothing" from "nobody has
+   * said what this costs", and it would render a confident $0.00/hour for the
+   * second — the same lie a fabricated default price would have told, reached
+   * from the other direction.
+   */
+  readonly costModelConfigured: Gauge<string>;
+
   /* backups */
   readonly backupLastSuccess: Gauge<string>;
   readonly backupFailures: Counter<string>;
@@ -816,6 +854,21 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     ),
     dbWriteFailures: counter('chat_db_write_failures_total', 'Failed retention writes, by SQL state', ['code']),
 
+    wsBytes: counter(
+      'chat_ws_bytes_total',
+      'WebSocket application payload bytes, excluding framing and TLS overhead',
+      ['direction'],
+    ),
+    costUnitPrice: gauge(
+      'chat_cost_unit_price_micro_cents',
+      'Configured price per unit of a resource, in micro-cents of US dollars',
+      ['resource'],
+    ),
+    costModelConfigured: gauge(
+      'chat_cost_model_configured',
+      '1 when at least one unit price is configured, 0 when the deck is unpriced',
+    ),
+
     backupLastSuccess: gauge('chat_backup_last_success_timestamp', 'Unix time of the last observed successful backup'),
     backupFailures: counter('chat_backup_failures_total', 'Backup failures reported'),
 
@@ -854,6 +907,7 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const outcome of AUTH_OUTCOMES) metrics.authCallbacks.labels(outcome).inc(0);
   for (const reason of RECONNECT_FAILURES) metrics.reconnectFailures.labels(reason).inc(0);
   for (const outcome of AVATAR_OUTCOMES) metrics.avatarRelay.labels(outcome).inc(0);
+  for (const direction of ['in', 'out']) metrics.wsBytes.labels(direction).inc(0);
 
   for (const reason of PERSONA_SKIP_REASONS) metrics.personaFillSuppressed.labels(reason).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaLimitTrips.labels(limit).inc(0);

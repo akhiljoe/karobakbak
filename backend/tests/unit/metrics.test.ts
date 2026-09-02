@@ -148,9 +148,23 @@ describe('nothing identifying reaches the scrape output (I8)', () => {
       // instance name.
       expect(value.length).toBeLessThan(64);
     }
-    // And the set of distinct values stays small: unbounded cardinality is the
-    // failure this guards against.
-    expect(new Set(values).size).toBeLessThan(120);
+    /*
+      And the set of distinct values stays small: unbounded cardinality is the
+      failure this guards against.
+
+      The number is a ceiling on *distinct label values across the whole
+      registry*, not a budget to be spent. It moves only when a phase adds
+      closed label sets deliberately, and moving it is the moment to check that
+      every new value is enumerated in `registry.ts` rather than derived from
+      anything a client sent. Phase 26 added the funnel steps, the intents, the
+      preference dimensions, the auth outcomes, the reconnect failures and the
+      avatar outcomes; phase 27 added the two byte directions and the four cost
+      resources. All are `as const` lists in that file.
+
+      If this ever fails because a value came from user input, the fix is the
+      metric, never this line.
+    */
+    expect(new Set(values).size).toBeLessThan(140);
   });
 
   it('never carries user content, even when a caller tries', async () => {

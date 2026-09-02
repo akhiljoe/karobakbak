@@ -120,6 +120,17 @@ services:
       # posture for a deployment that is not taking backups — but it also means
       # `BackupMonitor` can never leave `unknown`, so `configWarnings` says so
       # at startup.
+      # The price model (D62). Decimal US dollars, converted to micro-cents by
+      # `loadConfig` so the whole cost deck shares one unit with persona spend.
+      #
+      # Zero means **unpriced**, not free — a laptop has no bill, and a
+      # plausible default here would be believed and would be wrong.
+      # `chat_cost_model_configured` is published beside them so a panel can
+      # say so rather than rendering a confident $0.00/hour.
+      COST_PER_VCPU_HOUR_USD: "${COST_PER_VCPU_HOUR_USD:-0}"
+      COST_PER_GB_MEMORY_HOUR_USD: "${COST_PER_GB_MEMORY_HOUR_USD:-0}"
+      COST_PER_GB_EGRESS_USD: "${COST_PER_GB_EGRESS_USD:-0}"
+      COST_PER_GB_DISK_MONTH_USD: "${COST_PER_GB_DISK_MONTH_USD:-0}"
       BACKUP_REPORT_TOKEN: "${BACKUP_REPORT_TOKEN:-}"
       # An empty allowlist is a startup failure in production (R9). Every entry
       # must match scheme, host *and* port exactly — testing from a phone means
@@ -507,6 +518,69 @@ services:
       - alertdata:/alertmanager
     ports:
       - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # WHAT THE INFRASTRUCTURE IS DOING, SO THE COST DECK HAS A MULTIPLICAND
+  # ---------------------------------------------------------------------------
+  # Nine cost categories in the plan and exactly one of them was instrumented
+  # (persona LLM spend). These three cover four more: compute, memory, Redis and
+  # the database. Egress is counted in the application itself, because that is
+  # where the frames already are.
+  #
+  # All three are read-only observers of things that already exist. None of them
+  # is on any request path, so a failed exporter costs a graph and never a
+  # conversation.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    # Per-container CPU seconds, memory working set and network bytes — the
+    # measurements the compute and memory prices are multiplied by.
+    command:
+      # Only the metrics the cost rules read. cAdvisor's default set is very
+      # large, and most of it is per-filesystem and per-process detail that
+      # would triple this Prometheus's series count to answer nothing.
+      - "--docker_only=true"
+      - "--housekeeping_interval=15s"
+      - "--disable_metrics=percpu,sched,tcp,udp,advtcp,process,hugetlb,referenced_memory,cpu_topology,resctrl"
+    volumes:
+      # Read-only, and it still sees everything on the host — the same caveat
+      # the Alloy socket mount carries. A component to keep pinned and to read
+      # the flags of, not inert plumbing.
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    ports:
+      - "127.0.0.1:${CADVISOR_PORT:-8092}:8080"
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.69.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "127.0.0.1:${REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      # The application's own role, not a superuser. It can read
+      # `pg_database_size` and the statistics views, which is all the cost deck
+      # asks for, and giving a metrics sidecar more than that would widen the
+      # blast radius of a component nothing depends on.
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-karobakbak}:${POSTGRES_PASSWORD:-karobakbak}@postgres:5432/${POSTGRES_DB:-karobakbak}?sslmode=disable"
+    ports:
+      - "127.0.0.1:${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
