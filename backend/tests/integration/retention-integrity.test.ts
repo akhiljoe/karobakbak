@@ -285,3 +285,71 @@ describe('D9 — the deletion boundary is consistent', () => {
     expect(due).toHaveLength(0);
   });
 });
+
+describe('the stamp and the check use different clocks', () => {
+  /**
+   * `retention_expires_at` is computed from **this process's** clock
+   * (`expiryFrom(nowMs, days)`) and every deletion statement compares it against
+   * **the database's** `now()`. On one host those are the same clock. On a
+   * managed database (§16) they are two machines, and the difference moves every
+   * deadline by exactly that much.
+   *
+   * This asserts the coupling rather than complaining about it: a writer whose
+   * clock is an hour fast stamps deadlines an hour later, as measured by the
+   * database — which means conversations kept an hour longer than the privacy
+   * policy says, with nothing anywhere reporting it.
+   *
+   * The mitigation is measurement, not engineering: `chat_clock_skew_seconds`
+   * publishes this process's clock minus the database's, so an operator finds
+   * out before the deadlines do.
+   */
+  it('a writer whose clock is ahead stamps deadlines that are late by the same amount', async () => {
+    const onTime = ids();
+    const ahead = ids();
+    const HOUR_MS = 3_600_000;
+
+    await ctx.repositories.insertConversations(
+      ctx.db,
+      [conversation(onTime.conversationId), conversation(ahead.conversationId)],
+      Date.now(),
+    );
+    await ctx.repositories.insertMessages(
+      ctx.db,
+      [message(onTime.conversationId, onTime.messageId)],
+      Date.now(),
+    );
+    // The same call, from a process whose clock is an hour fast.
+    await ctx.repositories.insertMessages(
+      ctx.db,
+      [message(ahead.conversationId, ahead.messageId)],
+      Date.now() + HOUR_MS,
+    );
+
+    const normal = await daysUntilExpiry('messages', 'message_id', onTime.messageId);
+    const skewed = await daysUntilExpiry('messages', 'message_id', ahead.messageId);
+
+    // An hour, in days, and nothing bounded it.
+    expect(skewed - normal).toBeCloseTo(1 / 24, 3);
+  });
+
+  /**
+   * And the deletion side reads the database's clock, not the writer's — which
+   * is what makes the difference above matter rather than cancel out.
+   */
+  it('the deletion predicate compares against the database clock', async () => {
+    const { conversationId, messageId } = ids();
+    await write(ctx.repositories, conversationId, messageId);
+
+    // Stamped in the past by the database's own reckoning, so it is due
+    // whatever the writing process believed the time was.
+    await ctx.db.query(
+      `update messages set retention_expires_at = now() - interval '1 second' where message_id = $1`,
+      [messageId],
+    );
+    const due = await ctx.rows(
+      `select message_id from messages where message_id = $1 and retention_expires_at < now()`,
+      [messageId],
+    );
+    expect(due).toHaveLength(1);
+  });
+});

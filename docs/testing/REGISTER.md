@@ -86,9 +86,9 @@ The group with the worst ratio and the best track record.
 | C2 | SIGKILL one of two backends | **Done.** Survivor absorbed the population, no step in client lag |
 | C3 | Graceful shutdown | **Done**, though not by the swarm — `server_shutdown` is asserted in `operations.test.ts` and `server.test.ts`, the `holdSeat: false` drain in `lifecycle.test.ts`, and draining health in `operations.test.ts` |
 | C-Redis | Sentinel failover under load | **Done.** 0 backend restarts, ~11.2s unavailable, 346 message positions agreed |
-| C4 | Network partition between backends, Redis up | not started |
-| — | Clock skew on one instance | not started |
-| — | Redis memory pressure to eviction | not started |
+| C4 | Network partition between backends, Redis up | not started — and close to a no-op by design: backends never talk directly, all coordination is Redis Pub/Sub |
+| — | Clock skew on one instance | **Done.** The sharp case is app-clock stamps versus database-clock checks; measured as `chat_clock_skew_seconds` and alerted above 5 minutes |
+| — | Redis memory pressure to eviction | **Done, and it found F-044** — a total outage that passes every health check |
 | — | The other nine catalogued C rows | not started |
 
 ---
