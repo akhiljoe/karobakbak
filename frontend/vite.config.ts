@@ -27,6 +27,27 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    /*
+      ---------------------------------------------------------------------
+      NO SOURCE MAP IN THE BUILD THAT SHIPS
+      ---------------------------------------------------------------------
+      This was `true`, and nginx served the result: `/assets/index-*.js.map`
+      answered **HTTP 200 with 1,246,040 bytes** to anyone who asked. That is
+      the entire frontend source — component names, comments, the reasoning in
+      them — readable by any visitor who opens devtools, plus 1.2 MB of egress
+      every time somebody does and 1.2 MB of image nobody needs.
+
+      A source map earns its place when something consumes it: an error
+      reporter that symbolicates stack traces, or a developer with the same
+      build open. Neither exists here — there is no error-reporting service,
+      and a developer debugging this runs `npm run dev`, where Vite serves maps
+      from memory and this setting is not consulted.
+
+      So it buys nothing and costs the source. `'hidden'` was the other option
+      — emit the map but strip the `//# sourceMappingURL` comment — and it is
+      the wrong one for the same reason: the file would still sit in the image
+      and still answer a request from anyone who guessed the name.
+    */
+    sourcemap: false,
   },
 });
