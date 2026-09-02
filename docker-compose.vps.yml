@@ -1,0 +1,143 @@
+# A rig shaped like the VPS this will actually run on.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS
+# ---------------------------------------------------------------------------
+# Every capacity number in this project so far is either a measurement taken on
+# an 8 vCPU / 31 GB development machine, or arithmetic. Both have been wrong:
+# the arithmetic said "512 concurrent conversations" when the same slots buy
+# 256, and the 5,000-bot run everybody quotes was taken on hardware nobody is
+# going to pay for.
+#
+# So this overlay constrains the application path to the shape of a cheap VPS
+# and lets the swarm find the real number. It is a rig, never a deployment, and
+# holds the same status as `docker-compose.sentinel.yml`.
+#
+# ---------------------------------------------------------------------------
+# WHY THE CPU LIMIT IS `cpuset` AND NOT `cpus`
+# ---------------------------------------------------------------------------
+# A 1 vCPU VPS is not "each service gets a fraction of a core". It is one core
+# that every process on the box contends for, including the ones that are not
+# the bottleneck until suddenly they are: Postgres checkpointing while nginx is
+# accepting, the deletion worker waking mid-burst.
+#
+# `cpus: 0.25` per service models the first thing and not the second. It caps
+# each container independently, so four containers can still consume four cores
+# in the same instant. `cpuset` pins them all to the same physical core, so they
+# queue behind one another exactly as they would on the real machine. That
+# contention is the property being measured, and it is where the surprises live.
+#
+# For a 2 vCPU tier use "0,1"; for 4, "0-3".
+#
+# ---------------------------------------------------------------------------
+# WHAT IS DELIBERATELY ABSENT
+# ---------------------------------------------------------------------------
+# Loki, Tempo, Alloy, Grafana, cAdvisor and the exporters. Not because they do
+# not matter, but because it is already decided that production does not run
+# them, and if they ran here they would contend for the one core the whole
+# measurement is about. Prometheus stays: it records the answer, and it runs in
+# production too.
+#
+# They are switched off with `--scale <name>=0` in the `vps:up` script rather
+# than here, because a compose overlay can add a service and cannot remove one.
+# The first version of this file merely *said* they were absent and started
+# every one of them. The comment was the whole of the mechanism.
+#
+# Host ports are not overridden here either. Every one of them is already a
+# variable in the base compose, so `.env.vps` offsets them. Both stacks
+# otherwise publish the same ports and the second to start silently gets none,
+# which is the trap CLAUDE.md already records for the two Sentinel stacks.
+#
+# ---------------------------------------------------------------------------
+# USAGE
+# ---------------------------------------------------------------------------
+#   npm run vps:up       bring the constrained stack up on port 8091
+#   npm run vps:climb    ramp the swarm at it until something gives
+#   npm run vps:stats    per-container CPU and memory, live
+#   npm run vps:down     tear it down
+#
+# The tier lives in `.env.vps`. Change it there, not here.
+
+services:
+  frontend:
+    cpuset: "${VPS_CPUSET:-0}"
+    mem_limit: "${VPS_MEM_FRONTEND:-192m}"
+    environment:
+      NGINX_WORKER_CONNECTIONS: "${NGINX_WORKER_CONNECTIONS:-4096}"
+      NGINX_WORKER_RLIMIT_NOFILE: "${NGINX_WORKER_RLIMIT_NOFILE:-16384}"
+    # The ceiling nobody predicts, and the reason "just raise
+    # worker_connections" runs out well before 50,000.
+    #
+    # There is no `upstream` block in nginx.conf: `proxy_pass` targets a
+    # variable so Docker's DNS is re-resolved and a replaced replica is picked
+    # up. The cost of that choice is that there is no keepalive pool either, so
+    # every proxied WebSocket opens its own TCP connection to the single
+    # address `backend:8080`.
+    #
+    # A TCP connection is identified by (src addr, src port, dst addr, dst
+    # port). Three of those four are fixed here, so the number of simultaneous
+    # upstream connections is exactly the number of available source ports.
+    # Linux draws those from `ip_local_port_range`, which defaults to
+    # 32768-60999: 28,231 of them. Past that, connect() fails with
+    # EADDRNOTAVAIL and nginx returns 502 while `worker_connections` is still
+    # half empty and every dashboard reads healthy.
+    #
+    # Widening to 1024-65535 roughly doubles it. That is the real ceiling on a
+    # single-upstream edge, and it is about 64k connections, so about 32,000
+    # people rather than 50,000. Going beyond needs a second backend address or
+    # a unix socket, which is a design change and not a tunable.
+    sysctls:
+      net.ipv4.ip_local_port_range: "1024 65535"
+      # A socket in TIME_WAIT still holds its source port. Under a ramp that
+      # reconnects, they accumulate faster than the 60s default releases them
+      # and the range is exhausted by ghosts rather than by users.
+      net.ipv4.tcp_fin_timeout: "15"
+    ulimits:
+      nofile:
+        soft: ${VPS_NOFILE:-32768}
+        hard: ${VPS_NOFILE:-32768}
+
+  backend:
+    # One, because `docker-compose.prod.yml` runs one. The base compose runs two
+    # so cross-instance routing is exercised on a laptop, which is right there.
+    # But two Node processes contending for a single core is not a deployment
+    # anybody is paying for, and measuring it would answer a question about a
+    # shape that does not exist.
+    deploy:
+      replicas: 1
+    cpuset: "${VPS_CPUSET:-0}"
+    mem_limit: "${VPS_MEM_BACKEND:-640m}"
+    ulimits:
+      nofile:
+        soft: ${VPS_NOFILE:-32768}
+        hard: ${VPS_NOFILE:-32768}
+
+  redis:
+    cpuset: "${VPS_CPUSET:-0}"
+    mem_limit: "${VPS_MEM_REDIS:-256m}"
+    # The container limit and Redis's own limit are two different controls and
+    # both are needed. Without `maxmemory`, Redis does not know it is bounded:
+    # it accepts writes until the kernel's OOM killer takes the process, which
+    # loses every live session on the box at once. With it, Redis refuses the
+    # write and the application sees an error it already handles.
+    #
+    # `noeviction` is D12, not a performance choice. Matchmaking state is not a
+    # cache: evicting a session hash to make room silently unmatches two people
+    # who are mid-conversation. Refusing the write is the honest failure.
+    #
+    # Set below the container limit, because Redis's own accounting excludes
+    # fragmentation and the copy-on-write of a fork.
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory ${REDIS_MAXMEMORY:-192mb}
+      --maxmemory-policy noeviction
+
+  postgres:
+    cpuset: "${VPS_CPUSET:-0}"
+    mem_limit: "${VPS_MEM_POSTGRES:-384m}"
+
+  prometheus:
+    cpuset: "${VPS_CPUSET:-0}"
+    mem_limit: "${VPS_MEM_PROMETHEUS:-192m}"

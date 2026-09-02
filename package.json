@@ -55,6 +55,11 @@
     "payments:migrate:loadtest": "docker compose --env-file .env.loadtest -p karobakbak-loadtest exec -T postgres psql -U karobakbak -d karobakbak -v ON_ERROR_STOP=1 < backend/src/storage/migrations-pending/011_payments.sql",
     "unblock": "docker compose exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
     "tunnel": "cloudflared tunnel run --url http://localhost:3001 karobakbak-dev",
-    "where": "node scripts/where.mjs"
+    "where": "node scripts/where.mjs",
+    "vps:up": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml up --build -d --scale grafana=0 --scale loki=0 --scale tempo=0 --scale alloy=0 --scale cadvisor=0 --scale redis-exporter=0 --scale postgres-exporter=0",
+    "vps:down": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml down -v",
+    "vps:stats": "docker stats --no-stream --format \"table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\" karobakbak-vps-frontend-1 karobakbak-vps-backend-1 karobakbak-vps-redis-1 karobakbak-vps-postgres-1 karobakbak-vps-prometheus-1",
+    "vps:climb": "npm --prefix load-test/swarm run swarm -- --url ws://localhost:8091/ws --origin http://localhost:8091 --workers 6",
+    "vps:ps": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml ps"
   }
 }
