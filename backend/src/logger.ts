@@ -31,77 +31,9 @@
  * field would be worse than the leak it prevents.
  */
 import type { Config, LogLevel } from './config';
+import { FORBIDDEN_FIELDS, isForbiddenField } from './redaction';
 
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
-
-/**
- * Field names that must never carry a value into the log stream.
- *
- * Two categories:
- *   - user content shapes: how a chat message, a report note or a raw frame
- *     would most plausibly be named by someone adding a log line in a hurry;
- *   - personal data: client IPs, which are personal data on an anonymous
- *     service and are only ever handled as salted hashes (`ipHash` is allowed).
- *
- * `msg` is deliberately absent: it is the log line's own label and is always a
- * developer-authored constant.
- */
-const FORBIDDEN_FIELDS = new Set([
-  // chat / report content
-  'text',
-  'body',
-  'content',
-  'message',
-  'messages',
-  'note',
-  'notes',
-  'payload',
-  'frame',
-  'raw',
-  'rawFrame',
-  'input',
-  'value',
-  'excerpt',
-  'preview',
-  'snippet',
-  'sample',
-  'transcript',
-  'conversation',
-  // personal data (hashed forms such as ipHash / clientHash are allowed)
-  'ip',
-  'ipAddress',
-  'remoteAddress',
-  'remoteAddr',
-  'clientIp',
-  'userAgent',
-  // credentials (phase 13). Until the moderation console there was nothing in
-  // this process worth stealing from a log line — no password, no shared
-  // secret, no bearer value. There is now, and a leaked TOTP secret is worse
-  // than a leaked message: the message is one conversation, the secret is
-  // every future login. `clientToken` stays absent on purpose, because it is
-  // already only ever handled as `clientHash`.
-  'password',
-  'passwordHash',
-  'secret',
-  'totpSecret',
-  'otp',
-  'code',
-  'token',
-  'sessionToken',
-  'credential',
-  'authorization',
-  'cookie',
-  // The model provider's key (A4). Not user content, but a leaked one is
-  // somebody else's bill and the whole persona budget stops meaning anything —
-  // the same class of harm as `secret`, so it belongs on the same list rather
-  // than relying on nobody ever putting a config object in a log line.
-  'apiKey',
-  'api_key',
-  // The moderator's own words on an enforcement action. Not user content, but
-  // it is free text typed while reading a conversation, so the most natural
-  // thing to write in it is a quote from the conversation (I8).
-  'justification',
-]);
 
 /** Guards against pathological structures during recursive redaction. */
 const MAX_DEPTH = 6;
@@ -342,7 +274,13 @@ export function createNullLogger(): Logger {
   return createLogger({ level: 'error', sink: () => undefined });
 }
 
-/** Exposed for tests that assert the denylist covers a given field name. */
+/**
+ * Exposed for tests that assert the denylist covers a given field name.
+ *
+ * The list itself moved to `redaction.ts` so the tracing pipeline shares it
+ * (D52). This stays as the name `logger.test.ts` already imports — the point of
+ * the move was that the logger's behaviour and its tests are unchanged.
+ */
 export function isForbiddenLogField(name: string): boolean {
-  return FORBIDDEN_FIELDS.has(name);
+  return isForbiddenField(name);
 }

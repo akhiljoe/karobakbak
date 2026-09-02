@@ -110,6 +110,27 @@ async function main(): Promise<void> {
   const metrics = createMetrics(config);
   publishLimits(metrics, config);
 
+  /*
+    Tracing is started by `dist/tracing/preload.js`, not here (phase 29).
+
+    It has to be: `registerInstrumentations` patches a module by replacing its
+    exports, and by the time this function runs `pg` and `ioredis` have already
+    been imported at the top of this file. The first version started it here and
+    produced **no spans at all** while reporting no error — a tracing pipeline
+    that exports nothing is indistinguishable from a quiet system.
+
+    The preload reads `TRACING_ENABLED` from the raw environment before
+    requiring anything OpenTelemetry, so a process with tracing off still never
+    loads the SDK. This line records that it is running so an operator reading
+    the startup log knows which of the two states they are in.
+  */
+  if (config.tracing.enabled) {
+    logger.info('tracing is enabled', {
+      endpoint: config.tracing.endpoint,
+      serviceName: config.tracing.serviceName,
+    });
+  }
+
   // Sampled rather than pushed, so nothing in the write path carries a metrics
   // dependency. The interval is the scrape cache window: sampling faster would
   // publish numbers nobody reads.

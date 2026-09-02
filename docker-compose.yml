@@ -127,6 +127,14 @@ services:
       # plausible default here would be believed and would be wrong.
       # `chat_cost_model_configured` is published beside them so a panel can
       # say so rather than rendering a confident $0.00/hour.
+      # Tracing (phase 29). Off by default: this is the one component that adds
+      # code to the address space holding every WebSocket file descriptor, and
+      # it is the path §18.1 identifies as the likeliest way content leaves the
+      # trusted boundary. A deployment not looking at traces should not carry
+      # the risk of producing them.
+      TRACING_ENABLED: "${TRACING_ENABLED:-false}"
+      TRACING_ENDPOINT: "${TRACING_ENDPOINT:-http://tempo:4318}"
+      TRACING_SERVICE_NAME: "${TRACING_SERVICE_NAME:-karobakbak-backend}"
       COST_PER_VCPU_HOUR_USD: "${COST_PER_VCPU_HOUR_USD:-0}"
       COST_PER_GB_MEMORY_HOUR_USD: "${COST_PER_GB_MEMORY_HOUR_USD:-0}"
       COST_PER_GB_EGRESS_USD: "${COST_PER_GB_EGRESS_USD:-0}"
@@ -609,6 +617,31 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
+  # WHERE SPANS GO
+  # ---------------------------------------------------------------------------
+  # The third pillar, and the one that arrives with no safety controls of its
+  # own. `TRACING_ENABLED` is false by default, so this container is usually
+  # running with nothing to receive — which is correct: it costs almost nothing
+  # idle, and having it up means turning tracing on is one variable rather than
+  # a deploy.
+  #
+  # 48-hour retention, shorter than Loki's seven days. A trace answers "why was
+  # this slow", a question asked within hours. It is not evidence.
+  tempo:
+    image: grafana/tempo:2.8.1
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    user: "root"
+    volumes:
+      - ./monitoring/tempo:/etc/tempo:ro
+      - tempodata:/var/tempo
+    ports:
+      # 3200 is the query API Grafana reads; 4318 is OTLP/HTTP ingest. Both on
+      # loopback, like everything else here.
+      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
+      - "127.0.0.1:${TEMPO_OTLP_PORT:-4318}:4318"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # THE SHIPPER
   # ---------------------------------------------------------------------------
   # Reads container stdout through the Docker API rather than through a logging
@@ -655,12 +688,14 @@ services:
     depends_on:
       - prometheus
       - loki
+      - tempo
     restart: unless-stopped
 
 volumes:
   alertdata:
   alloydata:
   lokidata:
+  tempodata:
   backups:
   pgdata:
   promdata:
