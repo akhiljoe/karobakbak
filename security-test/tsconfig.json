@@ -1,0 +1,33 @@
+{
+  // Deliberately the backend's compiler settings, not a looser set — the same
+  // reasoning as the swarm's. These probes import the backend's protocol types
+  // directly from source, and compiling them under looser rules is how a
+  // harness ends up "passing" against a protocol the server does not implement.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "node16",
+    "moduleResolution": "node16",
+    "rootDir": "..",
+    "noEmit": true,
+    "sourceMap": false,
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": false,
+    "useUnknownInCatchVariables": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

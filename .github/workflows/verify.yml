@@ -78,6 +78,87 @@ jobs:
             exit 1
           fi
 
+  # ---------------------------------------------------------------------------
+  # SUPPLY CHAIN (phase 31)
+  # ---------------------------------------------------------------------------
+  # The cheapest of the four security axes and the only one that runs
+  # unprompted. It watches the two things nothing else in this repository looks
+  # at: what the dependency tree has become since it was last read, and whether
+  # a secret has been committed.
+  #
+  # Its own job rather than steps on `verify`, so a vulnerable transitive
+  # dependency does not stop somebody seeing whether their code compiles. They
+  # are different questions with different urgencies.
+  supply-chain:
+    name: dependencies and secrets
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan it. A secret that was committed and
+          # then removed is still a leaked secret — the fix is rotation, and the
+          # first step is knowing.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # `--omit=dev` on purpose. A vulnerability in a test runner is worth
+      # knowing about and is not worth failing a build over: it does not ship,
+      # it cannot be reached by a request, and treating it the same as something
+      # in the process holding every WebSocket file descriptor is how an audit
+      # gate gets disabled within a month.
+      #
+      # `high` rather than `moderate`, for the same reason. A gate that fires on
+      # things nobody is going to act on today stops being read.
+      - name: Audit production dependencies
+        run: |
+          set -o pipefail
+          for pkg in backend frontend; do
+            echo "::group::npm audit ($pkg)"
+            npm --prefix "$pkg" install --package-lock-only --omit=dev
+            npm --prefix "$pkg" audit --omit=dev --audit-level=high
+            echo "::endgroup::"
+          done
+
+      # Informational, and deliberately not a gate. Everything below `high`
+      # belongs in a weekly read rather than in the path of a commit.
+      - name: Report everything below the gate
+        if: always()
+        run: |
+          for pkg in backend frontend; do
+            echo "::group::full audit ($pkg)"
+            npm --prefix "$pkg" audit --omit=dev || true
+            echo "::endgroup::"
+          done
+
+      # The `.env` files are gitignored and `.env.example` is not, which is
+      # exactly the arrangement where a real value gets pasted into the wrong
+      # one. The Razorpay keys, the Cognito client secret, the backup
+      # passphrase, the model provider key and the Grafana admin password are
+      # all things this repository knows the shape of.
+      - name: Scan history for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A lockfile that changes without its manifest changing is either a
+      # deliberate `npm update` or somebody's editor. Both are fine; being
+      # unable to tell them apart is not, because the diff is thousands of lines
+      # and nobody reads it.
+      - name: Lockfiles agree with their manifests
+        run: |
+          for pkg in backend frontend; do
+            npm --prefix "$pkg" ci --ignore-scripts --omit=dev >/dev/null
+          done
+          if ! git diff --quiet -- backend/package-lock.json frontend/package-lock.json; then
+            echo "::error::a lockfile changed during a clean install — it is out of step with its package.json"
+            git diff --stat -- backend/package-lock.json frontend/package-lock.json
+            exit 1
+          fi
+
   integration:
     name: integration (redis + postgres)
     runs-on: ubuntu-latest
