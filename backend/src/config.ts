@@ -9,6 +9,8 @@
  *
  * Every variable is documented in .env.example and README.md.
  */
+import { availableParallelism } from 'node:os';
+
 import { RULE_IDS } from './moderation/rules';
 import { MODEL_PRICES, PROVIDER_MODELS, PROVIDER_NAMES } from './personas/provider';
 import type { ClientEventType } from './protocol/types';
@@ -896,6 +898,51 @@ function logLevel(env: Env): LogLevel {
  * has one unit and the Lua refill arithmetic never has to know which command it
  * is refilling. `.env.example` carries the human-readable equivalent.
  */
+/**
+ * How many sockets one instance will hold before it starts refusing new ones.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS DERIVED AND NOT A CONSTANT
+ * ---------------------------------------------------------------------------
+ * The old value was a flat 5000, which is not a ceiling anywhere: it is roughly
+ * four times what a 1 vCPU box can serve and comfortably below what eight cores
+ * could. A cap that is wrong in both directions is a cap that never binds
+ * before the machine is already collapsing, which is what was measured - see
+ * `docs/testing/RESULTS.md`, 2026-09-02.
+ *
+ * The constraint is CPU, and it scales with cores, so the box is asked how many
+ * it has. `MAX_CONNECTIONS` still wins when set, because a deployment may know
+ * something the arithmetic does not.
+ *
+ * `availableParallelism()` and NOT `os.cpus().length`. The second returns the
+ * *host* core count and ignores the cgroup this process is confined to: in a
+ * container pinned to one core it reported 8 against `availableParallelism()`'s
+ * 1. On an unconstrained development machine the two agree, so the wrong one
+ * looks correct everywhere except the VPS it matters on, where it would have
+ * authorised eight times the sockets the box can serve.
+ *
+ * WHERE 1400 COMES FROM, AND WHAT IT COSTS
+ *
+ * Measured on 1 vCPU with everything pinned to one core, 2,000 concurrent:
+ * the idle-weighted mix demanded 111.7% of that core, the conversation-heavy
+ * mix 144.7%. Scaled to a 80% target that is ~1,430 and ~1,105 respectively.
+ * 1400 sits at the gentle end of that range deliberately - a cap exists to
+ * prevent collapse, not to hold the service at its optimum, and refusing people
+ * at 1,100 because the population *might* be talkative is a worse failure than
+ * serving 1,400 of them slowly.
+ *
+ * The honest cost: with a conversation-heavy population, latency degrades
+ * before this binds. `chat_connections_active / chat_connections_limit` is
+ * charted so that is visible rather than inferred, and lowering
+ * `CONNECTIONS_PER_CORE` is the response if the graph says the population is
+ * talkative.
+ */
+function connectionCeiling(env: Env, cores: number): number {
+  const perCore = int(env, 'CONNECTIONS_PER_CORE', 1400, 1, 1_000_000);
+  const derived = perCore * Math.max(1, cores);
+  return int(env, 'MAX_CONNECTIONS', derived, 1, 1_000_000);
+}
+
 function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): RateLimit {
   return {
     perSecond: num(env, `${prefix}_RATE_PER_SEC`, perSecond, 0.0001, 10_000),
@@ -1025,7 +1072,13 @@ function path(env: Env, key: string, fallback: string): string {
  * Build a validated Config from an environment object.
  * Throws ConfigError on anything that would produce undefined behaviour later.
  */
-export function loadConfig(env: Env = process.env): Config {
+export function loadConfig(
+  env: Env = process.env,
+  // Injected rather than read inside, so this stays a pure function of its
+  // arguments (see CLAUDE.md) and a test can describe a box it is not running
+  // on. The default is the only place the host is consulted.
+  cores: number = availableParallelism(),
+): Config {
   const nodeEnv = str(env, 'NODE_ENV', 'development');
   const isProduction = nodeEnv === 'production';
 
@@ -1055,7 +1108,7 @@ export function loadConfig(env: Env = process.env): Config {
       maxReportNoteLength: int(env, 'MAX_REPORT_NOTE_LENGTH', 500, 1, 100_000),
       maxFrameBytes: int(env, 'MAX_FRAME_BYTES', 16_384, 1024, 10_485_760),
       rateLimitTtlSeconds: int(env, 'RATE_LIMIT_TTL_SECONDS', 3600, 5, 86_400),
-      maxConnections: int(env, 'MAX_CONNECTIONS', 5000, 1, 1_000_000),
+      maxConnections: connectionCeiling(env, cores),
       connRateLimit: int(env, 'CONN_RATE_LIMIT', 60, 1, 1_000_000),
       connRateWindowSeconds: int(env, 'CONN_RATE_WINDOW_SECONDS', 60, 1, 86_400),
       invalidMessageStrikes: int(env, 'INVALID_MESSAGE_STRIKES', 10, 1, 10_000),
