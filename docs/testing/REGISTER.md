@@ -19,9 +19,9 @@ Read `docs/testing/README.md` for how to run any of this,
 
 | Suite | Command | Needs | Runs in CI |
 |---|---|---|---|
-| Backend unit (43 files) | `npm test` | nothing | yes, every push |
+| Backend unit (44 files, 882 tests) | `npm test` | nothing | yes, every push |
 | Frontend unit (12 files) | `npm run test:frontend` | nothing | yes, every push |
-| Backend integration (33 files, 624 tests) | `npm run test:integration` | Redis + PostgreSQL | yes, own job |
+| Backend integration (33 files, 626 tests) | `npm run test:integration` | Redis + PostgreSQL | yes, own job |
 | Protocol drift + pending policy | `npm run verify` | nothing | yes |
 | Supply chain | — | — | yes, own job |
 | Load and chaos (the swarm) | `npm run swarm -- …` | the load stack | no |
@@ -44,12 +44,12 @@ does not need load, and a test that needs no load should run on every push.
 
 | Group | Covered | Catalogued | Where |
 |---|---|---|---|
-| N — conversation | 9 | 10 | swarm |
-| S — matchmaking | 5 | 11 | swarm |
+| N — conversation | **10** | 10 | swarm |
+| S — matchmaking | **7** | 11 | swarm; S9 is `--profile tiny` |
 | A — abuse | 14 | 14 | swarm |
 | M — moderation response | 10 | 10 | swarm |
 | G — declared profile | 4 | 4 | swarm |
-| L — lifecycle | 10 | 15 | swarm |
+| L — lifecycle | **12** | 15 | swarm; L5 and L11 in the unit and integration suites |
 | **P — protocol abuse** | **28** | 28 | `tests/integration/protocol-abuse.test.ts` |
 | **R — races** | **15** | 15 | `tests/integration/races.test.ts`; R8 by the swarm's pair-reconstruction oracle |
 | **C — chaos** | **4** | 16 | swarm + `docker-compose.sentinel-app.yml` |
@@ -75,8 +75,25 @@ already runs at scale.
    enough to mean anything**: a leak is what an hour shows and a two-minute run
    cannot. E2's steps and E3's stampede need arrival-shape machinery the swarm
    does not have.
-3. **S and L tails, and N9.** The least interesting of the lot, and the only
-   catalogued rows left outside the E and C groups.
+3. **The six rows that are shapes or need harness machinery.** Named
+   individually below rather than left as a count, because each is a different
+   kind of "not done".
+
+### The rows deliberately left, and why
+
+| ID | Row | Why it is not a test |
+|---|---|---|
+| S3 | Picky pair — fairness, nobody starved by `SRANDMEMBER` | Needs a long run with a stated per-bot match band. The property is real; asserting it at two-minute scale would measure the sampler's luck |
+| S8 | Unmatchable — blocked by every eligible partner | Needs a pre-blocked roster, which means a setup phase the harness does not have. The *cost* half — `blockedSkipped` rising while Redis calls per attempt do not — is the interesting part and is the harder half |
+| S10 | Queue surge | This is `--ramp`, which exists. Kept as a row rather than a persona because it is a shape |
+| S11 | Matchmaking churner | Behaviourally S1 run for longer. A separate persona would be a duplicate with a different name |
+| L7 | Thundering herd — 500 connections in 2s | A shape, and `--ramp 1` at scale is it. E3 is the same row from the other direction |
+| L8 | Reconnect storm | Needs an arrival shape the swarm cannot express; the closest thing is the `lifecycle` profile run large |
+| L12 | Dead socket — no FIN, no RST | Needs a socket that stops without closing, held past the session TTL. Minutes of wall clock per assertion; the TTL path itself is covered by the janitor tests |
+
+None of these is unreachable. Each needs either a run measured in tens of
+minutes or a piece of harness machinery, and saying so is more useful than a
+count that implies they are all the same size of task.
 
 ---
 

@@ -212,3 +212,63 @@ export const instantRejoiner: Persona = {
     requeue(bot, 100, 800);
   },
 };
+
+/**
+ * S6 — joins once and waits through several match cycles happening around it.
+ *
+ * The property is narrow and easy to break: a queue entry belonging to a live
+ * searcher must not be **collateral damage of somebody else's garbage
+ * collection**. `tryMatch` cleans stale entries out of every sample it draws,
+ * and a cleanup that was slightly too eager would remove people who are simply
+ * waiting — invisibly, because the symptom is somebody never being matched
+ * rather than an error.
+ *
+ * So this bot does the least interesting thing in the catalogue: it joins, and
+ * then does nothing at all until somebody matches it. Every other bot in the
+ * run churns past it.
+ */
+export const queueSurvivor: Persona = {
+  scenario: 'S6',
+  label: 'queue-survivor',
+
+  onConnected(bot) {
+    bot.joinQueue();
+  },
+
+  onMatched(bot) {
+    // Having finally been matched, it behaves and then goes back to waiting —
+    // which is the same test again, from a queue that is now busier.
+    bot.after(bot.rng.int(2_000, 6_000), () => {
+      bot.leaveChat();
+      bot.after(bot.rng.int(500, 2_000), () => bot.joinQueue());
+    });
+  },
+};
+
+/**
+ * N9 — the late joiner.
+ *
+ * Arrives when the population is already matched up and paired off, which is
+ * the worst moment to be looking: the queue is nearly empty, and the only
+ * candidates are people mid-skip. The question is fairness — an arrival that
+ * missed the rush must still be matched rather than starved behind a churning
+ * population that keeps re-pairing with itself.
+ *
+ * The delay is deliberately longer than the ramp, so this bot is genuinely
+ * late rather than merely last.
+ */
+export const lateJoiner: Persona = {
+  scenario: 'N9',
+  label: 'late-joiner',
+
+  onConnected(bot) {
+    bot.after(bot.rng.int(45_000, 90_000), () => bot.joinQueue());
+  },
+
+  onMatched(bot) {
+    bot.after(bot.rng.int(3_000, 9_000), () => {
+      bot.leaveChat();
+      bot.after(bot.rng.int(20_000, 40_000), () => bot.joinQueue());
+    });
+  },
+};

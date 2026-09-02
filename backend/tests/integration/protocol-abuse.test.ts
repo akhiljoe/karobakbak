@@ -25,6 +25,7 @@
  * rather than when somebody remembers to start a stack.
  */
 import { startTestServer, TestClient, payloadOf, type TestServer } from '../helpers/socket';
+import { CLIENT_TOKEN_COOKIE } from '../../src/ws/upgrade';
 import type { ErrorPayload, QueueStatusPayload } from '../../src/protocol/types';
 
 let server: TestServer;
@@ -421,5 +422,66 @@ describe('P25, P27, P28 — size and type discipline', () => {
     // empty string and delivered as one.
     expect(['VALIDATION_FAILED', 'EMPTY_MESSAGE']).toContain(code);
     c.close();
+  });
+});
+
+describe('L11 — several connections presenting one cookie', () => {
+  /**
+   * A shared browser, a copied token, or somebody with two tabs open.
+   *
+   * The client token is **half of a block identity** (D18) and is deliberately
+   * not a session key. So two connections presenting the same one must each get
+   * their own session: sharing a session would mean two people driving one
+   * conversation, and deriving a session from the token would make a block
+   * token into a session hijacking primitive.
+   *
+   * This is L11 in the catalogue, and it is here rather than in the swarm
+   * because every accounting assumption in that harness is "one bot, one
+   * socket" — the same structural reason L15's concurrency half is not there.
+   */
+  it('gives each connection its own session, and never shares one', async () => {
+    const cookie = `${CLIENT_TOKEN_COOKIE}=${'a'.repeat(32)}`;
+    const headers = { Cookie: cookie, 'X-Forwarded-For': '198.18.77.1' };
+
+    const first = await TestClient.connect(server.url, { headers });
+    const second = await TestClient.connect(server.url, { headers });
+
+    const a = payloadOf<{ sessionId: string }>(await first.waitForFrame('connected'));
+    const b = payloadOf<{ sessionId: string }>(await second.waitForFrame('connected'));
+
+    expect(a.sessionId).toBeTruthy();
+    expect(b.sessionId).toBeTruthy();
+    // The whole row: one token, two sessions.
+    expect(a.sessionId).not.toBe(b.sessionId);
+
+    first.close();
+    second.close();
+  });
+
+  /**
+   * And they are genuinely independent: one searching does not put the other
+   * in a queue, because the queue keys on the session and not on the token.
+   */
+  it('keeps the two sessions independent when one of them searches', async () => {
+    const cookie = `${CLIENT_TOKEN_COOKIE}=${'b'.repeat(32)}`;
+    const headers = { Cookie: cookie, 'X-Forwarded-For': '198.18.77.2' };
+
+    const first = await TestClient.connect(server.url, { headers });
+    const second = await TestClient.connect(server.url, { headers });
+    await first.waitForFrame('connected');
+    await second.waitForFrame('connected');
+
+    first.command('join_queue', {});
+    const status = await first.next('queue_status');
+    expect(payloadOf<QueueStatusPayload>(status).state).toBe('SEARCHING');
+
+    // The second connection was not dragged into a search it never asked for.
+    // A message from it reports NOT_MATCHED, which is the idle answer — if the
+    // token were the session key it would be sharing the first one's state.
+    second.command('message', { text: 'am I in a chat?' }, 'l11');
+    expect(await errorCode(second)).toBe('NOT_MATCHED');
+
+    first.close();
+    second.close();
   });
 });
