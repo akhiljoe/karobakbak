@@ -509,6 +509,62 @@ services:
       - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # WHERE LOG LINES GO SO THEY OUTLIVE THE CONTAINER THAT WROTE THEM
+  # ---------------------------------------------------------------------------
+  # Until this existed, `docker logs` was the whole of it: a 5,000-bot run
+  # across two replicas could be watched on a dashboard and the question "what
+  # did the server actually say when that happened" had no answer once the
+  # container was replaced.
+  #
+  # Not in the `ops` profile, unlike `backup` and `alertmanager`. Those need an
+  # operator-provided secret and have nothing to do on a laptop. This is the
+  # opposite: a laptop is exactly where somebody is trying to work out why
+  # something behaved oddly, so it comes up with everything else.
+  loki:
+    image: grafana/loki:3.5.1
+    command: ["-config.file=/etc/loki/loki.yml"]
+    user: "root"
+    volumes:
+      - ./monitoring/loki:/etc/loki:ro
+      - lokidata:/loki
+    ports:
+      # Published so a test can query it directly, and bound to loopback like
+      # every other component here. Nothing in the application talks to it.
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # THE SHIPPER
+  # ---------------------------------------------------------------------------
+  # Reads container stdout through the Docker API rather than through a logging
+  # driver, and the distinction matters on a laptop: the Loki logging driver is
+  # a host plugin that sits in the container's start path, so a Loki that is
+  # down or slow becomes containers that will not start. This reads from the
+  # side and its failure mode is missing logs, which is the right one.
+  #
+  # `user: root` and the socket mount are what reading that API costs. The
+  # socket is mounted read-only, which is not a real boundary — Docker's API is
+  # root on the host either way — so this is a component to keep pinned and to
+  # read the configuration of, not one to treat as inert plumbing.
+  alloy:
+    image: grafana/alloy:v1.10.0
+    command:
+      - "run"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
+    user: "root"
+    volumes:
+      - ./monitoring/alloy:/etc/alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloydata:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
+    depends_on:
+      - loki
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.4.0
     environment:
@@ -524,10 +580,13 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
+      - loki
     restart: unless-stopped
 
 volumes:
   alertdata:
+  alloydata:
+  lokidata:
   backups:
   pgdata:
   promdata:

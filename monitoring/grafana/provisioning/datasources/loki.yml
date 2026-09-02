@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    # Pinned for the same reason the Prometheus uid is: a provisioned dashboard
+    # that names a datasource by uid resolves the same way on every machine,
+    # and one that does not resolves to whatever Grafana considers default —
+    # which here would be Prometheus, and every log panel would render empty
+    # with no error worth reading.
+    uid: karobakbak-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false

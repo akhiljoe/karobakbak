@@ -1,0 +1,165 @@
+// Grafana Alloy — the log shipper.
+//
+// Reads every compose container's stdout through the Docker API and writes it
+// to Loki. Alloy rather than Promtail because Promtail is end-of-life; this is
+// its supported successor and the configuration below is the whole of it.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS COMPONENT IS TRUSTED WITH, AND WHAT IT IS NOT
+// ---------------------------------------------------------------------------
+// A log shipper ships whatever is on stdout. That makes it the last place a
+// leak can be stopped and the worst place to rely on stopping one — it sees
+// bytes, with no idea which field they came from.
+//
+// So the controls live upstream, where the meaning is known:
+//
+//   * `backend/src/logger.ts` denies a recursive list of field names and
+//     *throws* outside production. That is invariant I8's primary control and
+//     it is unchanged by this file.
+//   * `frontend/nginx.conf` emits a fixed JSON schema with no client-address
+//     variable in it and `$uri` in place of `$request`, so neither an IP nor a
+//     query string can reach this component from the edge (F-036).
+//
+// What is here is one narrow scrub and, deliberately, no more. See the note on
+// the replace stage for why there is no blanket address redaction: a redactor
+// hides a leak, and what this pipeline needs is for a leak to be *found*.
+// `tests/logs/no-secrets-in-loki.test.ts` is the detector.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ---------------------------------------------------------------------------
+// DISCOVERY
+// ---------------------------------------------------------------------------
+// Every container carrying a compose project label, which is exactly this
+// stack and nothing else the developer happens to be running. Without the
+// filter, Alloy on a laptop ships whatever else Docker is hosting into a store
+// this project pays to keep.
+discovery.docker "compose" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project"]
+  }
+}
+
+// The compose service name is the label worth querying by — `backend` covers
+// both replicas, which is what you want when asking "what did the server say",
+// while `container` keeps the two separable when the answer depends on which
+// instance. Both are bounded by the compose file, so neither can explode the
+// stream count.
+discovery.relabel "compose" {
+  targets = discovery.docker.compose.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Docker reports container names with a leading slash.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "compose" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.compose.output
+  forward_to       = [loki.process.shape.receiver]
+  refresh_interval = "5s"
+}
+
+loki.process "shape" {
+  // -------------------------------------------------------------------------
+  // THE ONE SCRUB
+  // -------------------------------------------------------------------------
+  // Credential-shaped query parameters, on every stream. nginx no longer emits
+  // a query string at all, so this catches the case that file cannot: anything
+  // *else* that ever prints a URL — a client library logging a request it
+  // made, a stack trace carrying a redirect URI, a future service added to
+  // this compose file by somebody who has not read F-036.
+  //
+  // Narrow on purpose. It matches a parameter name followed by its value and
+  // replaces only the value, so it cannot corrupt a log line into
+  // unparseability, and it has no plausible false positive — none of these
+  // names carries anything worth reading.
+  //
+  // There is deliberately NO blanket IP-address redaction here. Two reasons.
+  // Go's RE2 has no lookahead, so "a dotted quad that is not RFC1918" cannot
+  // be written as one expression, and the version that can be written would
+  // also erase `upstream` — the field that says which backend replica answered,
+  // which is the single most useful thing the access log carries. More
+  // importantly: a redaction here would mean an address that reached this
+  // component was quietly cleaned up rather than reported, and the control that
+  // failed upstream would never be known to have failed.
+  //
+  // TWO THINGS ABOUT THIS STAGE THAT ARE NOT IN THE DOCUMENTATION, BOTH FOUND
+  // BY RUNNING IT:
+  //
+  //  1. `stage.replace` replaces the **captured group**, not the whole match.
+  //     The first version of this captured the parameter name (`?code=`) and
+  //     replaced that, which left the value untouched and emitted the literal
+  //     text `${1}REDACTEDLEAKEDCODE9` — a line that looks redacted at a glance
+  //     and still carries the secret. So the group here is the *value*, and the
+  //     replacement is the bare word.
+  //  2. The delimiter class has to include whitespace and quotes, not just
+  //     `?` and `&`. A credential in a log line is usually not in a URL — it is
+  //     `access_token=... ` in a message or a stack frame, and a query-string-only
+  //     expression walks straight past it.
+  //
+  // The limit is documented rather than widened: this matches the `name=value`
+  // shape and **not** the JSON shape `"code":"value"`. Widening it to JSON would
+  // redact the backend's own error codes, which are named `code` throughout and
+  // are the most useful field in an error line. A leak in that shape is caught
+  // by the detector test, not here.
+  stage.replace {
+    expression = "(?i)[?&\\s\"'](?:code|state|id_token|access_token|refresh_token|token|secret|signature|password|passwd|api_key|apikey)=([^&\"'\\s]+)"
+    replace    = "REDACTED"
+  }
+
+  // -------------------------------------------------------------------------
+  // STRUCTURE, WHERE THERE IS ANY
+  // -------------------------------------------------------------------------
+  // The backend, the persona process and nginx all emit one JSON object per
+  // line. PostgreSQL and Redis do not, and running a JSON stage over their
+  // output would fail on every line and fill Alloy's own log with the failure.
+  //
+  // `level` is promoted to a label because it is a closed set of four values
+  // and it is how every query starts. `msg` is NOT promoted and must never be:
+  // it is unbounded, it would create a stream per distinct message, and on this
+  // system a free-text field is the shape a content leak takes.
+  stage.match {
+    selector = "{service=~\"backend|personas|frontend|migrate\"}"
+
+    stage.json {
+      expressions = {
+        level = "level",
+      }
+    }
+
+    stage.labels {
+      values = {
+        level = "",
+      }
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
