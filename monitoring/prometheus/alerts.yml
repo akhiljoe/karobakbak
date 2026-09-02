@@ -437,3 +437,49 @@ groups:
             Check chat_retention_backlog. A deletion worker that has fallen behind
             still deletes steadily, so throughput looks healthy while the backlog
             grows — the backlog is the instrument, not the delete rate.
+
+  # ---------------------------------------------------------------------------
+  # THE FAILURE THAT REPORTS ITSELF HEALTHY (F-044)
+  # ---------------------------------------------------------------------------
+  # When Redis refuses writes — `maxmemory` reached under `noeviction` — this
+  # service is completely non-functional and says it is fine. `/ready` is
+  # derived from Redis *reachability*, and a PING succeeds under OOM because
+  # only writes are refused. So every instance stays in the load balancer while
+  # nobody can be matched at all.
+  #
+  # Measured: 60 bots connected, zero conversations, `/ready` reporting
+  # `{"status":"ready","redis":"ready"}` throughout.
+  #
+  # `chat_connections_rejected_total{reason="error"}` is the one series that
+  # moves. Nothing watched it.
+  - name: karobakbak-redis-writes
+    rules:
+      - alert: SessionsFailingToOpen
+        expr: sum(rate(chat_connections_rejected_total{reason="error"}[5m])) > 0.2
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Sessions are failing to open — Redis is probably refusing writes"
+          description: >-
+            /ready will still say ready: it is derived from Redis reachability and a
+            PING succeeds when only writes are refused. Check `redis-cli info memory`
+            against maxmemory, and `redis-cli set canary 1` for the OOM reply.
+
+      # The precondition, watched directly. `noeviction` with no `maxmemory` is
+      # inert: nothing is refused and nothing is evicted, so Redis grows until
+      # the host OOM-killer takes it — and with persistence off (D12) that loses
+      # every live session, match and block at once.
+      - alert: RedisApproachingMaxMemory
+        expr: >-
+          redis_memory_max_bytes > 0
+          and redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Redis is within 20% of maxmemory, and the policy is noeviction"
+          description: >-
+            Reaching it refuses every write, which stops matchmaking entirely while
+            every health check continues to pass. Measured at roughly 2.6 KB of Redis
+            per live session.

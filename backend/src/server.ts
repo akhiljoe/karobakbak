@@ -782,9 +782,21 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
     } catch (err) {
       await releaseSubscription();
       metrics.connectionsRejected.labels('error').inc();
-      logger.error('failed to open a session', {
-        errName: err instanceof Error ? err.name : 'unknown',
-      });
+      /*
+        `errorFields` rather than the error's name alone (F-044).
+
+        This used to log `errName` and nothing else, and the one time it matters
+        most that is exactly the wrong half. When Redis refuses writes — reached
+        `maxmemory` under `noeviction` — every session open fails with a
+        `ReplyError` whose *message* is `OOM command not allowed when used memory
+        > 'maxmemory'`. The name says `ReplyError`, which is true of every reply
+        error Redis has ever sent and tells an operator nothing.
+
+        `errorFields` is the safe way to include it: it truncates and runs the
+        denylist over both the message and the stack, which is the whole reason
+        that helper exists rather than interpolating an error into a log line.
+      */
+      logger.error('failed to open a session', errorFields(err));
       refuse(socket, 503, 'unavailable');
       return;
     }
