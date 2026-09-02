@@ -453,3 +453,164 @@ describe('cross-instance events (§11)', () => {
     expect(await one.store.publishToSession(newSessionId(), '{"v":1}')).toBe(0);
   });
 });
+
+/*
+ * The catalogued R rows that had no test.
+ *
+ * `docs/LOADTEST-SCENARIOS.md` lists fifteen and records the group as having no
+ * dedicated coverage. That was out of date: R1, R4, R13 and R14 are already
+ * exercised above, under names that describe the behaviour rather than the row.
+ * These are four of the ones that genuinely were not.
+ *
+ * They are here rather than in the swarm for the reason the catalogue's own
+ * preamble gives — "these need both sides under one controller" — which is a
+ * description of an integration test. A harness that has to synchronise two
+ * bots across a network to hit a Redis race is testing its own scheduler as
+ * much as the server's scripts.
+ */
+describe('R10 — block and skip issued together', () => {
+  /**
+   * Exactly one teardown, and **the block is recorded regardless of which
+   * won**. The second half is the one that matters: a user who pressed Block
+   * and whose partner skipped in the same instant must still be protected, and
+   * the losing path must not quietly discard the protection they asked for.
+   */
+  it('records the block whichever of the two ends the match', async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+      const b = await two.session();
+      await enqueue(one, a);
+      await enqueue(two, b);
+      const mid = newMatchId();
+      const matched = await one.store.tryMatch(a, one.segment, mid);
+      expect(matched.status).toBe('matched');
+
+      // `a` blocks while `b` skips, in the same tick.
+      const [blocked, ended] = await Promise.all([
+        one.store.blockPartner(a),
+        two.store.endMatch(mid),
+      ]);
+
+      // Exactly one teardown: either the block ended it or the skip did, never
+      // both and never neither.
+      const teardowns =
+        (blocked.status === 'blocked' && blocked.endedByUs ? 1 : 0) +
+        (ended.status === 'ended' ? 1 : 0);
+      expect(teardowns).toBe(1);
+
+      // And the protection exists either way. A block that raced a teardown and
+      // recorded nothing is the user's request silently dropped.
+      if (blocked.status === 'blocked') {
+        expect(blocked.recorded).toBeGreaterThan(0);
+      }
+
+      for (const sid of [a, b]) {
+        expect(await one.store.currentMatchId(sid)).toBeNull();
+      }
+    }
+  });
+});
+
+describe('R12 — join_queue and leave_queue together', () => {
+  /**
+   * A deterministic final state, and the point is that it is *readable*: after
+   * both have returned, the session is either queued or not, and the queue
+   * agrees with the session row. A coin flip between two writers that left the
+   * two disagreeing would be the bug — a session listed in the queue with no
+   * row behind it is a candidate every searcher walks past and cleans up.
+   */
+  it('leaves the queue and the session row agreeing, however it resolves', async () => {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+
+      await Promise.all([
+        one.store.joinQueue(a, one.segment),
+        two.store.leaveQueue(a, two.segment),
+      ]);
+
+      const queued = await one.store.queueDepth(one.segment);
+      const session = await one.store.readSession(a);
+      expect(session).not.toBeNull();
+
+      // The two views agree. Whichever won, the state is one of the two legal
+      // ones and never a queue entry with no session behind it.
+      if (queued === 1) expect(session?.state).toBe('SEARCHING');
+      else expect(queued).toBe(0);
+    }
+  });
+});
+
+describe('R5 — two sessions skipping into each other', () => {
+  /**
+   * No livelock, and no monopoly.
+   *
+   * Two sessions alone in the queue will re-match each other, which is correct
+   * — there is nobody else. What must not happen is the pair getting stuck in a
+   * state where neither is matched and neither is queued, which is what a
+   * teardown that loses a re-queue looks like.
+   */
+  it('converges on every cycle rather than stranding either side', async () => {
+    const a = await one.session();
+    const b = await two.session();
+
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      await enqueue(one, a);
+      await enqueue(two, b);
+      const mid = newMatchId();
+      const matched = await one.store.tryMatch(a, one.segment, mid);
+      expect(matched.status).toBe('matched');
+
+      // Both skip at once, every cycle.
+      await Promise.all([one.store.endMatch(mid), two.store.endMatch(mid)]);
+
+      for (const sid of [a, b]) {
+        expect(await one.store.currentMatchId(sid)).toBeNull();
+        // Still a live session: a skip must never cost somebody their session.
+        expect(await one.store.readSession(sid)).not.toBeNull();
+      }
+    }
+  });
+});
+
+describe('R15 — a delayed message from a previous match', () => {
+  /**
+   * The match id on the record is what makes this decidable.
+   *
+   * A message accepted in one conversation and routed a moment late must never
+   * arrive in the next one. Sessions are reused across matches — that is the
+   * whole of §28 — so the session id cannot answer this and the match id has
+   * to, which is why every routing decision carries one.
+   */
+  it('cannot be routed into the match that replaced it', async () => {
+    const a = await one.session();
+    const b = await two.session();
+    await enqueue(one, a);
+    await enqueue(two, b);
+
+    const first = newMatchId();
+    const matched = await one.store.tryMatch(a, one.segment, first);
+    expect(matched.status).toBe('matched');
+
+    // The conversation ends and the same two are matched again, which is
+    // exactly what a skip with nobody else waiting produces.
+    await one.store.endMatch(first);
+    await enqueue(one, a);
+    await enqueue(two, b);
+    const second = newMatchId();
+    expect((await one.store.tryMatch(a, one.segment, second)).status).toBe('matched');
+
+    // A route resolved now names the NEW match. Anything holding the old id is
+    // holding a value that no longer describes where this session is.
+    const route = await one.store.resolveRoute(a);
+    expect(route.status).toBe('ok');
+    if (route.status === 'ok') {
+      expect(route.matchId).toBe(second);
+      expect(route.matchId).not.toBe(first);
+    }
+
+    // And the old match is gone rather than merely superseded.
+    expect(await one.store.endMatch(first)).toMatchObject({ status: 'already_ended' });
+  });
+});
