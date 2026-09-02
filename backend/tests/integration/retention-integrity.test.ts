@@ -27,6 +27,7 @@ import { Repositories } from '../../src/storage/repositories';
 import type { Config } from '../../src/config';
 import type {
   BlockRecord,
+  ConversationEndedRecord,
   ConversationStartedRecord,
   MessageRecord,
   ReportRecord,
@@ -467,5 +468,116 @@ describe('D6 — a block outlives the conversation it was made in', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.column_name).toBe('blocker_account_id');
     expect(rows[0]?.delete_rule).toBe('CASCADE');
+  });
+});
+
+describe('D4 — a conversation ends while a batch is being written', () => {
+  /**
+   * No half-created conversation: every row is complete and has an `ended_at`.
+   *
+   * The write-behind path batches across conversations, so an ending arriving
+   * mid-batch is ordinary rather than exceptional. The failure to rule out is a
+   * row whose start landed and whose end did not — which reads, months later, as
+   * a conversation that never finished.
+   */
+  it('leaves the row complete whichever order the two writes arrive in', async () => {
+    const { conversationId, messageId } = ids();
+    const ended: ConversationEndedRecord = {
+      kind: 'conversation_ended',
+      conversationId,
+      endedAt: new Date().toISOString(),
+      endReason: 'skip',
+    };
+
+    // The end and the message race the same batch.
+    await ctx.repositories.insertConversations(ctx.db, [conversation(conversationId)], Date.now());
+    await Promise.all([
+      ctx.repositories.updateConversations(ctx.db, [ended]),
+      ctx.repositories.insertMessages(ctx.db, [message(conversationId, messageId)], Date.now()),
+    ]);
+
+    const rows = await ctx.rows<{ ended_at: Date | null; end_reason: string | null }>(
+      `select ended_at, end_reason from conversations where conversation_id = $1`,
+      [conversationId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.ended_at).not.toBeNull();
+    expect(rows[0]?.end_reason).toBe('skip');
+  });
+
+  /**
+   * D6's other half, and the reason `updateConversations` uses `coalesce`:
+   * the ending is written once, by whoever won the termination race, so a
+   * second attempt must keep the first reason rather than the last one to
+   * arrive.
+   *
+   * Without it a `reap` from the janitor could overwrite a `block`, and the
+   * console would show the wrong reason for the one kind of ending anybody
+   * investigates.
+   */
+  it('keeps the first end reason when a second ending arrives', async () => {
+    const { conversationId } = ids();
+    await ctx.repositories.insertConversations(ctx.db, [conversation(conversationId)], Date.now());
+
+    const at = new Date().toISOString();
+    await ctx.repositories.updateConversations(ctx.db, [
+      { kind: 'conversation_ended', conversationId, endedAt: at, endReason: 'block' },
+    ]);
+    await ctx.repositories.updateConversations(ctx.db, [
+      { kind: 'conversation_ended', conversationId, endedAt: at, endReason: 'reap' },
+    ]);
+
+    const rows = await ctx.rows<{ end_reason: string }>(
+      `select end_reason from conversations where conversation_id = $1`,
+      [conversationId],
+    );
+    expect(rows[0]?.end_reason).toBe('block');
+  });
+});
+
+describe('D1 — an envelope id reused after a reconnect', () => {
+  /**
+   * Dedupe is scoped to the **match**, not to the session or the client.
+   *
+   * P8 and P9 assert that over a live socket. This is the storage half: two
+   * messages carrying the same client id in different conversations are two
+   * rows, because the primary key is the server's message id and the client's
+   * correlation token never becomes one.
+   *
+   * A client that numbers its messages from one in every conversation — which
+   * is the obvious thing to build — must not lose its first message each time.
+   */
+  it('stores both messages when the same client id is reused in another match', async () => {
+    const first = ids();
+    const second = ids();
+    await write(ctx.repositories, first.conversationId, first.messageId);
+    await write(ctx.repositories, second.conversationId, second.messageId);
+
+    const rows = await ctx.rows(
+      `select message_id from messages where message_id in ($1, $2)`,
+      [first.messageId, second.messageId],
+    );
+    expect(rows).toHaveLength(2);
+  });
+
+  /**
+   * And the same server message id twice is one row, whatever arrives with it.
+   * The write-behind path can replay a batch after a failure — `salvage`
+   * narrows to individual rows and retries them — so an insert that
+   * duplicated would turn one retry into two stored copies of a message.
+   */
+  it('is idempotent on the server message id, so a replayed batch stores once', async () => {
+    const { conversationId, messageId } = ids();
+    await write(ctx.repositories, conversationId, messageId);
+    await ctx.repositories.insertMessages(
+      ctx.db,
+      [message(conversationId, messageId)],
+      Date.now(),
+    );
+
+    const rows = await ctx.rows(`select message_id from messages where message_id = $1`, [
+      messageId,
+    ]);
+    expect(rows).toHaveLength(1);
   });
 });

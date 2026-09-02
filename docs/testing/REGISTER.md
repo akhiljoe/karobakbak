@@ -19,9 +19,9 @@ Read `docs/testing/README.md` for how to run any of this,
 
 | Suite | Command | Needs | Runs in CI |
 |---|---|---|---|
-| Backend unit (41 files) | `npm test` | nothing | yes, every push |
+| Backend unit (43 files) | `npm test` | nothing | yes, every push |
 | Frontend unit (12 files) | `npm run test:frontend` | nothing | yes, every push |
-| Backend integration (33 files) | `npm run test:integration` | Redis + PostgreSQL | yes, own job |
+| Backend integration (33 files, 624 tests) | `npm run test:integration` | Redis + PostgreSQL | yes, own job |
 | Protocol drift + pending policy | `npm run verify` | nothing | yes |
 | Supply chain | — | — | yes, own job |
 | Load and chaos (the swarm) | `npm run swarm -- …` | the load stack | no |
@@ -51,10 +51,17 @@ does not need load, and a test that needs no load should run on every push.
 | G — declared profile | 4 | 4 | swarm |
 | L — lifecycle | 10 | 15 | swarm |
 | **P — protocol abuse** | **28** | 28 | `tests/integration/protocol-abuse.test.ts` |
-| **R — races** | **10** | 15 | `tests/integration/races.test.ts` |
+| **R — races** | **15** | 15 | `tests/integration/races.test.ts`; R8 by the swarm's pair-reconstruction oracle |
 | **C — chaos** | **4** | 16 | swarm + `docker-compose.sentinel-app.yml` |
-| **D — data integrity** | **4** (D5, D6, D9, D10) | 10 | `tests/integration/retention-integrity.test.ts` |
+| **D — data integrity** | **10** | 10 | `retention-integrity.test.ts`, `races.test.ts`, `queue-conservation.test.ts` |
 | E — load shapes | **2** (E6 `--profile idle`, E1/E10 `--profile endurance`) | 10 | swarm |
+
+**R8 is credited to the swarm rather than to a test**, and that is the honest
+placement: "each message delivered exactly once, per-sender order preserved" is
+precisely what the pair-reconstruction oracle checks, across every conversation
+in a run — 96,400 message positions in the 400-bot run, 346 in the Sentinel
+failover. A dedicated unit test would be a weaker version of a check that
+already runs at scale.
 
 ### What is genuinely missing, in the order worth doing it
 
@@ -68,11 +75,8 @@ does not need load, and a test that needs no load should run on every push.
    enough to mean anything**: a leak is what an hour shows and a two-minute run
    cannot. E2's steps and E3's stampede need arrival-shape machinery the swarm
    does not have.
-3. **The remaining D rows (7 of 10).** D1-D4 and D6-D8. D3 (a message accepted
-   in the instant before the database fails) and D8 (restart between ack and
-   persistence) are the two that keep the durability promise honest.
-4. **The remaining R rows (5 of 15).** R3, R6, R7, R8, R9, R11.
-5. **S and L tails, and N9.** The least interesting of the lot.
+3. **S and L tails, and N9.** The least interesting of the lot, and the only
+   catalogued rows left outside the E and C groups.
 
 ---
 
