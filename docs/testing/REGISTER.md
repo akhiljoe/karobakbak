@@ -53,7 +53,7 @@ does not need load, and a test that needs no load should run on every push.
 | **P — protocol abuse** | **28** | 28 | `tests/integration/protocol-abuse.test.ts` |
 | **R — races** | **10** | 15 | `tests/integration/races.test.ts` |
 | **C — chaos** | **4** | 16 | swarm + `docker-compose.sentinel-app.yml` |
-| **D — data integrity** | **3** | 10 | `tests/integration/retention-integrity.test.ts` |
+| **D — data integrity** | **4** (D5, D6, D9, D10) | 10 | `tests/integration/retention-integrity.test.ts` |
 | E — load shapes | **2** (E6 `--profile idle`, E1/E10 `--profile endurance`) | 10 | swarm |
 
 ### What is genuinely missing, in the order worth doing it
@@ -86,7 +86,7 @@ The group with the worst ratio and the best track record.
 | C2 | SIGKILL one of two backends | **Done.** Survivor absorbed the population, no step in client lag |
 | C3 | Graceful shutdown | **Done**, though not by the swarm — `server_shutdown` is asserted in `operations.test.ts` and `server.test.ts`, the `holdSeat: false` drain in `lifecycle.test.ts`, and draining health in `operations.test.ts` |
 | C-Redis | Sentinel failover under load | **Done.** 0 backend restarts, ~11.2s unavailable, 346 message positions agreed |
-| C4 | Network partition between backends, Redis up | not started — and close to a no-op by design: backends never talk directly, all coordination is Redis Pub/Sub |
+| C4 | Network partition between backends, Redis up | **Resolved as a no-op, and guarded.** There is no channel between backends to partition — `tests/unit/no-instance-addressing.test.ts` asserts no outbound HTTP outside the OIDC seam and that routing is by session channel. If it ever fails, C4 becomes a real scenario |
 | — | Clock skew on one instance | **Done.** The sharp case is app-clock stamps versus database-clock checks; measured as `chat_clock_skew_seconds` and alerted above 5 minutes |
 | — | Redis memory pressure to eviction | **Done, and it found F-044** — a total outage that passes every health check |
 | — | The other nine catalogued C rows | not started |

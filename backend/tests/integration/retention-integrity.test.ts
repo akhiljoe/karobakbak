@@ -26,6 +26,7 @@ import { createPostgresContext, type PostgresContext } from '../helpers/postgres
 import { Repositories } from '../../src/storage/repositories';
 import type { Config } from '../../src/config';
 import type {
+  BlockRecord,
   ConversationStartedRecord,
   MessageRecord,
   ReportRecord,
@@ -351,5 +352,120 @@ describe('the stamp and the check use different clocks', () => {
       [messageId],
     );
     expect(due).toHaveLength(1);
+  });
+});
+
+describe('D6 — a block outlives the conversation it was made in', () => {
+  /**
+   * A block keys on identity hashes, not on a conversation row (D18), and the
+   * conversation is deleted long before the block expires — thirty days against
+   * a block's own window.
+   *
+   * If deleting the conversation took the block with it, somebody's protection
+   * would quietly end on a schedule they were never told about, and the person
+   * they blocked would become matchable again. Nothing would report it: the
+   * block simply would not be there the next time `tryMatch` looked.
+   */
+  it('survives its conversation being deleted', async () => {
+    const { conversationId } = ids();
+    await ctx.repositories.insertConversations(
+      ctx.db,
+      [conversation(conversationId)],
+      Date.now(),
+    );
+
+    seq += 1;
+    const blockId = `blk_${seq}`;
+    const block: BlockRecord = {
+      kind: 'block',
+      blockId,
+      blockerKey: `iphash_${seq}`,
+      blockedKey: `iphash_other_${seq}`,
+      dimension: 'ip',
+      blockerAccountId: null,
+      conversationId,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    };
+    await ctx.repositories.insertBlocks(ctx.db, [block]);
+
+    await ctx.db.query(`delete from conversations where conversation_id = $1`, [conversationId]);
+    expect(
+      await ctx.rows(`select conversation_id from conversations where conversation_id = $1`, [
+        conversationId,
+      ]),
+    ).toHaveLength(0);
+
+    const survived = await ctx.rows<{ block_id: string; conversation_id: string | null }>(
+      `select block_id, conversation_id from blocks where block_id = $1`,
+      [blockId],
+    );
+    expect(survived).toHaveLength(1);
+    // The reference is kept as a bare value rather than dropped, so an
+    // investigation can still say which conversation a block came from while
+    // that conversation exists — and nothing depends on it existing.
+    expect(survived[0]?.conversation_id).toBe(conversationId);
+  });
+
+  /**
+   * The structural half, and the one that matters for the future.
+   *
+   * `blocks.conversation_id` carries **no foreign key**. Adding one would look
+   * like tidying — the column names a table, so why not constrain it — and a
+   * `references conversations on delete cascade` would delete a user's blocks
+   * thirty days after each conversation, silently.
+   *
+   * This is the line to defend in review, the same shape as the `connections`
+   * table having no `conversation_id` at all.
+   */
+  it('has no foreign key from a block to a conversation', async () => {
+    const constraints = await ctx.rows<{ column_name: string }>(
+      `select kcu.column_name
+         from information_schema.table_constraints tc
+         join information_schema.key_column_usage kcu
+           on kcu.constraint_name = tc.constraint_name
+          and kcu.table_schema = tc.table_schema
+        where tc.table_schema = $1
+          and tc.table_name = 'blocks'
+          and tc.constraint_type = 'FOREIGN KEY'`,
+      [ctx.schema],
+    );
+    expect(constraints.map((row) => row.column_name)).not.toContain('conversation_id');
+  });
+
+  /**
+   * The one foreign key that does exist, pinned as the deliberate choice it is.
+   *
+   * `blocker_account_id references accounts on delete cascade` — so deleting an
+   * account takes its blocks with it. `015_account_blocks.sql` argues for that
+   * at length: the column is "a durable negative record about another person
+   * tied to a name that persists", and it must not outlive the account that
+   * made it.
+   *
+   * The cost is real and is the reason this is asserted rather than assumed:
+   * the protection goes too. Somebody whose account is deleted loses the blocks
+   * they made while signed in. That is the right answer for a deletion the
+   * person asked for, and it is worth re-reading if account deletion ever
+   * becomes something retention does *to* them rather than something they do.
+   */
+  it('cascades from the account, deliberately, and from nothing else', async () => {
+    const rows = await ctx.rows<{ column_name: string; delete_rule: string }>(
+      `select kcu.column_name, rc.delete_rule
+         from information_schema.table_constraints tc
+         join information_schema.key_column_usage kcu
+           on kcu.constraint_name = tc.constraint_name
+          and kcu.table_schema = tc.table_schema
+         join information_schema.referential_constraints rc
+           on rc.constraint_name = tc.constraint_name
+          and rc.constraint_schema = tc.table_schema
+        where tc.table_schema = $1
+          and tc.table_name = 'blocks'
+          and tc.constraint_type = 'FOREIGN KEY'`,
+      [ctx.schema],
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.column_name).toBe('blocker_account_id');
+    expect(rows[0]?.delete_rule).toBe('CASCADE');
   });
 });
