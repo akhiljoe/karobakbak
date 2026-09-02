@@ -14,7 +14,7 @@
  * outlived its session, a message body in a log line. Those are pass/fail, and
  * the process exits non-zero when one of them fails.
  */
-import { fork, type ChildProcess } from 'node:child_process';
+import { execFileSync, fork, type ChildProcess } from 'node:child_process';
 import { cpus } from 'node:os';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -30,8 +30,20 @@ import { applyBans, clearBans, readSalt } from './enforce';
 import { runChaos, undoChaos } from './chaos';
 import { firstLine } from './oracles/firstline';
 import { printReport } from './report';
+import {
+  compare as compareBaseline,
+  describe as describeComparison,
+  readBaseline,
+  writeBaseline,
+  type BaselineMetrics,
+} from './baseline';
 
 interface Options {
+  /** Compare against the recorded baseline for this profile, and fail on a regression. */
+  readonly compare: boolean;
+  /** Freeze this run as the baseline. A human decides when; nothing learns it. */
+  readonly recordBaseline: boolean;
+  readonly baselineNote: string;
   url: string;
   origin: string;
   bots: number;
@@ -147,6 +159,21 @@ function parseArgs(argv: readonly string[]): Options {
     keyPrefix: flags.get('key-prefix') ?? 'chat',
     segment: flags.get('segment') ?? 'default',
     human: flags.get('human') === 'true',
+    /*
+      Compare against `baselines/<profile>.json` and fail the verdict on a
+      regression. Off unless asked for, because a run with no baseline recorded
+      would otherwise report a failure that means "nobody has said what good
+      looks like yet".
+    */
+    compare: flags.get('compare') === 'true',
+    /*
+      Freeze this run as the new baseline. Deliberately a separate, explicit
+      flag rather than something a green run does automatically: a baseline
+      learned from each passing run is a ratchet in the wrong direction, and
+      absorbs a regression that arrives in small enough steps.
+    */
+    recordBaseline: flags.get('record-baseline') === 'true',
+    baselineNote: flags.get('baseline-note') ?? '',
   };
 }
 
@@ -442,13 +469,81 @@ async function main(): Promise<void> {
     human: options.human,
   });
 
+  /*
+    The baseline comparison, after the report so its own lines land beneath the
+    verdict rather than in the middle of it.
+
+    Per bot AND per minute rather than raw totals, so a baseline recorded at 400
+    bots over 60 seconds still means something at 4,000 over 300. Per-bot alone
+    was not enough: a 30-second run read as a 0.5x regression against a
+    60-second baseline, because half the wall clock is half the conversations.
+  */
+  const observed: BaselineMetrics = {
+    conversationsPerBotPerMinute:
+      result.stats.matches / options.bots / (options.durationSeconds / 60),
+    messagesPerBotPerMinute:
+      result.stats.messagesSent / options.bots / (options.durationSeconds / 60),
+    connectedShare: result.stats.bots / options.bots,
+    ackLatencyP95Ms: percentileOf(result.stats.ackLatency, 95),
+    matchLatencyP95Ms: percentileOf(result.stats.matchLatency, 95),
+    lagP99Ms: worstLagP99,
+  };
+
+  let baselineFailed = false;
+  if (options.recordBaseline) {
+    const path = writeBaseline({
+      ...observed,
+      profile: options.profile,
+      recordedAt: new Date().toISOString(),
+      commit: currentCommit(),
+      bots: options.bots,
+      durationSeconds: options.durationSeconds,
+      note: options.baselineNote,
+    });
+    console.log(`\nbaseline recorded for ${options.profile}: ${path}`);
+    if (options.baselineNote === '') {
+      console.log(
+        '  no --baseline-note given. Whoever reads this file next will want to know' +
+          '\n  why this run was the one worth freezing.',
+      );
+    }
+  } else if (options.compare) {
+    const baseline = readBaseline(options.profile);
+    if (baseline === null) {
+      console.log(
+        `\nno baseline for ${options.profile}. Record one with --record-baseline when a run looks right.`,
+      );
+    } else {
+      const comparison = compareBaseline(baseline, observed);
+      console.log(['', 'AGAINST THE BASELINE', ...describeComparison(comparison)].join('\n'));
+      baselineFailed = comparison.regressions.length > 0;
+    }
+  }
+
   const oraclesPassed = result.oracles.every((oracle) => oracle.status !== 'fail');
   if (lost.length > 0) {
     console.error(
       `swarm: ${lost.length} worker(s) did not finish cleanly — the population was incomplete, so treat every number above as a lower bound`,
     );
   }
-  process.exitCode = oraclesPassed && lost.length === 0 ? 0 : 1;
+  process.exitCode = oraclesPassed && lost.length === 0 && !baselineFailed ? 0 : 1;
+}
+
+/** The commit a baseline was taken at, or `unknown` outside a git checkout. */
+function currentCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The same percentile the report prints, so the two can never disagree. */
+function percentileOf(samples: readonly number[], p: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[index] ?? 0;
 }
 
 void main().catch((error: unknown) => {
