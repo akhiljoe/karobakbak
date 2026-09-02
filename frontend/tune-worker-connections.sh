@@ -11,10 +11,21 @@
 # set.
 #
 # The stock value is 1024, and a proxied WebSocket costs **two** of them: one
-# downstream to the browser, one upstream to the backend. That puts a hard
-# ceiling of roughly `worker_processes x 512` concurrent conversations at the
-# edge, reached long before any backend limit — and it fails as timeouts and
+# downstream to the browser, one upstream to the backend. So one worker holds
+# `worker_connections / 2` **people**, and half that many conversations, because
+# a conversation is two people: 1024 slots is 512 connected and 256 talking.
+#
+# That second halving is easy to drop, and dropping it overstates the edge by
+# exactly 2x. It was stated wrong here, in the Dockerfile and in OPERATIONS.md
+# for as long as this script has existed.
+#
+# It is reached long before any backend limit — and it fails as timeouts and
 # refused upgrades, which look like a backend problem.
+#
+# It is also not what runs out first on a small box. Measured on 1 vCPU / 2 GB
+# (RESULTS.md, 2026-09-02): the core saturates at about 2,000 concurrent people
+# while 4096 slots sit half empty. Raise this so the edge is never the thing
+# that breaks, then stop thinking about it.
 #
 # The nginx image runs every executable in /docker-entrypoint.d before starting,
 # so rewriting the value there keeps the setting in the environment, where the
