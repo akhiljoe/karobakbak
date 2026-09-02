@@ -40,11 +40,15 @@ function subject(id: string): ReturnType<typeof accountForSubject> {
 describe('resolving an account from an OIDC subject', () => {
   it('creates one on first sign-in and returns the same one after', async () => {
     const first = await subject('sub_alice');
-    expect(first).toMatchObject({ ok: true });
+    // `created` distinguishes a first sign-in from a returning one, which is
+    // the only place that difference is visible — the insert returns a row and
+    // the update below it cannot, because by then the row exists either way.
+    // It is what `chat_accounts_created_total` counts.
+    expect(first).toMatchObject({ ok: true, created: true });
     if (!first.ok) return;
 
     const second = await subject('sub_alice');
-    expect(second).toEqual({ ok: true, accountId: first.accountId });
+    expect(second).toEqual({ ok: true, accountId: first.accountId, created: false });
     expect(await pg.count('accounts')).toBe(1);
   });
 

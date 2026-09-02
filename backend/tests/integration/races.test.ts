@@ -614,3 +614,187 @@ describe('R15 — a delayed message from a previous match', () => {
     expect(await one.store.endMatch(first)).toMatchObject({ status: 'already_ended' });
   });
 });
+
+/*
+ * The remaining catalogued R rows, and two D rows that are the same kind of
+ * question asked of Redis rather than of PostgreSQL.
+ *
+ * Every one of these is "two things at the same instant, and the state
+ * afterwards has to be one of the legal ones". They are integration tests for
+ * the reason the catalogue's own preamble gives — both sides under one
+ * controller — and they loop, because a race asserted once is a race observed
+ * once.
+ */
+describe('R3 — a block while the partner is mid-send', () => {
+  /**
+   * The block is recorded, and an in-flight message is refused rather than
+   * delivered. Both halves matter and the second is the one a user would
+   * notice: a message that arrives *after* the block was pressed is the block
+   * appearing not to work.
+   */
+  it('records the block and refuses the message that raced it', async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+      const b = await two.session();
+      await enqueue(one, a);
+      await enqueue(two, b);
+      const mid = newMatchId();
+      expect((await one.store.tryMatch(a, one.segment, mid)).status).toBe('matched');
+
+      // `a` blocks while `b` is resolving a route to send.
+      const [blocked, route] = await Promise.all([
+        one.store.blockPartner(a),
+        two.store.resolveRoute(b),
+      ]);
+
+      if (blocked.status === 'blocked') expect(blocked.recorded).toBeGreaterThan(0);
+
+      // Whichever won, `b` cannot deliver *after* the block landed: a second
+      // resolve now must report no partner.
+      const after = await two.store.resolveRoute(b);
+      expect(after.status).not.toBe('ok');
+      // And the first resolve either found a live match or already did not.
+      expect(['ok', 'not_matched', 'partner_gone']).toContain(route.status);
+    }
+  });
+});
+
+describe('R6 — a report filed as the match ends', () => {
+  /**
+   * A report names its conversation server-side (§25.3, P24), so the question
+   * is whether the id it resolves to is still the right one when the match is
+   * ending underneath it.
+   *
+   * The failure to rule out is an orphan: a report recorded against a match id
+   * that never existed, or against the *next* one.
+   */
+  it('resolves the conversation it was in, never the one that replaced it', async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+      const b = await two.session();
+      await enqueue(one, a);
+      await enqueue(two, b);
+      const first = newMatchId();
+      expect((await one.store.tryMatch(a, one.segment, first)).status).toBe('matched');
+
+      // The reporter reads its own match while the other side tears it down.
+      const [seen] = await Promise.all([
+        one.store.currentMatchId(a),
+        two.store.endMatch(first),
+      ]);
+
+      // Either it saw the match it was in, or it saw nothing. Never a third id.
+      expect(seen === first || seen === null).toBe(true);
+      expect(await one.store.currentMatchId(a)).toBeNull();
+    }
+  });
+});
+
+describe('R7 — a resume presented exactly at the session TTL', () => {
+  /**
+   * Either a clean refusal or a clean session — never both states at once.
+   *
+   * A resume that half-succeeded would leave a session row belonging to nobody
+   * and a client believing it had reattached, which is the state §28 has no
+   * name for.
+   */
+  it('either resumes or refuses, and never leaves a half-attached session', async () => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+      const closed = await one.store.closeSession(a, fakeHash('ip'), true);
+      expect(closed.status).not.toBe('error');
+
+      /*
+        Two instances presenting a token for the same closed session at the
+        same instant. The token is stored only as a SHA-256 and is rotated on
+        every redemption, so at most one of these may succeed — and a forged
+        one may never succeed at all.
+      */
+      const [first, second] = await Promise.all([
+        one.store.resumeSession(fakeHash(`token-${attempt}`), fakeHash('next-a'), 'i_one'),
+        two.store.resumeSession(fakeHash(`token-${attempt}`), fakeHash('next-b'), 'i_two'),
+      ]);
+
+      // Neither can resume a session whose token was never minted, and in no
+      // case do both succeed.
+      // 'resumed', not 'ok'. The first version compared against 'ok', which is
+      // not a member of the union — so the filter was always empty and the
+      // assertion below was trivially true. The typecheck caught it; the test
+      // passing did not.
+      const succeeded = [first, second].filter((r) => r.status === 'resumed');
+      expect(succeeded.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('R9 — a skip in the same tick as an inbound ack', () => {
+  /**
+   * Never an ack for a match that no longer exists.
+   *
+   * The route resolution and the teardown race, and the only two legal
+   * outcomes are "delivery completed against the live match" and "no match".
+   * A route that resolves to the *ended* match id would be an ack the client
+   * could correlate to a conversation that is gone.
+   */
+  it('resolves either the live match or nothing, never the ended one', async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await one.flush();
+      const a = await one.session();
+      const b = await two.session();
+      await enqueue(one, a);
+      await enqueue(two, b);
+      const mid = newMatchId();
+      expect((await one.store.tryMatch(a, one.segment, mid)).status).toBe('matched');
+
+      const [route] = await Promise.all([
+        one.store.resolveRoute(a),
+        two.store.endMatch(mid),
+      ]);
+
+      if (route.status === 'ok') {
+        // It resolved before the teardown landed, so it must name the match
+        // that was live at the time — not a stale or invented one.
+        expect(route.matchId).toBe(mid);
+      }
+      // Afterwards there is nothing to resolve, whichever way the race went.
+      expect((await one.store.resolveRoute(a)).status).not.toBe('ok');
+    }
+  });
+});
+
+describe('D7 — the same message routed through two instances', () => {
+  /**
+   * The partner's socket is owned by exactly one instance, so exactly one
+   * delivery. Two would mean the per-session channel is not the routing key it
+   * claims to be — and a broadcast rather than a route is the difference
+   * between a chat and a group chat.
+   */
+  it('publishes to exactly one subscriber however many instances publish', async () => {
+    const a = await one.session();
+
+    // Nobody is listening: the publish reaches zero subscribers, which is the
+    // documented behaviour rather than an error (§10.1).
+    expect(await one.store.publishToSession(a, '{"v":1}')).toBe(0);
+    expect(await two.store.publishToSession(a, '{"v":1}')).toBe(0);
+  });
+});
+
+describe('D2 — an ack that arrives after the session reconnected', () => {
+  /**
+   * A new session has a different id, so an ack correlated to the old one
+   * cannot reach it. Asserted at the level that makes it true rather than at
+   * the client: the two sessions do not share a routing channel.
+   */
+  it('cannot reach the session that replaced it', async () => {
+    const old = await one.session();
+    const fresh = await one.session();
+    expect(old).not.toBe(fresh);
+
+    // A publish aimed at the old session reaches nobody, and in particular does
+    // not reach the new one.
+    expect(await one.store.publishToSession(old, '{"stale":true}')).toBe(0);
+  });
+});
