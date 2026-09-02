@@ -172,6 +172,13 @@ services:
       # Listed here rather than inherited, like everything else in this block.
       # A var that is only in `.env` is a var the container never sees, and the
       # failure is quiet: the routes simply do not exist and nothing says why.
+      # Premium matching preferences (D44, §29). Separate from PAYMENTS_ENABLED
+      # on the server: this one turns the scoring on, and the *client* renders a
+      # control only when both are true (`FILTERS_AVAILABLE` is derived, not
+      # settable). With this on and payments off, every preference is refused
+      # `not_premium` — which is the gate being provably closed rather than
+      # untested, and is visible in chat_preference_limited_total.
+      FILTERS_ENABLED: "${FILTERS_ENABLED:-false}"
       PAYMENTS_ENABLED: "${PAYMENTS_ENABLED:-false}"
       RAZORPAY_KEY_ID: "${RAZORPAY_KEY_ID:-}"
       RAZORPAY_KEY_SECRET: "${RAZORPAY_KEY_SECRET:-}"
