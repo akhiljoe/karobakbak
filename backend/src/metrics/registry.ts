@@ -22,6 +22,7 @@
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 import type { Config, RetentionPriority } from '../config';
+import { INTENTS } from '../protocol/types';
 
 /** Fixed label sets. Anything not listed here is a bug, not a new value. */
 export const DELIVERY_ROUTES = ['local', 'remote', 'dropped'] as const;
@@ -49,6 +50,110 @@ export const REJECT_REASONS = [
   'banned',
 ] as const;
 export const MODERATION_ACTIONS = ['allow', 'flag', 'withhold', 'block'] as const;
+
+/**
+ * The product funnel, as one counter with a step label (D61).
+ *
+ * ---------------------------------------------------------------------------
+ * EVERY STEP IS ONE SEARCHING SESSION, AND THAT IS WHAT MAKES IT A FUNNEL
+ * ---------------------------------------------------------------------------
+ * The steps look like counters that already exist, and they are not.
+ * `chat_matches_created_total` counts a *match* — one per pair, so half the
+ * number of people — and `chat_connections_total` counts a socket, which
+ * includes resuming a session that already had one. Dividing any of those by
+ * another is dividing three different denominators, and it would be wrong in a
+ * direction nobody could see on the graph.
+ *
+ * So all four are the same unit: **one session, one search**. A person who
+ * skips five times contributes five to `searched`, which is right — each one
+ * is a fresh attempt to find somebody, and the question "how many searches end
+ * in a conversation" is the product question.
+ *
+ * `spoke` is this session sending its own first message in a conversation.
+ * `conversed` is its fifth. Both are counted **per side**, independently, on
+ * the instance holding that socket — which is what keeps the whole series exact
+ * under summing across instances, and is the reason there is no per-conversation
+ * message count anywhere here. Counting a *conversation's* messages would mean
+ * either an HINCRBY on the message hot path or widening `endMatch`'s positional
+ * reply, and neither is worth it for a metric: the sum of the two sides is the
+ * same number, and the two sides apart is strictly more informative — one side
+ * at zero is somebody being ignored, which a conversation-level total hides.
+ *
+ * There is deliberately no step before `searched`. Nothing about the age gate
+ * reaches the server (§24.3, D34), so how many people saw it and left is not
+ * measurable here and is not going to be inferred from something else. That
+ * blind spot is the cost of the privacy position, recorded rather than fixed.
+ */
+export const FUNNEL_STEPS = ['searched', 'matched', 'spoke', 'conversed'] as const;
+
+/**
+ * How many messages a conversation needs before it counts as one.
+ *
+ * Read by the funnel's `conversed` step and by nothing else. Named because a
+ * bare `5` inside a comparison is a number nobody can find later.
+ */
+export const CONVERSED_MESSAGE_THRESHOLD = 5;
+
+/**
+ * Which dimensions of a declared preference actually won a match (§29.8).
+ *
+ * Derived from the score `tryMatch` already returns, which is a bitfield by
+ * construction: gender 4, country 2, intent 1, summed. So this needs no change
+ * to the Lua and no widening of the script's positional reply — which matters,
+ * because that reply is parsed by position and the script around it is the most
+ * race-tested code in the repository.
+ *
+ * This is the honest answer to "does premium do anything". §29 warns that a
+ * preference matching nobody is invisible, because the fallback still works and
+ * the user is never told: a paying customer simply has a preference that never
+ * applies. `chat_preference_limited_total` says the preference was refused;
+ * this says it was applied and *won*. Between them there is no longer a state
+ * the operator cannot see.
+ */
+export const PREFERENCE_DIMENSIONS = ['gender', 'country', 'intent'] as const;
+
+/** The bit each dimension contributes to the score, matching `score()` in the Lua. */
+export const PREFERENCE_DIMENSION_WEIGHTS: ReadonlyArray<
+  readonly [(typeof PREFERENCE_DIMENSIONS)[number], number]
+> = [
+  ['gender', 4],
+  ['country', 2],
+  ['intent', 1],
+];
+
+/**
+ * How a sign-in callback ended.
+ *
+ * `flow_mismatch` is the whole of login-CSRF prevention and costs one string
+ * comparison, so a rising rate there is somebody's code being delivered into
+ * somebody else's browser rather than a fault. The other three are faults.
+ */
+export const AUTH_OUTCOMES = [
+  'ok',
+  'flow_mismatch',
+  'token_error',
+  'no_account',
+  'no_credential',
+] as const;
+
+/**
+ * Why a reconnect attempt did not pair, counting **faults only**.
+ *
+ * There is no `declined` and no `ignored` here, and that is the same decision
+ * the `connectionsMade` comment records for saved connections: a count of
+ * refusals turns a private decision into an operational statistic. What is
+ * counted is the successes (`chat_reconnect_paired_total`) and the technical
+ * failures below — never the space between them.
+ *
+ * `blocked` is deliberately absent too, though it is tempting to call it a
+ * fault: a request stopped by a block is the block working, blocks are already
+ * counted by `chat_blocks_total`, and a per-attempt count of them is a refusal
+ * statistic wearing a technical name.
+ */
+export const RECONNECT_FAILURES = ['no_session', 'expired', 'error'] as const;
+
+/** Whether this origin had a picture to relay (§32). */
+export const AVATAR_OUTCOMES = ['ok', 'none', 'error'] as const;
 /** Why a match attempt gave up. Every value the matchmaker can report. */
 export const MATCHMAKING_FAILURES = ['already_matched', 'session_gone', 'unknown'] as const;
 /** Why a frame was refused before it became a command. */
@@ -202,6 +307,112 @@ export interface Metrics {
    */
   readonly connectionsMade: Counter<string>;
   readonly matchmakingLatency: Histogram<string>;
+
+  /* ---------------------------------------------------------------------- */
+  /* product (D61)                                                           */
+  /* ---------------------------------------------------------------------- */
+  /**
+   * The funnel, per session. See `FUNNEL_STEPS` for why it is one counter.
+   *
+   * This deck answers the founder's question rather than the operator's, and
+   * before it existed nothing did: `chat_matches_created_total` says matching
+   * works and says nothing about whether the conversations were any good, which
+   * is the entire product.
+   */
+  readonly funnel: Counter<'step'>;
+  /**
+   * Messages exchanged in a conversation, observed once when it ends.
+   *
+   * The companion to `chat_conversation_duration_seconds` and not a substitute
+   * for it: a long silence and a fast exchange are the same duration and very
+   * different products. Bucket zero is the bounce — matched, then left without
+   * either side speaking — and is the single most useful number here.
+   */
+  readonly conversationMessages: Histogram<string>;
+  /**
+   * Match to first message, whichever side sent it.
+   *
+   * Measures the hesitation the interface causes. It is the one part of the
+   * conversation the product can actually change with copy.
+   */
+  readonly firstMessageLatency: Histogram<string>;
+  /**
+   * Searches that left the queue without ever matching.
+   *
+   * The funnel's `searched` step minus its `matched` step is the same quantity
+   * over a long enough window, but only if nobody is still waiting when you
+   * ask — which at a scrape boundary is never true. This is counted at the
+   * moment of leaving, so it is exact.
+   */
+  readonly searchAbandoned: Counter<string>;
+  /**
+   * What people say they are here for (§30.4, D45/D46).
+   *
+   * A closed list, and free — intent is symmetric, matched by equality, so
+   * both parties asked for the same thing. Worth measuring because it is the
+   * one declaration that changes who somebody is matched with at no cost, and
+   * because the distribution is the argument for or against `flirty` remaining
+   * in the list.
+   */
+  readonly intentsDeclared: Counter<'intent'>;
+  /**
+   * Which preference dimensions won a match, decomposed from the score.
+   *
+   * See `PREFERENCE_DIMENSIONS`. Without this, "the preference matched nobody"
+   * and "the preference worked" are the same picture from outside.
+   */
+  readonly preferenceApplied: Counter<'dimension'>;
+  /**
+   * Searches that escalated to the wide sample (§29.6).
+   *
+   * The expensive half of D44 — a second `SRANDMEMBER` and up to
+   * `PREFERENCE_WIDE_SAMPLE` further `HMGET`s. If this tracks the preference
+   * rate rather than sitting well below it, the ordinary sample is too small
+   * and every preferred search is paying twice.
+   */
+  readonly preferenceWidened: Counter<string>;
+
+  /* ---------------------------------------------------------------------- */
+  /* accounts (§31, §32)                                                     */
+  /* ---------------------------------------------------------------------- */
+  /**
+   * Sign-in, which wrote no metrics at all until now — nor did anything else
+   * in `accounts/` or `payments/`, so phases 20 to 24 shipped entirely unlit.
+   *
+   * `starts` against `callbacks{outcome="ok"}` is the drop-off, and it is the
+   * number that says whether sign-in is working for people who are not the
+   * developer. A provider misconfiguration looks exactly like disinterest
+   * without it.
+   */
+  readonly authStarts: Counter<string>;
+  readonly authCallbacks: Counter<'outcome'>;
+  /** First sign-in for a subject. The rest are returning visits. */
+  readonly accountsCreated: Counter<string>;
+  /*
+   * There is deliberately no `chat_accounts_online` gauge, and it was drafted
+   * before being removed. Visibility lives in `chat:online:{account}` — one
+   * key per account, each with its own TTL — so counting it means a `SCAN` of
+   * the keyspace on every janitor tick, and the alternative is a Redis set
+   * whose members would need expiry the set itself cannot give them.
+   *
+   * Neither is worth it for a gauge. `chat_connections_active` already says how
+   * many sockets are attached, and the difference between that and "how many
+   * signed-in accounts are visible" is not a question worth a keyspace scan
+   * every fifteen seconds. Recorded here so the next person to notice the gap
+   * finds the reason rather than the gap.
+   */
+  /**
+   * Reconnect requests that resulted in two people being paired.
+   *
+   * Successes only, and `RECONNECT_FAILURES` explains why there is no
+   * counterpart for a request that was declined or ignored.
+   */
+  readonly reconnectPaired: Counter<string>;
+  readonly reconnectFailures: Counter<'reason'>;
+  /** Saved connections removed. Unilateral and a hard delete, so this is churn. */
+  readonly connectionsRemoved: Counter<string>;
+  /** Profile pictures relayed by this origin, never fetched by the browser. */
+  readonly avatarRelay: Counter<'outcome'>;
 
   /* messages */
   readonly messagesReceived: Counter<string>;
@@ -433,6 +644,47 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
       [0.01, 0.05, 0.1, 0.5, 1, 5, 30, 120],
     ),
 
+    funnel: counter('chat_funnel_total', 'Sessions reaching each step of the product funnel', ['step']),
+    conversationMessages: histogram(
+      'chat_conversation_messages',
+      'Messages exchanged in a conversation, observed when it ends',
+      // Zero has to be its own bucket, because "matched and nobody spoke" is
+      // the bounce and is the point of the histogram. After that the interest
+      // is all at the low end: 1 versus 5 is whether a conversation started,
+      // 50 versus 200 is not a distinction the product acts on.
+      [0, 1, 2, 5, 10, 25, 50, 100, 250],
+    ),
+    firstMessageLatency: histogram(
+      'chat_conversation_first_message_seconds',
+      'Time from being matched to the first message from either side',
+      [0.5, 1, 2, 5, 10, 20, 45, 120],
+    ),
+    searchAbandoned: counter('chat_search_abandoned_total', 'Searches that left the queue without matching'),
+    intentsDeclared: counter('chat_intents_declared_total', 'Intent declared on an explicit join', [
+      'intent',
+    ]),
+    preferenceApplied: counter(
+      'chat_preference_applied_total',
+      'Preference dimensions that contributed to a match, decomposed from the score',
+      ['dimension'],
+    ),
+    preferenceWidened: counter(
+      'chat_preference_widened_total',
+      'Searches that escalated to the wide candidate sample',
+    ),
+
+    authStarts: counter('chat_auth_starts_total', 'Sign-in flows started'),
+    authCallbacks: counter('chat_auth_callbacks_total', 'Sign-in callbacks, by outcome', ['outcome']),
+    accountsCreated: counter('chat_accounts_created_total', 'Accounts created on a first sign-in'),
+    reconnectPaired: counter('chat_reconnect_paired_total', 'Reconnect requests that paired two people'),
+    reconnectFailures: counter(
+      'chat_reconnect_failures_total',
+      'Reconnect attempts that failed for a technical reason, never a refusal',
+      ['reason'],
+    ),
+    connectionsRemoved: counter('chat_connections_removed_total', 'Saved connections removed'),
+    avatarRelay: counter('chat_avatar_relay_total', 'Avatar relay requests, by outcome', ['outcome']),
+
     messagesReceived: counter('chat_messages_received_total', 'Messages accepted from clients'),
     messagesDelivered: counter('chat_messages_delivered_total', 'Messages routed to a partner', ['route']),
     messagesRejected: counter('chat_messages_rejected_total', 'Messages refused, by reason', ['reason']),
@@ -592,6 +844,17 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   // Persona label sets. The fill reasons matter most: a policy that has quietly
   // stopped filling looks identical to one that has nothing to fill, unless
   // every reason is already on the graph at zero.
+  // Product label sets. The funnel is the one that must be complete at zero:
+  // a step whose series does not exist yet is read as a total collapse at that
+  // step rather than as "nobody has got there", and those are opposite
+  // conclusions about the same graph.
+  for (const step of FUNNEL_STEPS) metrics.funnel.labels(step).inc(0);
+  for (const dimension of PREFERENCE_DIMENSIONS) metrics.preferenceApplied.labels(dimension).inc(0);
+  for (const intent of INTENTS) metrics.intentsDeclared.labels(intent).inc(0);
+  for (const outcome of AUTH_OUTCOMES) metrics.authCallbacks.labels(outcome).inc(0);
+  for (const reason of RECONNECT_FAILURES) metrics.reconnectFailures.labels(reason).inc(0);
+  for (const outcome of AVATAR_OUTCOMES) metrics.avatarRelay.labels(outcome).inc(0);
+
   for (const reason of PERSONA_SKIP_REASONS) metrics.personaFillSuppressed.labels(reason).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaLimitTrips.labels(limit).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaSessionsFlagged.labels(limit).inc(0);

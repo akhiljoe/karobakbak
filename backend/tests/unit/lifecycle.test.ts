@@ -529,6 +529,9 @@ describe('counting declared genders', () => {
     const dispatcher = new EventDispatcher(registry, new FakePublisher(), logger);
     const declared: string[] = [];
     const limited: string[] = [];
+    const intents: string[] = [];
+    const scored: Array<{ score: number; widened: boolean; matched: boolean }> = [];
+    let abandoned = 0;
     const lifecycle = new SessionLifecycle(
       store,
       dispatcher,
@@ -542,9 +545,22 @@ describe('counting declared genders', () => {
         conversationEnded: () => {},
         profileDeclared: (gender) => declared.push(gender),
         preferenceLimited: (reason) => limited.push(reason),
+        intentDeclared: (intent) => intents.push(intent),
+        preferenceScored: (score, widened, matched) => scored.push({ score, widened, matched }),
+        searchAbandoned: () => {
+          abandoned += 1;
+        },
       },
     );
-    return { store, lifecycle, declared, limited };
+    return {
+      store,
+      lifecycle,
+      declared,
+      limited,
+      intents,
+      scored,
+      abandoned: () => abandoned,
+    };
   }
 
   it('writes the preference when the §29.4 limits allow it', async () => {

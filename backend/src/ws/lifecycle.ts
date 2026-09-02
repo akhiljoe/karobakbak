@@ -190,6 +190,29 @@ export interface MatchmakingObserver {
    * two want opposite responses from whoever is tuning the feature.
    */
   preferenceLimited(reason: 'not_premium' | 'cooldown' | 'budget' | 'no_session'): void;
+  /**
+   * An intent declared on an explicit join (D45, D46, section 30.4).
+   *
+   * Explicit only, for the reason `profileDeclared` gives: a re-search after a
+   * skip carries no declaration because nothing about it changed, and counting
+   * those would weight the heaviest skippers highest.
+   */
+  intentDeclared(intent: string): void;
+  /**
+   * What a match attempt's preference scoring actually did.
+   *
+   * `score` is the bitfield the Lua returns — gender 4, country 2, intent 1 —
+   * so the caller can report which dimensions contributed without the script
+   * needing to say so separately. `matched` distinguishes a score that won a
+   * partner from one computed on an attempt that found nobody; only the former
+   * is evidence the preference works.
+   *
+   * `widened` is reported either way, because the wide sample is paid for
+   * whether or not it succeeds, and its cost is the thing being watched.
+   */
+  preferenceScored(score: number, widened: boolean, matched: boolean): void;
+  /** A session left the queue without ever having matched. */
+  searchAbandoned(): void;
 }
 
 export type LeaveOutcome =
@@ -442,7 +465,14 @@ export class SessionLifecycle {
     // that bit the preference: a session queued before its intent lands is
     // matched by ordinary rules, and the user's one selector did nothing on the
     // attempt they were watching.
-    if (intent !== undefined) await this.store.setIntent(sessionId, intent);
+    if (intent !== undefined) {
+      await this.store.setIntent(sessionId, intent);
+      // `none` rather than skipping the count, so the denominator is every
+      // explicit join and the share that declared nothing is readable. A
+      // counter that only fires when somebody chose cannot answer "how many
+      // people use this".
+      this.observer?.intentDeclared(intent === null || intent === '' ? 'none' : intent);
+    }
     /*
       Read once, here, and carried through the join and the search that follows.
 
@@ -481,6 +511,12 @@ export class SessionLifecycle {
     );
     switch (left.status) {
       case 'ok':
+        // Counted here rather than derived from the funnel, and the difference
+        // is a scrape boundary: `searched` minus `matched` also counts everyone
+        // who is still waiting at the moment the question is asked, which is
+        // never nobody. This fires when the queue is actually left, so it is
+        // exact.
+        this.observer?.searchAbandoned();
         return { kind: 'idle' };
       case 'already_matched':
         return { kind: 'already_matched', matchId: left.matchId };
@@ -719,6 +755,11 @@ export class SessionLifecycle {
       const result = await this.store.tryMatch(sessionId, segment, newMatchId());
 
       if (result.status === 'matched') {
+        this.observer?.preferenceScored(
+          result.preference.score,
+          result.preference.widened,
+          true,
+        );
         return this.announceMatch(sessionId, result.matchId, result.partnerSessionId);
       }
 
@@ -740,6 +781,11 @@ export class SessionLifecycle {
       }
 
       waiting = result.queueDepth;
+      // An attempt that found nobody still paid for whatever sampling it did,
+      // and the wide pass is the expensive half of D44. Reported with
+      // `matched: false` so the two are never added together: one is a cost,
+      // the other is the cost having bought something.
+      this.observer?.preferenceScored(result.preference.score, result.preference.widened, false);
       if (result.cleaned === 0 && result.blockedSkipped === 0) break;
     }
     return { kind: 'searching', waiting };

@@ -81,11 +81,37 @@ const POPUP_DONE_PAGE = '/signin-done.html';
 /** The session credential itself. */
 const SESSION_COOKIE = '__Host-kbb_session';
 
+/**
+ * What the sign-in and connection routes report to the metrics registry.
+ *
+ * Injected as callbacks rather than the registry itself, the same shape as
+ * `MatchmakingObserver`: these routes should not be able to reach any metric
+ * they were not given, and a test should not need a Prometheus registry to
+ * assert what they counted.
+ *
+ * Nothing here counts a refusal. A request that was ignored, and a connection
+ * that was not saved back, are private decisions — the `connectionsMade`
+ * comment in `metrics/registry.ts` records that reasoning and
+ * `RECONNECT_FAILURES` repeats it. What is counted is what succeeded and what
+ * broke.
+ */
+export interface AccountsObserver {
+  authStarted(): void;
+  authCallback(outcome: 'ok' | 'flow_mismatch' | 'token_error' | 'no_account' | 'no_credential'): void;
+  accountCreated(): void;
+  reconnectPaired(): void;
+  reconnectFailed(reason: 'no_session' | 'expired' | 'error'): void;
+  connectionRemoved(): void;
+  avatarRelayed(outcome: 'ok' | 'none' | 'error'): void;
+}
+
 export interface AuthRoutesDeps {
   readonly config: Config;
   readonly logger: Logger;
   readonly db: Database;
   readonly oidc: OidcClient;
+  /** Metrics, or absent in a test that does not care what was counted. */
+  readonly observer?: AccountsObserver;
   /**
    * The command connection, for the avatar URL cache only.
    *
@@ -189,6 +215,7 @@ function sameToken(a: string, b: string): boolean {
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
   const { config, logger, db, oidc, redis, connections, blocks, presence, reconnect } = deps;
+  const observer = deps.observer;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
 
@@ -391,6 +418,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
 
   return {
     async start(req: IncomingMessage, res: ServerResponse): Promise<void> {
+      observer?.authStarted();
       const flow = oidc.start();
       // Matched against the one accepted value rather than passed through, so
       // the cookie can only ever hold a member of the closed list — the fourth
@@ -437,6 +465,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         // before anything expensive: an attacker's code delivered into a
         // victim's browser stops here, having cost one string comparison.
         logger.warn('sign-in callback did not match a started flow');
+        observer?.authCallback('flow_mismatch');
         home(res, 'failed', mode);
         return;
       }
@@ -449,6 +478,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         // they are safe to log. Anything else is reported without its message.
         if (err instanceof TokenError) logger.warn('sign-in failed', { reason: err.message });
         else logger.error('sign-in failed unexpectedly', errorFields(err));
+        observer?.authCallback('token_error');
         home(res, 'failed', mode);
         return;
       }
@@ -461,19 +491,26 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       );
       if (!account.ok) {
         logger.warn('sign-in resolved no usable account', { reason: account.reason });
+        observer?.authCallback('no_account');
         home(res, 'failed', mode);
         return;
       }
+
+      // Before the credential is minted, so a first sign-in that then fails to
+      // mint is still counted as the account creation it was — the row exists.
+      if (account.created) observer?.accountCreated();
 
       await rememberAvatar(account.accountId, identity.picture);
 
     const token = await mintCredential(db, logger, account.accountId, auth.sessionTtlSeconds);
       if (token === null) {
+        observer?.authCallback('no_credential');
         home(res, 'failed', mode);
         return;
       }
 
       setCookie(res, SESSION_COOKIE, token, auth.sessionTtlSeconds);
+      observer?.authCallback('ok');
       home(res, 'ok', mode);
     },
 
@@ -520,10 +557,16 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       const url = await avatarUrl(resolved.accountId);
       const image = url === null ? null : await fetchAvatar(url, logger);
       if (image === null) {
+        // `none` and not `error`, deliberately, and it is the same conflation
+        // the 404 makes on purpose: no cached URL and a fetch that failed are
+        // indistinguishable to the caller, and a metric that told them apart
+        // would be the only place the difference existed.
+        observer?.avatarRelayed(url === null ? 'none' : 'error');
         res.statusCode = 404;
         res.end();
         return;
       }
+      observer?.avatarRelayed('ok');
 
       res.statusCode = 200;
       res.setHeader('content-type', image.contentType);
@@ -622,6 +665,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
           return;
         }
         await connections.remove(resolved.accountId, match.other);
+        observer?.connectionRemoved();
         json(res, 200, { removed: true });
       } catch (err) {
         logger.error('could not remove a connection', errorFields(err));
@@ -853,6 +897,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
 
       const mySession = await presence.sessionFor(me.accountId);
       if (mySession === null) {
+        observer?.reconnectFailed('no_session');
         // No live session for this account — the socket is gone, or the
         // heartbeat has not run yet. Nothing to pair.
         json(res, 200, { asked: false, reason: 'away' });
@@ -947,12 +992,14 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         logger.warn('could not redeem a reconnect offer', errorFields(err));
       }
       if (stored === null) {
+        observer?.reconnectFailed('expired');
         json(res, 404, { error: 'expired' });
         return;
       }
 
       const [asker, accepter] = stored.split(':');
       if (asker === undefined || accepter === undefined) {
+        observer?.reconnectFailed('error');
         json(res, 404, { error: 'expired' });
         return;
       }
@@ -965,6 +1012,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         reconnect.notify(asker, { startedAt }),
         reconnect.notify(accepter, { startedAt }),
       ]);
+      observer?.reconnectPaired();
       json(res, 200, { paired: true });
     },
 
