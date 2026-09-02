@@ -22,6 +22,7 @@
  * Usage:
  *   node scripts/verify-log-hygiene.mjs                     # dev stack
  *   node scripts/verify-log-hygiene.mjs --url http://localhost:3103 --since 2h
+ *   node scripts/verify-log-hygiene.mjs --addresses          # also flag client IPs
  *
  * Exit code is non-zero if anything was found.
  *
@@ -53,15 +54,26 @@ const SINCE_SECONDS = (() => {
   return n * { s: 1, m: 60, h: 3600, d: 86400 }[m[2]];
 })();
 
-/**
- * Addresses that are not a person.
+/*
+ * ---------------------------------------------------------------------------
+ * ADDRESS CHECKING IS OFF BY DEFAULT (F-036, reversed)
+ * ---------------------------------------------------------------------------
+ * The operator decided to keep client addresses in the nginx access log: an
+ * access log without one is hard to debug with and hard to investigate abuse
+ * from. So flagging every address would make this script fail on every run,
+ * and a check that fails on a healthy system is one that gets run with
+ * `|| true` inside a week.
  *
- * Container and host networking, loopback, link-local, multicast and the
- * unspecified block. Everything outside this set is treated as potentially a
- * visitor's address, including the RFC 2544 range the swarm draws its synthetic
- * identities from — those are fake, but a fake address in a log line still
- * means something logged an `X-Forwarded-For`, which is the defect.
+ * `--addresses` turns it back on, for anybody who wants to audit a deployment
+ * that is supposed to be free of them.
+ *
+ * The credential and forbidden-field checks below are NOT optional and are not
+ * a policy question: an authorization code or a message body in a log line is
+ * a defect whatever the privacy policy says.
  */
+const CHECK_ADDRESSES = args.includes('--addresses');
+
+/** Addresses that are not a person: container and host networking. */
 const INTERNAL_V4 = [
   /^10\./,
   /^127\./,
@@ -73,25 +85,6 @@ const INTERNAL_V4 = [
   /^255\./,
 ];
 
-/**
- * A dotted quad, delimited by something that is not part of a longer token.
- *
- * `\b` on its own is not enough, and the failure is not hypothetical: the first
- * run of this script reported two findings in `prometheus` and `frontend` that
- * turned out to be `6.6.87.2` — the **WSL2 kernel version**, printed in both
- * containers' startup banners. A four-part version number is indistinguishable
- * from an address by shape alone.
- *
- * The lookbehind and lookahead reject a quad that is glued to a longer token
- * (`6.6.87.2-microsoft-standard-WSL2`), which is what a version string in a
- * banner always is. A real address in a log line is followed by a quote, a
- * colon, a comma or a space — never by a letter or a dash.
- *
- * This is a heuristic and it is the right kind: it errs towards missing a leak
- * that is formatted like a version, rather than towards crying wolf on every
- * startup. A detector that reports two findings on a clean stack is one that
- * gets run with `|| true` within a week.
- */
 const DOTTED_QUAD = /(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w.-])/g;
 
 /** `name=value`, the shape a credential takes outside a JSON object. */
@@ -170,8 +163,10 @@ for (const s of streams) {
   for (const [, line] of s.values) {
     lineCount += 1;
 
-    for (const match of line.match(DOTTED_QUAD) ?? []) {
-      if (!isInternal(match)) record('public-ip', s.stream, 'address literal in log line', match);
+    if (CHECK_ADDRESSES) {
+      for (const match of line.match(DOTTED_QUAD) ?? []) {
+        if (!isInternal(match)) record('public-ip', s.stream, 'address literal in log line', match);
+      }
     }
 
     for (const m of line.matchAll(CREDENTIAL_KV)) {
