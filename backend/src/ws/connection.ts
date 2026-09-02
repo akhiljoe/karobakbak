@@ -75,6 +75,16 @@ export interface SocketConnectionDeps {
      * wrong in, and is stated on the metric so nobody reads it as exact.
      */
     bytes(direction: 'in' | 'out', count: number): void;
+    /**
+     * A declared profile refused during validation (F-038).
+     *
+     * Separate from `frameRejected` even though the same frame produces both,
+     * because they answer different questions. `frameRejected('invalid')` is a
+     * protocol-health number; this is a safety number, and pooling them meant
+     * the count of people declaring an age below the minimum did not exist —
+     * while a comment in the registry described it as a minor-safety input.
+     */
+    profileRefused(reason: 'age_below_minimum'): void;
   };
 }
 
@@ -266,6 +276,14 @@ export class SocketConnection implements Connection {
 
     if (!parsed.ok) {
       this.deps.observe?.frameRejected('invalid');
+      // `validateProfile` runs inside `parseClientFrame`, so this is the only
+      // place an age refusal is visible to anything that can count it. It is
+      // still a protocol strike — ten of these disconnect the socket — and
+      // that is deliberate and unchanged; what is new is that it is also
+      // counted as the safety signal it is.
+      if (parsed.code === 'AGE_BELOW_MINIMUM') {
+        this.deps.observe?.profileRefused('age_below_minimum');
+      }
       this.strike(parsed.code, parsed.message);
       return;
     }

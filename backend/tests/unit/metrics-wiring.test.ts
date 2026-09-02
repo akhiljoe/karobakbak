@@ -20,7 +20,7 @@
  * written, and it is the one that would have failed.
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { REJECT_REASONS } from '../../src/metrics/registry';
+import { PROFILE_REFUSAL_REASONS, REJECT_REASONS } from '../../src/metrics/registry';
 import { join } from 'node:path';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -107,6 +107,52 @@ describe('the metrics registry', () => {
     // exactly that reason: the only process that issues a sanction is the
     // console, which is deliberately isolated and exposes no scrape endpoint,
     // so the metric could not have been collected from anywhere.
+    expect(dead).toEqual([]);
+  });
+});
+
+/**
+ * A declared label value that nothing writes (F-038).
+ *
+ * `metrics-wiring.test.ts` proves every declared *metric* is written somewhere.
+ * It said nothing about label values, and one of them — `age_below_minimum` on
+ * `chat_profiles_refused_total` — was described in the registry as a count of
+ * people who told this service they are under 18, called an input to the
+ * minor-safety work, and incremented by no code at all. The refusal happens
+ * inside `parseClientFrame`, so it was landing in
+ * `chat_invalid_frames_total{reason="invalid"}` with every other malformed
+ * frame.
+ *
+ * That is worse than a dead metric. A dead metric is an empty graph; a
+ * documented dead *label* is a comment asserting that a safety number is being
+ * collected when it is not.
+ *
+ * Deliberately scoped to this one list rather than applied to every label set.
+ * Several label values are passed as variables — priority classes, delivery
+ * routes — and never appear as literals at their write site, so a blanket
+ * version of this check would fail on correct code and be deleted within a
+ * week. This list is small, closed, and every member of it is safety-relevant.
+ */
+describe('profile refusal reasons', () => {
+  it('writes every reason it declares, somewhere that is not the registry', () => {
+    const written = new Set<string>();
+    for (const file of sourceFiles(SRC)) {
+      if (file === REGISTRY) continue;
+      const source = readFileSync(file, 'utf8');
+      for (const reason of PROFILE_REFUSAL_REASONS) {
+        // As a complete call argument, not merely present in the file. The
+        // first version of this looked for the bare literal and passed with
+        // the write site deleted, because the value also appears in a *type*
+        // annotation (`profileRefused(reason: 'age_below_minimum')`). A guard
+        // that a type satisfies is a guard that proves nothing — which is the
+        // same mistake, one level up, as the dead label it is here to catch.
+        if (source.includes(`('${reason}')`) || source.includes(`('${reason}',`)) {
+          written.add(reason);
+        }
+      }
+    }
+
+    const dead = PROFILE_REFUSAL_REASONS.filter((reason) => !written.has(reason));
     expect(dead).toEqual([]);
   });
 });

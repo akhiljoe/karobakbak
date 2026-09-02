@@ -1,0 +1,545 @@
+{
+  "uid": "karobakbak-cost",
+  "title": "karobakbak \u2014 cost",
+  "tags": [
+    "karobakbak",
+    "cost"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Is the deck priced at all",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cost model",
+      "description": "0 means nobody has said what anything costs \u2014 the deck is UNPRICED, not free. Every panel below reads $0.00 in that state, and that would be a confident lie about a bill. Set COST_PER_*_USD; they default to zero because a plausible default would be believed and would be wrong.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "UNPRICED",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "priced",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(chat_cost_model_configured)",
+          "legendFormat": "configured"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cost per hour",
+      "description": "Every category summed, in US dollars.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_dollars_per_hour:total",
+          "legendFormat": "$/hour"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Projected monthly",
+      "description": "Cost per hour \u00d7 730, the hours in an average month.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_dollars_per_month:projected",
+          "legendFormat": "$/month"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Per conversation",
+      "description": "The number this whole deck exists for, and the reason the product metrics were built first: this denominator did not exist until then. A quiet hour reports the whole hourly cost as the price of one conversation, which is arithmetically honest \u2014 infrastructure that runs for nobody costs exactly what it costs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_dollars_per_conversation",
+          "legendFormat": "$/conversation"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Where the money goes",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost per hour by category",
+      "description": "Micro-cents of US dollars throughout, because MODEL_PRICES fixed that unit before this deck existed. A price in another currency would be summed here silently and produce a number that is neither.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_micro_cents_per_hour:compute / 100000000",
+          "legendFormat": "compute"
+        },
+        {
+          "refId": "B",
+          "expr": "kbb:cost_micro_cents_per_hour:memory / 100000000",
+          "legendFormat": "memory"
+        },
+        {
+          "refId": "C",
+          "expr": "kbb:cost_micro_cents_per_hour:egress / 100000000",
+          "legendFormat": "egress"
+        },
+        {
+          "refId": "D",
+          "expr": "kbb:cost_micro_cents_per_hour:disk / 100000000",
+          "legendFormat": "disk"
+        },
+        {
+          "refId": "E",
+          "expr": "kbb:cost_micro_cents_per_hour:personas / 100000000",
+          "legendFormat": "personas"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Per unit of product",
+      "description": "Both clamp their denominator to 1, deliberately, rather than guarding a division by zero \u2014 Prometheus would return +Inf and chart a gap.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_dollars_per_conversation",
+          "legendFormat": "per conversation"
+        },
+        {
+          "refId": "B",
+          "expr": "kbb:cost_dollars_per_1k_messages",
+          "legendFormat": "per 1k messages"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "What the infrastructure is doing",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "vCPU: provisioned against used",
+      "description": "Priced on PROVISIONED, not used. A fixed VM costs its full core count whether the process is busy or idle, so a usage-based bill would drop overnight while the invoice did not move. Utilisation is here to answer a different question \u2014 is the machine the right size.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:vcpu:provisioned",
+          "legendFormat": "provisioned"
+        },
+        {
+          "refId": "B",
+          "expr": "kbb:vcpu:used",
+          "legendFormat": "used"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory: provisioned against working set",
+      "description": "Working set rather than RSS: what the kernel would struggle to reclaim, which is what a host is sized on.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "decgbytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:memory_gb:provisioned",
+          "legendFormat": "provisioned"
+        },
+        {
+          "refId": "B",
+          "expr": "kbb:memory_gb:used",
+          "legendFormat": "working set"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "WebSocket bytes",
+      "description": "Counted in the application, not at nginx: cAdvisor's interface counters would bill every Redis round trip and Pub/Sub publish as though it left the host, and here that is most of the bytes. A FLOOR on egress \u2014 payload only, before framing and TLS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_ws_bytes_total{direction=\"out\"}[$__rate_interval]))",
+          "legendFormat": "out"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_ws_bytes_total{direction=\"in\"}[$__rate_interval]))",
+          "legendFormat": "in"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Database size, and whether it reaches a steady state",
+      "description": "A design claim (D17) that had never been watched: rows are deleted on a deadline stamped at insert, so this should level off rather than grow for ever. The growth series goes negative while a backlog is worked off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(pg_database_size_bytes)",
+          "legendFormat": "database size"
+        },
+        {
+          "refId": "B",
+          "expr": "kbb:storage_growth_bytes_per_day",
+          "legendFormat": "growth per day"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Model spend",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Persona cost per hour, and what is left of the budget",
+      "description": "The one category that was already measured. Both the ceiling and the counter live in PostgreSQL, because Redis persistence is off and a spend counter that resets is a budget that refills exactly when something has gone wrong enough to restart the process.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kbb:cost_micro_cents_per_hour:personas / 100000000",
+          "legendFormat": "$/hour"
+        },
+        {
+          "refId": "B",
+          "expr": "max(chat_persona_budget_remaining_micro_cents) / 100000000",
+          "legendFormat": "$ remaining"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens by kind",
+      "description": "The two vendors disagree about what an input token is \u2014 Anthropic excludes cache reads, OpenAI includes them \u2014 so `normaliseUsage` subtracts. A cache_read line that tracks input exactly is that bug returning.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (rate(chat_persona_tokens_total[$__rate_interval]))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    }
+  ]
+}

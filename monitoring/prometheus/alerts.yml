@@ -331,3 +331,109 @@ groups:
             moved before the cache breakpoint, or the stable prefix fell below
             the minimum cacheable size. There is no error for this; the bill is
             simply several times larger.
+
+  # ---------------------------------------------------------------------------
+  # PRODUCT AND COST (phase 28)
+  # ---------------------------------------------------------------------------
+  # These watch the two decks built in phases 26 and 27. Every one of them is
+  # written to stay quiet when its series are absent, the same discipline the
+  # persona rules already follow — a deployment with no traffic must not page.
+  - name: karobakbak-product
+    rules:
+      # Safety evidence being lost under overload. D26 and D27 claim the queue
+      # sheds P3 first and protects everything above it, and a 5,000-bot run
+      # demonstrated exactly that: 2,657 records dropped, every one of them P3.
+      # A P0 or P1 drop is that claim failing, and it is the most serious thing
+      # any of these decks can show.
+      - alert: SafetyEvidenceDropped
+        expr: sum(increase(chat_retention_dropped_total{class=~"p0|p1"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: "Retention dropped a P0/P1 record — safety evidence is being lost"
+          description: >-
+            The write-behind queue is lossy under overflow by design (D16), but the
+            priority classes exist so that ordinary chat is shed and evidence is not.
+            Check chat_retention_queue_depth by class and the breaker state.
+
+      # An under-18 declaration. Not a fault and deliberately not a page: it is a
+      # safety signal the minor-safety work needs a count of, and a sudden change
+      # in the rate is what is worth a human looking. The age gate remains the
+      # whole of the enforcement (minor-safety-policy §3); this is not age
+      # assurance and must never be described as such.
+      - alert: AgeBelowMinimumDeclarations
+        expr: sum(increase(chat_profiles_refused_total{reason="age_below_minimum"}[1h])) > 20
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Unusual number of declared ages below the minimum"
+          description: >-
+            Counted, never who and never what age. Worth reading alongside the
+            moderation queue rather than acted on directly.
+
+      # Sign-in is reaching the provider and not coming back. Distinguishes a
+      # broken OIDC configuration from nobody being interested, which look
+      # identical without it.
+      - alert: SignInFailing
+        expr: >-
+          sum(increase(chat_auth_starts_total[30m])) > 10
+          and
+          sum(increase(chat_auth_callbacks_total{outcome="ok"}[30m]))
+            / clamp_min(sum(increase(chat_auth_starts_total[30m])), 1) < 0.5
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Fewer than half of started sign-ins are completing"
+          description: >-
+            Read chat_auth_callbacks_total by outcome. `flow_mismatch` is login-CSRF
+            prevention doing its job; `token_error` and `no_credential` are faults.
+
+  # Named apart from the recording group in cost.rules.yml. Two rule groups may
+  # share a name and Prometheus will load both, which makes a rule impossible to
+  # locate from its group label alone.
+  - name: karobakbak-cost-alerts
+    rules:
+      # ---------------------------------------------------------------------
+      # ON RATE OF CHANGE, NEVER AN ABSOLUTE FIGURE (D56)
+      # ---------------------------------------------------------------------
+      # The same code runs on a laptop and on a production host with different
+      # absolute costs and identical wrong-direction signals. An absolute
+      # threshold would have to be re-tuned per environment, which means it
+      # would be wrong in one of them.
+      #
+      # Both are gated on `chat_cost_model_configured` so an unpriced deployment
+      # — which is the default, because a plausible default price would be
+      # believed and wrong — never fires them.
+      - alert: CostPerConversationRising
+        expr: >-
+          max(chat_cost_model_configured) == 1
+          and
+          kbb:cost_dollars_per_conversation
+            > 3 * avg_over_time(kbb:cost_dollars_per_conversation[24h])
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Cost per conversation is 3x its own daily average"
+          description: >-
+            Usually the denominator rather than the bill: infrastructure that runs
+            for nobody costs exactly what it costs, so a quiet period reports the
+            whole hourly cost as the price of one conversation. Check the funnel
+            before checking the spend.
+
+      # Storage that grows without bound is D17 failing — deadlines are stamped
+      # at insert, so the database should level off rather than climb for ever.
+      - alert: StorageNotReachingSteadyState
+        expr: kbb:storage_growth_bytes_per_day > 0 and kbb:disk_gb:used > 1
+        for: 12h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Retained data has grown every hour for twelve hours"
+          description: >-
+            Check chat_retention_backlog. A deletion worker that has fallen behind
+            still deletes steadily, so throughput looks healthy while the backlog
+            grows — the backlog is the instrument, not the delete rate.

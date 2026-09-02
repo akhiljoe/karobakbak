@@ -527,6 +527,340 @@
           "legendFormat": "rss {{instance}}"
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Database writes and the spool",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Batch write latency and failures",
+      "description": "Never log a pg error object \u2014 driver errors echo parameter values, which on this path is the row that was just being inserted. `dbErrorFields()` emits SQLSTATE only, and that code is the label here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chat_db_write_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chat_db_write_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p99"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (code) (rate(chat_db_write_failures_total[$__rate_interval]))",
+          "legendFormat": "failed: {{code}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Breaker transitions",
+      "description": "The breaker's reaction time is BREAKER_FAILURE_THRESHOLD x DATABASE_STATEMENT_TIMEOUT_MS \u2014 50s at the defaults. That is the outage that must elapse before the spool comes into play; change one and the other needs revisiting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (to) (increase(chat_db_breaker_transitions_total[$__rate_interval]))",
+          "legendFormat": "to {{to}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Spool writes, drains and expiries",
+      "description": "The spool is bounded outage tolerance and NOT durable storage (D28) \u2014 a host failure loses it. Never describe it otherwise here or anywhere else.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 73
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_spool_writes_total[$__rate_interval]))",
+          "legendFormat": "written"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_spool_drained_total[$__rate_interval]))",
+          "legendFormat": "drained"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_spool_expired_total[$__rate_interval]))",
+          "legendFormat": "expired for age"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(chat_spool_corrupt_records_total[$__rate_interval]))",
+          "legendFormat": "corrupt"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Match attempts against matches made",
+      "description": "An attempt is one tryMatch invocation whatever came back. A rising ratio of attempts to matches is the retry loop working harder \u2014 usually stale queue entries or blocked candidates being walked past.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 73
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chat_match_attempts_total[$__rate_interval]))",
+          "legendFormat": "attempts"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_matches_created_total[$__rate_interval]))",
+          "legendFormat": "matches"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "AI personas \u2014 off by default, absent is correct",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 81
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Conversations, replies and withdrawals",
+      "description": "A persona is an ordinary client: a real socket, the ordinary queue, the ordinary tryMatch. No branch in matchmaking, which is why blocks, bans, rate limits and retention apply to it without anybody writing code to make them.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 82
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(chat_persona_conversations_total[$__rate_interval]))",
+          "legendFormat": "conversations: {{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chat_persona_replies_total[$__rate_interval]))",
+          "legendFormat": "replies"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_persona_withdrawn_total[$__rate_interval]))",
+          "legendFormat": "withdrawn"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Replies per conversation, and the wait before a fill",
+      "description": "A3's fill policy: how long somebody waited before a persona was dispatched to them. Personas must never displace a human who was available.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 82
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chat_persona_replies_per_conversation_bucket[$__rate_interval])))",
+          "legendFormat": "replies p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(chat_persona_wait_before_fill_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "wait p90"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider latency, and sessions flagged by the guard",
+      "description": "The six safety limits sit between the model and the socket, not in the prompt (D-AI-5): a limit written into a system prompt is one the thing generating text can be talked around.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 90
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(chat_persona_provider_latency_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 {{provider}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (reason) (rate(chat_persona_sessions_flagged_total[$__rate_interval]))",
+          "legendFormat": "flagged: {{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Limit trips and fill suppression",
+      "description": "A fill policy that has quietly stopped filling looks identical to one with nothing to fill, unless every reason is already on the graph at zero \u2014 which is why they are zero-initialised.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "karobakbak-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 90
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 12,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (limit) (rate(chat_persona_limit_trips_total[$__rate_interval]))",
+          "legendFormat": "tripped: {{limit}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (reason) (rate(chat_persona_fill_suppressed_total[$__rate_interval]))",
+          "legendFormat": "suppressed: {{reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(chat_persona_fill_dispatched_total[$__rate_interval]))",
+          "legendFormat": "dispatched"
+        }
+      ]
     }
   ]
 }

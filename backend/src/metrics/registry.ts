@@ -22,7 +22,7 @@
 import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 import type { Config, RetentionPriority } from '../config';
-import { INTENTS } from '../protocol/types';
+import { CLIENT_EVENTS, INTENTS } from '../protocol/types';
 
 /** Fixed label sets. Anything not listed here is a bug, not a new value. */
 export const DELIVERY_ROUTES = ['local', 'remote', 'dropped'] as const;
@@ -151,6 +151,37 @@ export const AUTH_OUTCOMES = [
  * statistic wearing a technical name.
  */
 export const RECONNECT_FAILURES = ['no_session', 'expired', 'error'] as const;
+
+/**
+ * Why a declared profile was refused at join (F-038).
+ *
+ * `age_below_minimum` counts people who told this service they are under 18.
+ * That is a safety signal and an input to the minor-safety work security §24
+ * requires before launch — a count only, never who and never what age, because
+ * that is a claim about a person (I8).
+ *
+ * It was described in exactly those terms on `profilesRefused` and **written by
+ * nothing**. `AGE_BELOW_MINIMUM` is raised inside `parseClientFrame`
+ * (`validate.ts`), so the refusal landed in
+ * `chat_invalid_frames_total{reason="invalid"}` pooled with every other
+ * malformed frame, and the number the policy needs did not exist. A documented
+ * label with no write site is worse than an absent one: the comment asserts it
+ * is being counted.
+ */
+export const PROFILE_REFUSAL_REASONS = ['name_moderation', 'age_below_minimum'] as const;
+
+/**
+ * Why a record was dropped from the write-behind queue (D26, D27).
+ *
+ * `quota` is the per-session sub-quota inside a class; `class_full` is the
+ * class itself. Crossed with `PRIORITY_CLASSES` below, and every combination is
+ * zero-initialised — a `p0` series that does not exist is safety evidence being
+ * lost, rendered as "no data" rather than as the alarm it is.
+ */
+export const RETENTION_DROP_REASONS = ['quota', 'class_full'] as const;
+
+/** The one dimension a block is currently recorded under. */
+export const BLOCK_DIMENSIONS = ['recorded'] as const;
 
 /** Whether this origin had a picture to relay (§32). */
 export const AVATAR_OUTCOMES = ['ok', 'none', 'error'] as const;
@@ -908,6 +939,31 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const reason of RECONNECT_FAILURES) metrics.reconnectFailures.labels(reason).inc(0);
   for (const outcome of AVATAR_OUTCOMES) metrics.avatarRelay.labels(outcome).inc(0);
   for (const direction of ['in', 'out']) metrics.wsBytes.labels(direction).inc(0);
+
+  /*
+    Safety label sets, and the reason this block is not optional.
+
+    Every one of these was absent from a live scrape until the thing it counts
+    happened for the first time — which is the exact failure `REJECT_REASONS`
+    records about `'banned'`, repeated across the four series a safety dashboard
+    is mostly made of. An operator could not tell "nobody has declared an age
+    below the minimum" from "that series does not exist", and the second reads
+    as the first.
+
+    `retentionDropped` matters most: a `p0` or `p1` series appearing for the
+    first time is safety evidence being lost under overload, and until it
+    appeared the panel showed no data — indistinguishable from a healthy run.
+  */
+  for (const reason of PROFILE_REFUSAL_REASONS) metrics.profilesRefused.labels(reason).inc(0);
+  for (const dimension of BLOCK_DIMENSIONS) metrics.blocks.labels(dimension).inc(0);
+  for (const priority of PRIORITY_CLASSES) {
+    for (const reason of RETENTION_DROP_REASONS) {
+      metrics.retentionDropped.labels(priority, reason).inc(0);
+    }
+  }
+  for (const command of CLIENT_EVENTS) {
+    if (command !== 'ping') metrics.rateLimited.labels(command).inc(0);
+  }
 
   for (const reason of PERSONA_SKIP_REASONS) metrics.personaFillSuppressed.labels(reason).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaLimitTrips.labels(limit).inc(0);
