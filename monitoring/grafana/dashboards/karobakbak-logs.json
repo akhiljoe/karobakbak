@@ -1,0 +1,185 @@
+{
+  "uid": "karobakbak-logs",
+  "title": "karobakbak — logs",
+  "tags": ["karobakbak", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+        "query": "label_values(service)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "search",
+        "label": "Contains",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Volume and errors",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Lines per second by service",
+      "description": "What is talking. A service that goes quiet is as interesting as one that gets loud — the backend emits very few lines by design, so a step change here is usually something starting to fail in a loop rather than ordinary activity.",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "logs/s", "custom": { "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service) (rate({project=~\".+\", service=~\"$service\"}[$__auto]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Warnings and errors per second",
+      "description": "Only the two levels worth waking up for. `level` is a label promoted by the shipper from the JSON the backend already writes, so this is exact rather than a text match.",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "unit": "logs/s", "custom": { "fillOpacity": 20, "showPoints": "never" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "warn" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (level) (rate({project=~\".+\", service=~\"$service\", level=~\"warn|error\"}[$__auto]))",
+          "legendFormat": "{{level}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "The edge",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+    },
+    {
+      "type": "timeseries",
+      "title": "nginx responses by status",
+      "description": "From the access log's JSON, not from a metric. 451 is the geographic block (docs/policies/JURISDICTIONS.md) and is expected to be non-zero only if somebody sends a CF-IPCountry header from a blocked region; 403 on /ws is an origin refusal, which bots never trip — see the swarm handoff, trap 20.",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate({project=~\".+\", service=\"frontend\"} | json | stream = `nginx_access` [$__auto]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Edge request time, p50 / p95 / p99",
+      "description": "Measured at nginx, so it includes the proxy hop the application's own delivery-latency histogram cannot see. A gap between this and chat_delivery_latency_seconds on the overview dashboard is time spent at the edge.",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "quantile_over_time(0.5, {project=~\".+\", service=\"frontend\"} | json rs=\"request_seconds\", st=\"stream\" | st = `nginx_access` | unwrap rs [$__auto]) by ()",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "quantile_over_time(0.95, {project=~\".+\", service=\"frontend\"} | json rs=\"request_seconds\", st=\"stream\" | st = `nginx_access` | unwrap rs [$__auto]) by ()",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "quantile_over_time(0.99, {project=~\".+\", service=\"frontend\"} | json rs=\"request_seconds\", st=\"stream\" | st = `nginx_access` | unwrap rs [$__auto]) by ()",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "The lines themselves",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+    },
+    {
+      "type": "logs",
+      "title": "Warnings and errors",
+      "description": "The panel to read first. Filtered to warn and error across every service, newest first.",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 19 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{project=~\".+\", service=~\"$service\", level=~\"warn|error\"} |= `$search`"
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Everything",
+      "description": "Unfiltered by level. Use the Contains box at the top to narrow it — an instance id, a session id, a component name. Never search for message text: there is none here, and that is the point (invariant I8).",
+      "datasource": { "type": "loki", "uid": "karobakbak-loki" },
+      "gridPos": { "h": 13, "w": 24, "x": 0, "y": 30 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{project=~\".+\", service=~\"$service\"} |= `$search`"
+        }
+      ]
+    }
+  ]
+}

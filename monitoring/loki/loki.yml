@@ -1,0 +1,84 @@
+# Loki — where log lines go so they outlive the container that wrote them.
+#
+# Single binary, filesystem storage, one replica. That is the right shape for
+# this system and not a shortcut: production runs a single backend replica
+# (cost §26) and the second exists on a laptop to prove cross-instance
+# correctness rather than to carry load. A microservices Loki deployment would
+# be more infrastructure than the thing it observes.
+#
+# ---------------------------------------------------------------------------
+# WHY ANALYTICS IS OFF, EXPLICITLY
+# ---------------------------------------------------------------------------
+# Loki reports usage statistics to Grafana Labs by default. This service
+# publishes a privacy policy saying it makes no third-party requests, and
+# although that sentence is about the visitor's browser rather than about the
+# operator's own infrastructure, a monitoring component quietly phoning home is
+# exactly the kind of detail that makes a published claim awkward to defend.
+# It is off, and it is off in writing rather than by relying on the default
+# staying where it is.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # `info` narrates every flush. The point of this component is to make the
+  # application's logs readable; drowning them in its own is self-defeating.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    # v13 + tsdb is the current schema. `from` is a schema boundary rather than
+    # a start date — it must not be moved backwards once data exists under it.
+    - from: 2024-04-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # ---------------------------------------------------------------------------
+  # RETENTION IS SHORTER THAN THE CONVERSATION RETENTION WINDOW, ON PURPOSE
+  # ---------------------------------------------------------------------------
+  # Conversations are kept 30 days because an investigation needs them
+  # (`DESIGN.md` §18.2). Logs are kept 7 days because an outage is diagnosed in
+  # hours and a log store is not evidence. Keeping operational logs as long as
+  # user content would mean a second store holding a month of activity for no
+  # stated purpose, which is the opposite of what the retention design says.
+  #
+  # It matches `PROMETHEUS_RETENTION`'s default so the two halves of an incident
+  # do not disappear at different times — a metric spike with no logs beside it
+  # is half an answer.
+  retention_period: 168h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Sized for a 5,000-bot run, which is the loudest thing that happens here.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  max_streams_per_user: 5000
+  max_query_series: 5000
+  allow_structured_metadata: true
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  # Without this, `retention_period` above is a number nothing acts on and the
+  # store grows for ever. The same shape as every other silent-configuration
+  # trap in this repository: it looks applied and is not.
+  retention_enabled: true
+
+analytics:
+  reporting_enabled: false
