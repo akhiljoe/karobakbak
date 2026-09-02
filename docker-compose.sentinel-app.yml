@@ -1,0 +1,81 @@
+# The application, running against the Sentinel set instead of a single Redis.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS BESIDE `docker-compose.sentinel.yml` RATHER THAN INSIDE IT
+# ---------------------------------------------------------------------------
+# That file is a rig: three Sentinels, a primary and a replica, and nothing
+# else. `OPERATIONS.md` §17 drills it by hand — stop the primary, watch the
+# replica take over, confirm a key survived — and it proves Redis fails over.
+#
+# What it cannot prove is what this system does *while* that happens. Every
+# matchmaking transition lives in Redis, `/ready` is derived from Redis health
+# and nothing else, and D13 rules out Cluster and names replica failover as the
+# answer. So the question that matters is not "does Redis promote a replica" but
+# "do conversations survive a promotion" — and until now nobody had put traffic
+# on it and looked.
+#
+# Kept separate so the rig stays a rig. Somebody drilling Redis on its own gets
+# the same three containers they always did.
+#
+# ---------------------------------------------------------------------------
+# HOW TO RUN IT
+# ---------------------------------------------------------------------------
+#   docker compose --env-file .env.loadtest -p karobakbak-sentinel \
+#     -f docker-compose.yml -f docker-compose.sentinel.yml \
+#     -f docker-compose.sentinel-app.yml up -d
+#
+# Then drive it with the swarm and pull the primary out mid-run:
+#
+#   docker stop karobakbak-redis-primary
+#
+# `npm run sentinel:up` and `npm run sentinel:failover` are the same two
+# commands with the flags already right.
+#
+# ---------------------------------------------------------------------------
+# THE ORDINARY `redis` SERVICE STILL STARTS, AND IS UNUSED
+# ---------------------------------------------------------------------------
+# Compose overrides can add and change services; they cannot remove one. So the
+# single-node `redis` from `docker-compose.yml` comes up and nothing talks to
+# it, because the backend below is pointed at the Sentinel set instead.
+#
+# Left visible rather than worked around. The alternative — duplicating every
+# application service into a fourth compose file so the stack can be assembled
+# without it — is a copy of the deployment that would drift from the real one,
+# which is a worse problem than one idle container.
+
+services:
+  backend:
+    environment:
+      # Unset, and that matters: setting both is refused at startup by name.
+      # `loadConfig` treats every half-specified topology as a startup failure
+      # rather than a fallback, because a topology that quietly degraded to one
+      # node would look configured, pass every health check, and reveal itself
+      # only on the night it was bought to survive.
+      REDIS_URL: ""
+      # Static addresses, never container names. This is the trap the drill
+      # already paid for: with `sentinel resolve-hostnames yes` and a name,
+      # stopping the primary removes it from Docker's DNS, Sentinel's lookup
+      # blocks, and the latency spike reads to Sentinel as its own clock
+      # jumping — so it enters TILT, stops acting, and never votes. The symptom
+      # is silence rather than an error, and the failover simply does not
+      # happen.
+      REDIS_SENTINELS: "172.31.240.21:26379,172.31.240.22:26379,172.31.240.23:26379"
+      REDIS_SENTINEL_NAME: "karobakbak"
+    networks:
+      - default
+      - sentinel
+    depends_on:
+      sentinel-1:
+        condition: service_started
+      sentinel-2:
+        condition: service_started
+      sentinel-3:
+        condition: service_started
+
+  # The janitor's leader lock, the queue and every session row live in the same
+  # Redis, so the migration and console processes need no change — they touch
+  # PostgreSQL only. Nothing else in the stack is repointed.
+
+networks:
+  sentinel:
+    external: false
