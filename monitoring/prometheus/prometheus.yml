@@ -57,6 +57,40 @@ scrape_configs:
         port: 8080
         refresh_interval: 15s
 
+# ---------------------------------------------------------------------------
+# WHAT IS NOT STORED, AND WHY THE LIST IS THIS SHORT
+# ---------------------------------------------------------------------------
+# Applied to the two application jobs below. It drops sixty series per instance
+# that nothing in this repository has ever read: V8 heap-space breakdowns, GC
+# duration buckets, and the per-type handle and resource counts.
+#
+# The `_total` counterparts of the handle and resource gauges are kept, and so
+# are `_sum` and `_count` for GC — so "is garbage collection getting worse" is
+# still answerable. What goes is the per-space and per-percentile detail, which
+# would only ever be read by somebody debugging V8 itself.
+#
+# ---------------------------------------------------------------------------
+# WHY PERSONA AND PREFERENCE SERIES ARE **NOT** DROPPED
+# ---------------------------------------------------------------------------
+# They are the obvious next cut: personas are off and `FILTERS_ENABLED` is
+# false in production, so 56 series sit at zero. Dropping them would save more
+# than everything above.
+#
+# It is not done, because **nine of them are referenced by alert rules**. A drop
+# rule here would work perfectly while the features are off and would silently
+# disable eight persona alerts and the preference ones on the day somebody
+# turns them on — a metric that is absent looks exactly like a metric that is
+# quiet, which is the failure this whole file exists to avoid. A zero-valued
+# series is cheap; an alert that stopped evaluating and told nobody is not.
+#
+# If that trade is ever worth making, the drop belongs beside a check that
+# fails when an alerted metric is on the drop list. Not before.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'chat_process_nodejs_(heap_space_size_[a-z]+_bytes|gc_duration_seconds_bucket|active_handles|active_resources)'
+        action: drop
+
+
   - job_name: karobakbak-personas
     metrics_path: /metrics
     # ---------------------------------------------------------------------
@@ -71,6 +105,13 @@ scrape_configs:
     # these — a second would double-dispatch against the same queue.
     static_configs:
       - targets: ["personas:8090"]
+
+    # The same drop list as the backend job. The persona process runs the same
+    # default collector and produces the same sixty series of V8 internals.
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'chat_process_nodejs_(heap_space_size_[a-z]+_bytes|gc_duration_seconds_bucket|active_handles|active_resources)'
+        action: drop
 
   # ---------------------------------------------------------------------------
   # THE COST DECK'S MULTIPLICANDS
