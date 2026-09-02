@@ -21,7 +21,15 @@ import {
   talker,
   verbose,
 } from './talkers';
-import { grazer, hyperSkipper, instantRejoiner, leaver, queueFlapper } from './skippers';
+import {
+  grazer,
+  hyperSkipper,
+  instantRejoiner,
+  lateJoiner,
+  leaver,
+  queueFlapper,
+  queueSurvivor,
+} from './skippers';
 import {
   backgrounded,
   cookieLoser,
@@ -77,6 +85,12 @@ export const PERSONAS: readonly Persona[] = [
   leaver,
   queueFlapper,
   instantRejoiner,
+  // S6 and N9: the two rows that are about *waiting* rather than about doing
+  // something. A queue entry belonging to a live searcher must survive
+  // everybody else's churn, and an arrival that missed the rush must still be
+  // matched rather than starved behind it.
+  queueSurvivor,
+  lateJoiner,
   tabCloser,
   rageQuitter,
   backgrounded,
@@ -185,6 +199,10 @@ const REALISTIC: readonly MixEntry[] = [
   { scenario: 'A7', weight: 1 },
   { scenario: 'M1', weight: 2 },
   { scenario: 'M2', weight: 1 },
+  // Two rows about waiting. Small weights: they are here to be present in a
+  // busy queue rather than to be a meaningful share of it.
+  { scenario: 'S6', weight: 2 },
+  { scenario: 'N9', weight: 2 },
 ];
 
 /**
