@@ -194,8 +194,44 @@ export class DeletionWorker {
    */
   lastBacklog: Record<string, number> | null = null;
 
+  /**
+   * How far this process's clock is from the database's, in milliseconds.
+   *
+   * Positive means this process is ahead. Null until a sample has succeeded —
+   * the same rule `lastBacklog` follows, because publishing zero from a failed
+   * read is the most reassuring thing this process could wrongly say.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY THIS IS WORTH MEASURING AT ALL
+   * ---------------------------------------------------------------------------
+   * `retention_expires_at` is stamped from **this process's** clock
+   * (`expiryFrom(nowMs, days)` in `repositories.ts`, D17) and every deletion
+   * statement compares it against **the database's** `now()`. The two clocks are
+   * coupled and nothing checked they agree.
+   *
+   * On one host with the database in a container beside it they are the same
+   * clock and this reads zero. On a managed database (§16) they are different
+   * machines, and a skew moves every retention deadline by exactly that much: a
+   * process running an hour fast keeps conversations an hour longer than the
+   * privacy policy says, and nothing anywhere would have said so.
+   *
+   * NTP normally makes this a non-issue, which is the argument for measuring it
+   * rather than engineering around it — the failure is rare, silent, and
+   * directly contradicts a published claim.
+   */
+  lastClockSkewMs: number | null = null;
+
   async sampleBacklog(): Promise<void> {
     try {
+      // The clock reading rides along on the query that was happening anyway.
+      // A round trip of its own would be a second thing to fail for a number
+      // that is only interesting when it is large.
+      const clock = await this.db.query<{ db_ms: string }>(
+        `select (extract(epoch from now()) * 1000)::bigint::text as db_ms`,
+      );
+      const dbMs = Number(clock.rows[0]?.db_ms ?? Number.NaN);
+      if (Number.isFinite(dbMs)) this.lastClockSkewMs = Date.now() - dbMs;
+
       const { rows } = await this.db.query<{ table_name: string; n: string }>(
         `select 'conversations' as table_name, count(*)::text as n
            from conversations

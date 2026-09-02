@@ -41,6 +41,7 @@ export class RetentionMetricsPublisher {
     this.publishBackup(nowMs);
     this.publishReportQueue();
     this.publishBacklog();
+    this.publishClockSkew();
   }
 
   /**
@@ -126,6 +127,19 @@ export class RetentionMetricsPublisher {
    * a zero backlog from a monitor that could not read the database is the most
    * reassuring thing this process could wrongly claim.
    */
+  /**
+   * The clock difference, published only once a sample has succeeded.
+   *
+   * Same rule as the backlog beside it: a zero from a read that never happened
+   * would say the two clocks agree, which is the one thing this metric must not
+   * claim without evidence.
+   */
+  private publishClockSkew(): void {
+    const skew = this.deletion?.lastClockSkewMs;
+    if (skew === null || skew === undefined) return;
+    this.metrics.clockSkew.set(skew / 1000);
+  }
+
   private publishBacklog(): void {
     if (!this.deletion) return;
     const backlog = this.deletion.lastBacklog;

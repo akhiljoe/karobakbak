@@ -608,6 +608,21 @@ export interface Metrics {
    */
   readonly costModelConfigured: Gauge<string>;
 
+  /**
+   * This process's clock minus the database's, in seconds. Positive is ahead.
+   *
+   * `retention_expires_at` is stamped from this process's clock and every
+   * deletion statement compares it against the database's `now()`. A skew moves
+   * every retention deadline by exactly that much, in a direction nothing else
+   * reports: a process running an hour fast keeps conversations an hour longer
+   * than the privacy policy says.
+   *
+   * Zero on a single host, where both are the same clock. It exists for the
+   * managed-database case (§16), where they are two machines and NTP is the only
+   * thing keeping them together.
+   */
+  readonly clockSkew: Gauge<string>;
+
   /* backups */
   readonly backupLastSuccess: Gauge<string>;
   readonly backupFailures: Counter<string>;
@@ -898,6 +913,11 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     costModelConfigured: gauge(
       'chat_cost_model_configured',
       '1 when at least one unit price is configured, 0 when the deck is unpriced',
+    ),
+
+    clockSkew: gauge(
+      'chat_clock_skew_seconds',
+      "This process's clock minus the database's. Positive means this process is ahead",
     ),
 
     backupLastSuccess: gauge('chat_backup_last_success_timestamp', 'Unix time of the last observed successful backup'),
