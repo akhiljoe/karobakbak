@@ -62,8 +62,8 @@ import {
   type ServerFeatures,
   type ServerLimits,
 } from '../protocol/types';
-import { humanCadence, openingBrevity, splitIntoBubbles } from './cadence';
-import type { Cadence } from './cadence';
+import { DEFAULT_CADENCE, humanCadence, openingBrevity, splitIntoBubbles } from './cadence';
+import type { Cadence, CadenceTuning } from './cadence';
 import type { PersonaCharacter } from './types';
 
 /* -------------------------------------------------------------------------- */
@@ -160,7 +160,7 @@ const DEFAULT_SILENCE_TIMEOUT_MS = 120_000;
  * Three rather than two, because a person genuinely does repeat themselves once
  * when they think a message did not send.
  */
-const REPEATS_BEFORE_MOVING_ON = 3;
+const DEFAULT_REPEATS_BEFORE_MOVING_ON = 3;
 
 /* -------------------------------------------------------------------------- */
 /* Client                                                                     */
@@ -206,6 +206,15 @@ export interface PersonaClientOptions {
    * persona that does is holding a queue seat and a connection for nothing.
    */
   readonly silenceTimeoutMs?: number;
+  /**
+   * The intervals and bubble sizes, as configuration supplies them.
+   *
+   * Separate from `cadence` above, which a test injects to pin the numbers
+   * exactly: this one also decides how a reply is split and how short an
+   * opening line is, and those are used whether or not the cadence is stubbed.
+   */
+  readonly tuning?: CadenceTuning;
+  readonly repeatsBeforeLeaving?: number;
   readonly onEvent?: (event: PersonaClientEvent) => void;
 }
 
@@ -260,6 +269,8 @@ export class PersonaClient {
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => () => void;
   private readonly cadence: Cadence;
+  private readonly tuning: CadenceTuning;
+  private readonly repeatsBeforeLeaving: number;
   private readonly silenceTimeoutMs: number;
 
   constructor(private readonly options: PersonaClientOptions) {
@@ -270,7 +281,9 @@ export class PersonaClient {
         const handle = setTimeout(fn, ms);
         return () => clearTimeout(handle);
       });
-    this.cadence = options.cadence ?? humanCadence();
+    this.tuning = options.tuning ?? DEFAULT_CADENCE;
+    this.cadence = options.cadence ?? humanCadence(Math.random, this.tuning);
+    this.repeatsBeforeLeaving = options.repeatsBeforeLeaving ?? DEFAULT_REPEATS_BEFORE_MOVING_ON;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS;
   }
 
@@ -511,8 +524,8 @@ export class PersonaClient {
 
     // Short at the start, whatever the voice produced. A stranger who opens
     // with a paragraph is one you stop reading.
-    const shaped = openingBrevity(text, this.sentThisConversation);
-    const bubbles = splitIntoBubbles(shaped, this.limits?.maxMessageLength);
+    const shaped = openingBrevity(text, this.sentThisConversation, this.tuning);
+    const bubbles = splitIntoBubbles(shaped, this.limits?.maxMessageLength, this.tuning);
     if (bubbles.length === 0) return;
 
     let delivered = 0;
@@ -615,7 +628,7 @@ export class PersonaClient {
       this.repeatCount = 1;
     }
 
-    return this.repeatCount >= REPEATS_BEFORE_MOVING_ON;
+    return this.repeatCount >= this.repeatsBeforeLeaving;
   }
 
   private resetRepetition(): void {

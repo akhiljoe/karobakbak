@@ -56,10 +56,17 @@ describe('isAllowedImageHost', () => {
   });
 });
 
+/**
+ * The limits the route passes in production, as `config.ts` defaults them.
+ * Stated here rather than imported so a change to the default is visible as a
+ * diff in this file, where the ceiling is what is being tested.
+ */
+const LIMITS = { maxBytes: 128 * 1024, timeoutMs: 4000 };
+
 describe('fetchAvatar', () => {
   it('returns the image and its type', async () => {
     const fetcher = stubImage(PNG);
-    const image = await fetchAvatar(OK_URL, logger, fetcher);
+    const image = await fetchAvatar(OK_URL, logger, LIMITS, fetcher);
 
     expect(image).not.toBeNull();
     expect(image?.contentType).toBe('image/png');
@@ -70,7 +77,7 @@ describe('fetchAvatar', () => {
     // An allowlisted host that answers 302 to somewhere else would otherwise
     // walk straight past the allowlist, which is the whole point of having one.
     const fetcher = stubImage(PNG);
-    await fetchAvatar(OK_URL, logger, fetcher);
+    await fetchAvatar(OK_URL, logger, LIMITS, fetcher);
 
     const options = (fetcher.mock.calls[0] as unknown[])[1] as RequestInit;
     expect(options.redirect).toBe('error');
@@ -86,7 +93,7 @@ describe('fetchAvatar', () => {
     ['a file URL', 'file:///etc/passwd'],
   ])('makes no request at all for %s', async (_name, url) => {
     const fetcher = stubImage(PNG);
-    await expect(fetchAvatar(url, logger, fetcher)).resolves.toBeNull();
+    await expect(fetchAvatar(url, logger, LIMITS, fetcher)).resolves.toBeNull();
     // The assertion that matters. Answering null after making the request
     // would mean the metadata endpoint had already been contacted.
     expect(fetcher).not.toHaveBeenCalled();
@@ -96,20 +103,20 @@ describe('fetchAvatar', () => {
     // A CDN answering HTML is a CDN answering an error page, and relaying it
     // from this origin would serve somebody else's markup as our content.
     const fetcher = stubImage(PNG, 'text/html');
-    await expect(fetchAvatar(OK_URL, logger, fetcher)).resolves.toBeNull();
+    await expect(fetchAvatar(OK_URL, logger, LIMITS, fetcher)).resolves.toBeNull();
   });
 
   it('refuses an empty body and a body over the ceiling', async () => {
-    await expect(fetchAvatar(OK_URL, logger, stubImage(new Uint8Array(0)))).resolves.toBeNull();
+    await expect(fetchAvatar(OK_URL, logger, LIMITS, stubImage(new Uint8Array(0)))).resolves.toBeNull();
 
     // Checked on what arrived rather than on `Content-Length`, which the sender
     // writes and can lie about.
     const huge = new Uint8Array(200 * 1024);
-    await expect(fetchAvatar(OK_URL, logger, stubImage(huge))).resolves.toBeNull();
+    await expect(fetchAvatar(OK_URL, logger, LIMITS, stubImage(huge))).resolves.toBeNull();
   });
 
   it('refuses a non-200', async () => {
-    await expect(fetchAvatar(OK_URL, logger, stubImage(PNG, 'image/png', 404))).resolves.toBeNull();
+    await expect(fetchAvatar(OK_URL, logger, LIMITS, stubImage(PNG, 'image/png', 404))).resolves.toBeNull();
   });
 
   it('answers null when the request throws', async () => {
@@ -118,6 +125,6 @@ describe('fetchAvatar', () => {
     const fetcher = jest.fn(async () =>
       Promise.reject(new TypeError('fetch failed')),
     ) as unknown as jest.Mock<typeof fetch>;
-    await expect(fetchAvatar(OK_URL, logger, fetcher)).resolves.toBeNull();
+    await expect(fetchAvatar(OK_URL, logger, LIMITS, fetcher)).resolves.toBeNull();
   });
 });

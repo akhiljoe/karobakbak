@@ -36,14 +36,6 @@ import type { Spool } from './spool';
 import { monotonicMs, secondsSince } from '../util/time';
 
 /**
- * How many unobserved batch durations to keep.
- *
- * Generous next to the publish interval, and bounded so a process with metrics
- * switched off does not accumulate an array for its whole life.
- */
-const MAX_PENDING_DURATIONS = 512;
-
-/**
  * The SQLSTATE of a driver error, or a placeholder.
  *
  * A code and nothing else. The error object itself is never read further here
@@ -170,7 +162,7 @@ export class RetentionWriter implements RetentionSink {
    *
    * A histogram cannot be reconstructed from a cumulative total the way a
    * counter can, so this is the one thing the publisher has to *drain* rather
-   * than diff. Bounded by `MAX_PENDING_DURATIONS`: if nothing ever collects
+   * than diff. Bounded by `this.config.retention.pendingDurationsMax`: if nothing ever collects
    * them — metrics disabled, publisher not running — the oldest are dropped
    * rather than accumulating for the life of the process.
    */
@@ -319,7 +311,7 @@ export class RetentionWriter implements RetentionSink {
   }
 
   private recordWriteDuration(startedAtMs: number): void {
-    if (this.writeDurations.length >= MAX_PENDING_DURATIONS) this.writeDurations.shift();
+    if (this.writeDurations.length >= this.config.retention.pendingDurationsMax) this.writeDurations.shift();
     this.writeDurations.push(secondsSince(startedAtMs));
   }
 

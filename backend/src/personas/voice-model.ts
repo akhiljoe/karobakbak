@@ -62,10 +62,10 @@ import type { FlirtationMode, PersonaCharacter } from './types';
  * breakpoint is the expensive-looking half and is nearly free after the first
  * call.
  */
-const RECENT_TURNS = 10;
+const DEFAULT_RECENT_TURNS = 10;
 
 /** A ceiling on the reply, so one runaway generation cannot cost a day's budget. */
-const MAX_OUTPUT_TOKENS = 300;
+const DEFAULT_MAX_OUTPUT_TOKENS = 300;
 
 export interface ModelVoiceOptions {
   readonly provider: ModelProvider;
@@ -78,6 +78,16 @@ export interface ModelVoiceOptions {
   readonly fallback: PersonaVoice;
   /** Called after every completed call, for metrics. */
   readonly onSpend?: (event: SpendEvent) => void;
+  /**
+   * How many recent turns the model is shown, and the ceiling on one reply.
+   *
+   * Both default to what this project ships. The window is what the prompt
+   * costs are dominated by, so it is the first thing worth moving when the bill
+   * matters — and the character sheet is the last, because trimming below the
+   * minimum cacheable prefix silently stops caching and costs *more*.
+   */
+  readonly recentTurns?: number;
+  readonly maxOutputTokens?: number;
 }
 
 export interface SpendEvent {
@@ -139,12 +149,17 @@ export function modelVoice(options: ModelVoiceOptions): PersonaVoice {
         return options.fallback.reply(turn);
       }
 
-      const messages = contextWindow(history);
+      const messages = contextWindow(history, options.recentTurns ?? DEFAULT_RECENT_TURNS);
       const reply = await options.provider.complete({
         stableSystem,
-        volatileSystem: buildVolatileSystem(options.surfaceDescription, history, turn),
+        volatileSystem: buildVolatileSystem(
+          options.surfaceDescription,
+          history,
+          turn,
+          options.recentTurns ?? DEFAULT_RECENT_TURNS,
+        ),
         messages,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       });
 
       // Recorded whether or not the reply is usable: a refused or truncated
@@ -373,6 +388,7 @@ function buildVolatileSystem(
   surfaceDescription: string,
   history: readonly ProviderMessage[],
   turn: VoiceTurn,
+  recentTurns: number,
 ): string {
   const parts = [`RIGHT NOW you are presenting as: ${surfaceDescription}`];
 
@@ -383,7 +399,7 @@ function buildVolatileSystem(
     parts.push('Reply to what they just said. Answer any question in it first.');
   }
 
-  if (history.length > RECENT_TURNS) {
+  if (history.length > recentTurns) {
     // A crude summary rather than a model-generated one. Paying for a
     // summarisation call to save tokens on a conversation that is about to end
     // anyway loses money; the message cap makes long conversations rare.
@@ -426,8 +442,11 @@ function buildVolatileSystem(
  * Consecutive same-role turns are fine — the API combines them — so no padding
  * or interleaving is needed beyond this.
  */
-function contextWindow(history: readonly ProviderMessage[]): readonly ProviderMessage[] {
-  const recent = history.slice(-RECENT_TURNS);
+function contextWindow(
+  history: readonly ProviderMessage[],
+  recentTurns: number,
+): readonly ProviderMessage[] {
+  const recent = history.slice(-recentTurns);
 
   let first = 0;
   while (first < recent.length && recent[first]?.role !== 'user') first += 1;

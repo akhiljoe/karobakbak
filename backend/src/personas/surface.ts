@@ -41,7 +41,7 @@ import type { PersonaCharacter, PersonaSurface } from './types';
  * The same reasoning applies, more weakly, to the other fields: see
  * `DECLINE_CHANCE`.
  */
-const NO_NAME_CHANCE = 0.12;
+const DEFAULT_NO_NAME_CHANCE = 0.12;
 
 /**
  * How often each of age, gender and country is left undeclared.
@@ -55,11 +55,19 @@ const NO_NAME_CHANCE = 0.12;
  * depends on it — a surface with a name and no country is fine, but the
  * generator still has to know where the name came from.
  */
-const DECLINE_CHANCE = 0.08;
+const DEFAULT_DECLINE_CHANCE = 0.08;
 
 export interface SurfaceOptions {
   /** Fixed seed, for tests. Production passes nothing and gets a random one. */
   readonly seed?: number;
+  /**
+   * How often a surface declines to give a name, and how often it declines a
+   * field outright. Production passes `config.personas`; the defaults here are
+   * what `config.ts` defaults to, and exist so a test can call this with a seed
+   * and nothing else.
+   */
+  readonly noNameChance?: number;
+  readonly declineChance?: number;
 }
 
 /**
@@ -90,6 +98,8 @@ export function generateSurface(
   options: SurfaceOptions = {},
 ): PersonaSurface {
   const rng = new Rng(options.seed ?? randomSeed());
+  const noNameChance = options.noNameChance ?? DEFAULT_NO_NAME_CHANCE;
+  const declineChance = options.declineChance ?? DEFAULT_DECLINE_CHANCE;
 
   // Country is chosen first and always, because the name pool depends on it.
   // Whether it is *declared* is decided afterwards.
@@ -100,13 +110,13 @@ export function generateSurface(
   const age = rng.between(lo, hi);
 
   const pool = poolFor(country, gender);
-  const name = rng.chance(NO_NAME_CHANCE) ? null : rng.pick(pool);
+  const name = rng.chance(noNameChance) ? null : rng.pick(pool);
 
   const profile: Profile = {
     name,
-    age: rng.chance(DECLINE_CHANCE) ? null : age,
-    gender: rng.chance(DECLINE_CHANCE) ? null : gender,
-    country: rng.chance(DECLINE_CHANCE) ? null : country,
+    age: rng.chance(declineChance) ? null : age,
+    gender: rng.chance(declineChance) ? null : gender,
+    country: rng.chance(declineChance) ? null : country,
   };
 
   // Declared for the fingerprint reason the rest of the surface exists for
@@ -117,7 +127,7 @@ export function generateSurface(
   //
   // Never `flirty`, and that is a decision rather than an omission — see
   // `SAFE_INTENTS` above for why symmetry does not answer it here.
-  const intent = rng.chance(DECLINE_CHANCE) ? null : rng.pick([...SAFE_INTENTS]);
+  const intent = rng.chance(declineChance) ? null : rng.pick([...SAFE_INTENTS]);
 
   // A generated age must satisfy the same rule a user's declaration does. The
   // character validator already enforces the range, so this is a second line

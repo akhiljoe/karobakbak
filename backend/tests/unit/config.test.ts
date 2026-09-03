@@ -5,6 +5,7 @@ import {
   PREFERENCE_LIMITS_ENFORCED,
   type Env,
 } from '../../src/config';
+import { DEFAULT_CADENCE } from '../../src/personas/cadence';
 
 /** A minimal environment that satisfies every cross-field constraint. */
 function baseEnv(overrides: Env = {}): Env {
@@ -439,6 +440,9 @@ describe('loadConfig — preference matching (D44)', () => {
     expect(config.preference).toEqual({
       enabled: false,
       wideSample: 32,
+      // The bucket outlives any one connection on purpose (§29, D18): keying
+      // it to a session would make replacing the connection a way to reset it.
+      bucketTtlSeconds: 7200,
       cooldownMs: 10_000,
       hourlyBudget: 120,
     });
@@ -1036,5 +1040,29 @@ describe('the resumption reserve', () => {
 
   it('refuses a percentage that would leave no seats for anybody new', () => {
     expect(() => loadConfig(baseEnv({ RESUME_RESERVE_PERCENT: '80' }), 1)).toThrow(/must be between/);
+  });
+});
+
+/**
+ * The claim `config.ts` makes in a comment, asserted.
+ *
+ * A value with two defaults has one that is wrong and no way to tell which.
+ * The cadence is the sharpest case in the codebase: `DEFAULT_CADENCE` is what
+ * a test gets and what `humanCadence` falls back to, `config.personas.cadence`
+ * is what production runs, and they are fifteen numbers that look identical
+ * until one of them is edited in only one place. Nothing would fail — personas
+ * would simply be paced differently in production than in every test.
+ */
+describe('the persona cadence has exactly one set of defaults', () => {
+  it('ships the numbers `DEFAULT_CADENCE` carries', () => {
+    expect(loadConfig(baseEnv()).personas.cadence).toEqual(DEFAULT_CADENCE);
+  });
+
+  it('still reads the environment over them', () => {
+    // Proving the equality above is not simply "config ignores the env".
+    const config = loadConfig(baseEnv({ PERSONA_MAX_BUBBLES: '2', PERSONA_TYPE_FLOOR_MS: '1' }));
+    expect(config.personas.cadence.maxBubbles).toBe(2);
+    expect(config.personas.cadence.typeFloorMs).toBe(1);
+    expect(config.personas.cadence.readFloorMs).toBe(DEFAULT_CADENCE.readFloorMs);
   });
 });

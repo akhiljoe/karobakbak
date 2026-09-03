@@ -37,7 +37,7 @@ import { hashIp, newPaymentReceipt } from '../util/ids';
 import { clientAddress } from '../ws/upgrade';
 import { bearerToken, resolveAccount } from '../accounts/credentials';
 import type { PaymentGateway } from './gateway';
-import { findProduct, resolveAmountPaise } from './products';
+import { buildProducts, findProduct, resolveAmountPaise } from './products';
 import type { PaymentRepository } from './repository';
 import { verifyWebhookSignature } from './signature';
 
@@ -62,6 +62,10 @@ export interface PaymentRoutes {
 
 export function createPaymentRoutes(deps: PaymentRoutesDeps): PaymentRoutes {
   const { config, logger, db, store, gateway, repository } = deps;
+  // Built once at startup: the catalogue is a function of configuration, and
+  // rebuilding it per request would let two orders in the same second be
+  // priced differently if the process were ever reconfigured mid-flight.
+  const catalogue = buildProducts(config.payments);
 
   /**
    * Read a request body, refusing anything over the configured ceiling.
@@ -163,7 +167,7 @@ export function createPaymentRoutes(deps: PaymentRoutesDeps): PaymentRoutes {
       return;
     }
 
-    const product = findProduct(parsed.product);
+    const product = findProduct(catalogue, parsed.product);
     if (product === null) {
       // The catalogue is not enumerated in the refusal. There is no reason a
       // caller needs to discover product keys by probing.

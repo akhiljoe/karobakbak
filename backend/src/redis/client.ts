@@ -91,7 +91,8 @@ function baseOptions(config: Config): RedisOptions {
     enableReadyCheck: true,
     // Exponential-ish backoff with a ceiling. Reconnection is expected and
     // routine (D12: Redis holds no persistence and may restart empty).
-    retryStrategy: (times: number) => Math.min(times * 200, 5000),
+    retryStrategy: (times: number) =>
+      Math.min(times * config.redis.retryStepMs, config.redis.retryMaxMs),
     // ioredis reconnects by itself on a READONLY reply from a failed-over
     // replica, which is what a replica promotion looks like to a client.
     reconnectOnError: (err: Error) => err.message.includes('READONLY'),
@@ -151,7 +152,7 @@ export async function createRedisClients(
       return 'connecting';
     },
 
-    waitUntilReady: async (timeoutMs = 10_000) => {
+    waitUntilReady: async (timeoutMs = config.redis.readyTimeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         if (state.command === 'ready' && state.subscriber === 'ready') return;

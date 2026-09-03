@@ -28,7 +28,7 @@ import type { PoolClient } from 'pg';
 
 import { dbErrorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
-import { capturedAmountMatches, findProduct } from './products';
+import { buildProducts, capturedAmountMatches, findProduct, type Pricing } from './products';
 
 export interface NewOrder {
   readonly orderId: string;
@@ -55,10 +55,16 @@ export type FulfilOutcome =
   | 'error';
 
 export class PaymentRepository {
+  /** The catalogue this deployment sells, built once from its pricing. */
+  private readonly catalogue;
+
   constructor(
     private readonly db: Database,
     private readonly logger: Logger,
-  ) {}
+    pricing: Pricing,
+  ) {
+    this.catalogue = buildProducts(pricing);
+  }
 
   /**
    * Record an order before the browser is ever told it exists.
@@ -134,7 +140,7 @@ export class PaymentRepository {
           return 'amount_mismatch';
         }
 
-        const product = findProduct(order.product);
+        const product = findProduct(this.catalogue, order.product);
         if (product === null) {
           // The catalogue changed under a live order. Recorded, not granted.
           this.logger.error('captured a payment for a product that no longer exists', {
@@ -214,7 +220,7 @@ export class PaymentRepository {
           [orderId],
         );
 
-        const product = findProduct(order.product);
+        const product = findProduct(this.catalogue, order.product);
         if (product === null || product.grantDays === 0 || order.accountId === null) {
           return 'fulfilled';
         }

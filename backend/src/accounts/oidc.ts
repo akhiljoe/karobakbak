@@ -56,7 +56,6 @@ const BAD_NONCE = 'id token nonce does not match this sign-in';
 const BAD_SUB = 'id token carries no subject';
 
 /** Tolerance for clock drift between this host and the provider. */
-const SKEW_SECONDS = 60;
 
 export interface StartedFlow {
   readonly authorizeUrl: string;
@@ -124,15 +123,14 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
    */
   let keys: Jwk[] = [];
   let lastFetch = 0;
-  const JWKS_MIN_REFETCH_MS = 60_000;
 
   async function loadKeys(force: boolean): Promise<void> {
     const now = Date.now();
     if (!force && keys.length > 0) return;
-    if (force && now - lastFetch < JWKS_MIN_REFETCH_MS) return;
+    if (force && now - lastFetch < auth.jwksMinRefetchMs) return;
     lastFetch = now;
 
-    const response = await fetch(auth.jwksUrl, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(auth.jwksUrl, { signal: AbortSignal.timeout(auth.jwksTimeoutMs) });
     if (!response.ok) throw new TokenError('could not fetch the provider signing keys');
     const body = (await response.json()) as { keys?: Jwk[] };
     keys = Array.isArray(body.keys) ? body.keys : [];
@@ -200,10 +198,10 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
     if (!audienceOk) throw new TokenError(BAD_AUD);
 
     const now = Math.floor(Date.now() / 1000);
-    if (typeof claims.exp !== 'number' || claims.exp + SKEW_SECONDS < now) {
+    if (typeof claims.exp !== 'number' || claims.exp + auth.clockSkewSeconds < now) {
       throw new TokenError(BAD_EXP);
     }
-    if (typeof claims.iat === 'number' && claims.iat - SKEW_SECONDS > now) {
+    if (typeof claims.iat === 'number' && claims.iat - auth.clockSkewSeconds > now) {
       throw new TokenError(BAD_IAT);
     }
 
@@ -355,7 +353,7 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
           method: 'POST',
           headers,
           body: body.toString(),
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(auth.tokenTimeoutMs),
         });
       } catch (err) {
         // The provider being unreachable must not read as a rejected sign-in.
