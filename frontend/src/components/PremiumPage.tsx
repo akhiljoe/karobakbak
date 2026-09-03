@@ -284,6 +284,17 @@ export function PremiumPage({ onSignIn, credential = null }: PremiumPageProps): 
             className="font-mono font-medium tracking-[-0.01em] text-ink-100"
             style={{ fontSize: 'clamp(24px, 3cqw, 30px)' }}
           >
+            {/*
+              A placeholder price, not a decided one (operator, 2026-09-04).
+              It is stated here in prose and enforced nowhere: the charge comes
+              from PREMIUM_PRICE_PAISE on the server, and nothing checks that
+              the two agree. Whatever price is chosen has to be changed in both
+              places in the same commit, or this page advertises one figure and
+              the checkout takes another.
+
+              This page only renders when PAYMENTS_ENABLED, which is false, so
+              nobody is currently being shown it.
+            */}
             ₹99 / month
           </span>
           <span className="text-[15px] text-ink-400" aria-hidden="true">
