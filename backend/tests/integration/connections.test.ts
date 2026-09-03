@@ -201,8 +201,14 @@ describe('the connections table', () => {
     // The line `010_accounts.sql` names as the one to defend in review. Asserted
     // against the live schema rather than trusted to review, because this is the
     // table most likely to grow such a column and the growth would look helpful.
+    // Scoped to this context's schema. Every context migrates its own copy of
+    // the schema into the same database, so an unscoped query reports the
+    // columns of every suite that has run - the assertion then passes alone and
+    // fails in a full run, which reads as a schema change nobody made.
     const { rows } = await pg.db.query<{ column_name: string }>(
-      `select column_name from information_schema.columns where table_name = 'connections'`,
+      `select column_name from information_schema.columns
+        where table_schema = $1 and table_name = 'connections'`,
+      [pg.schema],
     );
     const columns = rows.map((row) => row.column_name).sort();
     expect(columns).toEqual(['account_hi', 'account_lo', 'created_at']);

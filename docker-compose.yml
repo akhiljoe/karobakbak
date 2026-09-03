@@ -237,6 +237,12 @@ services:
       # and the teardown tests run against it — being able to set it from an env
       # file is what makes the before-and-after run possible.
       RESUME_GRACE_SECONDS: "${RESUME_GRACE_SECONDS:-20}"
+      # Of the connection ceiling, the percentage held back for browsers coming
+      # back (D63). Blank uses the shipped 5%, and it derives to nothing when
+      # RESUME_GRACE_SECONDS is 0, since there is then no resumption to protect.
+      # Worth setting only from a load run: it is the one place the trade is
+      # visible, because the cost is refusing cold arrivals slightly earlier.
+      RESUME_RESERVE_PERCENT: "${RESUME_RESERVE_PERCENT:-}"
       BLOCK_LATE_WINDOW_SECONDS: "${BLOCK_LATE_WINDOW_SECONDS:-120}"
       # Moderation policy. Empty by default, which means the deny-list rule
       # never fires and every match is flagged-and-delivered (D20) — the

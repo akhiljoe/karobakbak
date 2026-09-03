@@ -68,6 +68,7 @@ import { ConnectionRegistry } from './ws/registry';
 import { Janitor } from './ws/janitor';
 import { SessionSubscriber } from './ws/subscriber';
 import {
+  admission,
   clientAddress,
   clientCountry,
   clientTokenCookie,
@@ -657,9 +658,26 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       return;
     }
 
-    if (registry.size >= config.limits.maxConnections) {
-      metrics.connectionsRejected.labels('at_capacity').inc();
-      logger.warn('refusing a connection: instance at capacity', { connections: registry.size });
+    // A returning browser presents its resume token as a WebSocket subprotocol
+    // (§28). Read here, before the capacity decision, because the last seats on
+    // a full instance belong to resumptions (D63) - and read as *presence* only:
+    // nothing is believed about it until `lifecycle.resume` says so below.
+    const presented = resumeTokenFrom(req);
+
+    // Three bands, not two. A cold arrival is refused once the reserve is all
+    // that is left, because refusing it costs one person a chat they have not
+    // started, where refusing a resumption destroys a live conversation for two
+    // people - and a busy instance is exactly where the drops are.
+    const band = admission(registry.size, config.limits.maxConnections, config.limits.resumeReserve);
+    if (band === 'full' || (band === 'reserved' && presented === null)) {
+      metrics.connectionsRejected.labels(band === 'full' ? 'at_capacity' : 'at_capacity_reserved').inc();
+      logger.warn('refusing a connection: instance at capacity', {
+        connections: registry.size,
+        band,
+      });
+      // The same refusal either way. A caller has no use for the distinction
+      // and telling it that seats exist for resumptions would tell it what to
+      // claim to be.
       refuse(socket, 503, 'at_capacity');
       return;
     }
@@ -717,15 +735,14 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       for (const sessionId of subscribedTo) await subscriber.unsubscribe(sessionId);
     };
 
-    // A returning browser presents its resume token as a WebSocket subprotocol
-    // (§28). The subprotocol is chosen because it is the only channel a browser
-    // can put a value on during a handshake — `WebSocket` takes no custom
-    // headers — and unlike a query string it does not land in an access log.
+    // The subprotocol is chosen because it is the only channel a browser can put
+    // a value on during a handshake — `WebSocket` takes no custom headers — and
+    // unlike a query string it does not land in an access log.
     //
     // Anything that fails here falls through to a fresh session rather than
-    // refusing the connection. A stale token after a long tab suspension is the
-    // common case, and it means "a new conversation", never an error page.
-    const presented = resumeTokenFrom(req);
+    // refusing the connection, *unless* this connection is sitting in the
+    // reserve. A stale token after a long tab suspension is the common case,
+    // and it means "a new conversation", never an error page.
     if (presented !== null) {
       let resumed;
       try {
@@ -749,6 +766,11 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
 
       if (resumed.kind === 'resumed') {
         metrics.resumes.labels('ok').inc();
+        // Counted only when the seat came out of the reserve, because that is
+        // the only thing that answers whether reserving them was worth the 5%
+        // of capacity it costs. `chat_session_resumes_total` counts every
+        // resumption and would look identical on a wholly empty instance.
+        if (band === 'reserved') metrics.resumeReserveAdmissions.inc();
         const restored = resumed;
         wss.handleUpgrade(req, socket, head, (ws) => {
           attach(
@@ -769,6 +791,20 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       await releaseSubscription();
       subscribedTo.length = 0;
       metrics.resumes.labels('expired').inc();
+
+      // The seat this connection is standing on belongs to a resumption, and
+      // this was not one. Refusing here rather than at the token check is what
+      // makes the reserve unclaimable: presenting a made-up subprotocol costs
+      // one Redis lookup and still ends in the same 503, so there is nothing to
+      // gain by inventing a token.
+      if (band === 'reserved') {
+        metrics.connectionsRejected.labels('at_capacity_reserved').inc();
+        logger.warn('refusing a connection: reserved seats are for resumptions', {
+          connections: registry.size,
+        });
+        refuse(socket, 503, 'at_capacity');
+        return;
+      }
     }
 
     let outcome;
@@ -1563,6 +1599,10 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       // and is therefore different per deployment. A dashboard that hard-coded
       // it would read as headroom that does not exist.
       metrics.connectionsLimit.set(config.limits.maxConnections);
+      // Published beside it, because the headroom a dashboard shows is wrong by
+      // exactly this much otherwise: cold arrivals are refused at
+      // `limit - reserved`, not at `limit` (D63).
+      metrics.connectionsReserved.set(config.limits.resumeReserve);
 
       heartbeatTimer = setInterval(() => {
         void heartbeatSweep();

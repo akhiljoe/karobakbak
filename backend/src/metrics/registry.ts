@@ -48,6 +48,16 @@ export const REJECT_REASONS = [
    * capacity reasons were visible at zero and the safety one was not.
    */
   'banned',
+  /**
+   * A cold arrival refused because only the resumption reserve was left (D63).
+   *
+   * Separate from `at_capacity` although the caller gets the identical 503: an
+   * operator reading `at_capacity` alone cannot tell an instance that is
+   * genuinely full from one that is holding its last 5% for people coming back,
+   * and those want opposite responses - the first is "add capacity", the second
+   * is "the reserve is doing its job" or "the reserve is too big".
+   */
+  'at_capacity_reserved',
 ] as const;
 export const MODERATION_ACTIONS = ['allow', 'flag', 'withhold', 'block'] as const;
 
@@ -287,6 +297,8 @@ export interface Metrics {
    * them was a conversation that ended when it did not have to.
    */
   readonly resumes: Counter<'outcome'>;
+  readonly connectionsReserved: Gauge;
+  readonly resumeReserveAdmissions: Counter<string>;
   /**
    * Searches whose declared preference was not applied, by which limit stopped
    * it (§29.4).
@@ -689,6 +701,14 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
     connectionsTotal: counter('chat_connections_total', 'WebSocket connections accepted'),
     connectionsRejected: counter('chat_connections_rejected_total', 'Upgrades refused, by reason', ['reason']),
     connectionsLimit: gauge('chat_connections_limit', 'Connections this instance will hold before refusing new ones'),
+    connectionsReserved: gauge(
+      'chat_connections_reserved',
+      'Of that limit, how many sockets are held back for resuming sessions (D63)',
+    ),
+    resumeReserveAdmissions: counter(
+      'chat_resume_reserve_admissions_total',
+      'Resumptions admitted into a seat a fresh arrival would have been refused',
+    ),
     disconnects: counter('chat_disconnects_total', 'Sockets closed'),
     oversizedFrames: counter('chat_oversized_frames_total', 'Frames refused for exceeding the size limit'),
     invalidFrames: counter('chat_invalid_frames_total', 'Malformed protocol frames, by reason', [

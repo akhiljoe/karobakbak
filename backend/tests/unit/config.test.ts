@@ -983,3 +983,58 @@ describe('the connection ceiling', () => {
     expect(() => loadConfig(baseEnv({ MAX_CONNECTIONS: '0' }), 1)).toThrow(/must be between/);
   });
 });
+
+/**
+ * The seats held back for people coming back (D63).
+ *
+ * The reserve is a fraction of the ceiling and not a count, because the ceiling
+ * is itself derived from the box: a count that is right on one core reserves an
+ * eighth as much of an eight-core instance.
+ */
+describe('the resumption reserve', () => {
+  it('is a fraction of the derived ceiling, so it scales with the box', () => {
+    expect(loadConfig(baseEnv(), 1).limits.resumeReserve).toBe(70);
+    expect(loadConfig(baseEnv(), 8).limits.resumeReserve).toBe(560);
+  });
+
+  it('follows an explicit MAX_CONNECTIONS rather than the derivation', () => {
+    expect(loadConfig(baseEnv({ MAX_CONNECTIONS: '200' }), 8).limits.resumeReserve).toBe(10);
+  });
+
+  it('takes RESUME_RESERVE_PERCENT', () => {
+    expect(
+      loadConfig(baseEnv({ MAX_CONNECTIONS: '1000', RESUME_RESERVE_PERCENT: '20' }), 1).limits
+        .resumeReserve,
+    ).toBe(200);
+    expect(
+      loadConfig(baseEnv({ MAX_CONNECTIONS: '1000', RESUME_RESERVE_PERCENT: '0' }), 1).limits
+        .resumeReserve,
+    ).toBe(0);
+  });
+
+  /**
+   * `RESUME_GRACE_SECONDS=0` restores the D7 behaviour where a dropped socket
+   * ends the conversation, and the teardown tests run against it. Seats held for
+   * a resumption that can never succeed would refuse arrivals to protect
+   * capacity nothing can use.
+   */
+  it('collapses to nothing when resumption is switched off', () => {
+    const cfg = loadConfig(baseEnv({ RESUME_GRACE_SECONDS: '0' }), 1);
+    expect(cfg.resume.graceSeconds).toBe(0);
+    expect(cfg.limits.resumeReserve).toBe(0);
+  });
+
+  /**
+   * A tiny ceiling must not round up into "the whole instance is reserved",
+   * which would refuse every cold arrival on a box configured for a handful of
+   * connections - a total outage that no health check reports.
+   */
+  it('rounds down, so a small ceiling still admits new arrivals', () => {
+    const cfg = loadConfig(baseEnv({ MAX_CONNECTIONS: '1', RESUME_RESERVE_PERCENT: '50' }), 1);
+    expect(cfg.limits.resumeReserve).toBe(0);
+  });
+
+  it('refuses a percentage that would leave no seats for anybody new', () => {
+    expect(() => loadConfig(baseEnv({ RESUME_RESERVE_PERCENT: '80' }), 1)).toThrow(/must be between/);
+  });
+});

@@ -101,6 +101,12 @@ export interface Config {
     readonly maxFrameBytes: number;
     readonly rateLimitTtlSeconds: number;
     readonly maxConnections: number;
+    /**
+     * Sockets held back, out of `maxConnections`, for browsers coming *back*
+     * (D63). A fresh arrival is refused once the rest are taken; a connection
+     * that actually resumes a session is admitted into these.
+     */
+    readonly resumeReserve: number;
     readonly connRateLimit: number;
     readonly connRateWindowSeconds: number;
     readonly invalidMessageStrikes: number;
@@ -943,6 +949,54 @@ function connectionCeiling(env: Env, cores: number): number {
   return int(env, 'MAX_CONNECTIONS', derived, 1, 1_000_000);
 }
 
+/**
+ * How many of those sockets are held back for people coming *back*.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A RESUMPTION NEEDS A SEAT THE ARRIVALS CANNOT TAKE
+ * ---------------------------------------------------------------------------
+ * A returning browser comes through the same upgrade as a cold arrival and, up
+ * to phase 36, hit the same ceiling. So the instant an instance filled up, the
+ * person whose wifi dropped mid-conversation was refused - and what was refused
+ * was not "a chance to start chatting" but the resume token, which exists
+ * precisely to stop a blip from destroying a conversation (§28, D42). It is
+ * also the moment it is most likely to happen: a busy instance is where both
+ * the drops and the queue of new arrivals are.
+ *
+ * The two are not equally costly to refuse. A cold arrival that is turned away
+ * loses nothing it had; a resumption that is turned away loses a live
+ * conversation, and the other side loses it too - one refusal, two people. So
+ * the last seats are kept for the case that costs more.
+ *
+ * WHERE 5% COMES FROM
+ *
+ * A fraction of the ceiling rather than a count, because the ceiling is itself
+ * derived from the box (`connectionCeiling`) and a fixed count would be far too
+ * tight on one machine and far too loose on another. At the 1400/core default
+ * that is 70 seats. What has to fit in them is not the population but the
+ * *rate* of drops inside the grace window: 70 seats absorb 5% of a full
+ * instance reconnecting within 20 seconds, which is past any drop rate that is
+ * not itself the incident.
+ *
+ * The honest cost: those seats are unavailable to new arrivals whether or not
+ * anybody is reconnecting, so an instance refuses cold arrivals at 95% of what
+ * it could serve. That is a 5% capacity reduction bought against conversations
+ * being destroyed, and it is visible rather than inferred -
+ * `chat_connections_reserved` is published beside `chat_connections_limit`.
+ *
+ * **Zero when resumption is off.** `RESUME_GRACE_SECONDS=0` restores the D7
+ * behaviour where a dropped socket ends the conversation, and the teardown
+ * tests run against it. Holding seats for a resumption that can never succeed
+ * would refuse arrivals to protect capacity nothing can use, so the reserve is
+ * derived to 0 rather than left as a second setting somebody has to know to
+ * turn off as well.
+ */
+function resumeReserve(env: Env, ceiling: number, graceSeconds: number): number {
+  if (graceSeconds <= 0) return 0;
+  const percent = int(env, 'RESUME_RESERVE_PERCENT', 5, 0, 50);
+  return Math.floor((ceiling * percent) / 100);
+}
+
 function rateLimit(env: Env, prefix: string, perSecond: number, burst: number): RateLimit {
   return {
     perSecond: num(env, `${prefix}_RATE_PER_SEC`, perSecond, 0.0001, 10_000),
@@ -1082,6 +1136,12 @@ export function loadConfig(
   const nodeEnv = str(env, 'NODE_ENV', 'development');
   const isProduction = nodeEnv === 'production';
 
+  // Read here rather than in place, because two unrelated fields are derived
+  // from them: the reserve is a fraction of the ceiling, and it collapses to
+  // nothing when resumption is switched off.
+  const maxConnections = connectionCeiling(env, cores);
+  const resumeGraceSeconds = int(env, 'RESUME_GRACE_SECONDS', 20, 0, 300);
+
   const config: Config = {
     nodeEnv,
     isProduction,
@@ -1108,7 +1168,8 @@ export function loadConfig(
       maxReportNoteLength: int(env, 'MAX_REPORT_NOTE_LENGTH', 500, 1, 100_000),
       maxFrameBytes: int(env, 'MAX_FRAME_BYTES', 16_384, 1024, 10_485_760),
       rateLimitTtlSeconds: int(env, 'RATE_LIMIT_TTL_SECONDS', 3600, 5, 86_400),
-      maxConnections: connectionCeiling(env, cores),
+      maxConnections,
+      resumeReserve: resumeReserve(env, maxConnections, resumeGraceSeconds),
       connRateLimit: int(env, 'CONN_RATE_LIMIT', 60, 1, 1_000_000),
       connRateWindowSeconds: int(env, 'CONN_RATE_WINDOW_SECONDS', 60, 1, 86_400),
       invalidMessageStrikes: int(env, 'INVALID_MESSAGE_STRIKES', 10, 1, 10_000),
@@ -1251,7 +1312,7 @@ export function loadConfig(
     },
 
     resume: {
-      graceSeconds: int(env, 'RESUME_GRACE_SECONDS', 20, 0, 300),
+      graceSeconds: resumeGraceSeconds,
     },
 
     moderation: {
@@ -1371,6 +1432,18 @@ function assertCoherent(config: Config): void {
     throw new ConfigError(
       'ALLOWED_ORIGINS must list at least one origin when NODE_ENV=production; ' +
         'an empty allowlist accepts WebSocket upgrades from any site',
+    );
+  }
+
+  // The reserve comes out of the ceiling, so at the ceiling there is nothing
+  // left for a cold arrival at all. Derivation keeps it at half at worst
+  // (`RESUME_RESERVE_PERCENT` caps at 50), and this is here so that a future
+  // edit to that arithmetic fails at startup rather than turning an instance
+  // into one that serves only people who have already been on it.
+  if (config.limits.resumeReserve >= config.limits.maxConnections) {
+    throw new ConfigError(
+      `the resumption reserve (${config.limits.resumeReserve}) must be below ` +
+        `MAX_CONNECTIONS (${config.limits.maxConnections}), or no new connection can ever be admitted`,
     );
   }
 

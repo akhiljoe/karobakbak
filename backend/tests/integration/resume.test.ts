@@ -6,6 +6,7 @@
  * end one still does.
  */
 import { startTestServer, TestClient, payloadOf, type TestServer } from '../helpers/socket';
+import { delay } from '../helpers/redis';
 import { createHash } from 'node:crypto';
 
 import {
@@ -238,3 +239,166 @@ describe('a failed resume is a new conversation, never an error', () => {
 function hashOf(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
+
+
+/**
+ * The seats an instance holds back for people coming back (D63).
+ *
+ * The property is not "a reserve exists" — it is that when an instance fills
+ * up, the connection refused is the one with nothing to lose. A resumption
+ * refused destroys a live conversation for two people; a cold arrival refused
+ * loses a chat that had not started.
+ *
+ * Run against a deliberately tiny ceiling — 4 connections with 1 reserved —
+ * because the arithmetic is what is under test and it is the same at 1,400
+ * with 70.
+ *
+ * Note what the setup has to do to be a real test of this: the session that
+ * comes back is **in a conversation**. `closeSession` holds a seat only for a
+ * session with a match (§28); an idle one is deleted on close and has nothing
+ * to resume. That is not an inconvenience of the test, it is the case the
+ * reserve exists for.
+ */
+/**
+ * The value of the one scrape line starting with `prefix`, or -1.
+ *
+ * Prefix matching rather than a pattern: every series here carries an
+ * `instance_id` default label, so the value is never the second token on the
+ * line and a regex over it has to know that.
+ */
+function sampleOf(scrape: string, prefix: string): number {
+  const line = scrape.split('\n').find((entry) => entry.startsWith(prefix));
+  if (line === undefined) return -1;
+  return Number(line.slice(line.lastIndexOf(' ') + 1));
+}
+
+describe('the resumption reserve', () => {
+  let rig: TestServer;
+
+  /**
+   * Read the gauge rather than sleep. A socket the client has closed is not off
+   * the instance until the server has processed the close, and every assertion
+   * here is about which band the *next* connection arrives in.
+   */
+  async function attached(): Promise<number> {
+    const text = await rig.metrics.scrape();
+    return sampleOf(text, 'chat_connections_active{');
+  }
+
+  async function waitUntilAttached(count: number): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if ((await attached()) === count) return;
+      await delay(20);
+    }
+    throw new Error(`the instance never settled at ${count} attached connections`);
+  }
+
+  /** How many upgrades this instance has refused for one reason. */
+  async function refusals(reason: string): Promise<number> {
+    const text = await rig.metrics.scrape();
+    return sampleOf(text, `chat_connections_rejected_total{reason="${reason}"`);
+  }
+
+  /** Two clients in a conversation on this rig, and the first one's token. */
+  async function talking(): Promise<{ a: TestClient; b: TestClient; aToken: string; aSession: string }> {
+    const a = await TestClient.connect(rig.url);
+    const b = await TestClient.connect(rig.url);
+    const aHello = payloadOf<ConnectedPayload>(await a.waitForFrame('connected'));
+    await b.waitForFrame('connected');
+    a.command('join_queue');
+    await a.waitForFrame('queue_status');
+    b.command('join_queue');
+    await b.waitForFrame('matched');
+    await a.waitForFrame('matched');
+    return { a, b, aToken: aHello.resumeToken, aSession: aHello.sessionId };
+  }
+
+  beforeAll(async () => {
+    rig = await startTestServer({ MAX_CONNECTIONS: '4', RESUME_RESERVE_PERCENT: '25' });
+    expect(rig.ctx.config.limits.resumeReserve).toBe(1);
+  });
+
+  afterAll(async () => {
+    await rig.stop();
+  });
+
+  it('refuses a cold arrival to keep a seat for the conversation coming back', async () => {
+    const { a, b, aToken, aSession } = await talking();
+    a.close();
+    await waitUntilAttached(1);
+
+    // Fill everything that is not reserved. The last seat exists and is not
+    // available to anybody new.
+    const third = await TestClient.connect(rig.url);
+    const fourth = await TestClient.connect(rig.url);
+    await waitUntilAttached(3);
+
+    try {
+      const before = await refusals('at_capacity_reserved');
+      const refused = await TestClient.expectRefusal(rig.url);
+      expect(refused.status).toBe(503);
+      expect(refused.body).toContain('at_capacity');
+      // Which branch refused it, not merely that something did: `at_capacity`
+      // and `at_capacity_reserved` want opposite responses from an operator.
+      expect(await refusals('at_capacity_reserved')).toBe(before + 1);
+
+      // The same instance, at the same occupancy, takes the browser coming
+      // back — into the session it left, with the conversation still live.
+      const returned = await TestClient.connect(rig.url, {
+        protocols: [BASE_PROTOCOL, `${RESUME_PROTOCOL_PREFIX}${aToken}`],
+      });
+      try {
+        const back = payloadOf<ConnectedPayload>(await returned.waitForFrame('connected'));
+        // A failed resume is not an error, it is a brand-new session — so a
+        // fresh id here would mean the reserved seat was spent on exactly what
+        // it was withheld from a cold arrival to protect against.
+        expect(back.sessionId).toBe(aSession);
+        expect(back.resumed).not.toBeUndefined();
+
+        // And the ceiling still binds: the reserve is headroom for people
+        // coming back, never an extension of what the box can serve.
+        await waitUntilAttached(4);
+        const atCapacity = await refusals('at_capacity');
+        const full = await TestClient.expectRefusal(rig.url, {
+          protocols: [BASE_PROTOCOL, `${RESUME_PROTOCOL_PREFIX}${aToken}`],
+        });
+        expect(full.status).toBe(503);
+        expect(await refusals('at_capacity')).toBe(atCapacity + 1);
+      } finally {
+        returned.close();
+      }
+    } finally {
+      b.close();
+      third.close();
+      fourth.close();
+    }
+  });
+
+  /**
+   * The reserve has to be unclaimable or it is not a reserve — a subprotocol is
+   * the cheapest thing in the world to invent. A token that resumes nothing
+   * gets the identical 503 a cold arrival gets, which is why the refusal sits
+   * after the resume attempt rather than at the sight of a token.
+   */
+  it('does not hand a reserved seat to an invented token', async () => {
+    await waitUntilAttached(0);
+    const first = await TestClient.connect(rig.url);
+    const second = await TestClient.connect(rig.url);
+    const third = await TestClient.connect(rig.url);
+    await waitUntilAttached(3);
+
+    try {
+      const before = await refusals('at_capacity_reserved');
+      const refused = await TestClient.expectRefusal(rig.url, {
+        protocols: [BASE_PROTOCOL, `${RESUME_PROTOCOL_PREFIX}not-a-real-token`],
+      });
+      expect(refused.status).toBe(503);
+      expect(refused.body).toContain('at_capacity');
+      expect(await refusals('at_capacity_reserved')).toBe(before + 1);
+    } finally {
+      first.close();
+      second.close();
+      third.close();
+    }
+  });
+});

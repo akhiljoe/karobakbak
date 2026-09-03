@@ -125,9 +125,12 @@ export class TestClient {
   /** Connect expecting a refusal, and return the HTTP status the server sent. */
   static async expectRefusal(
     url: string,
-    options: { headers?: Record<string, string> } = {},
+    options: { headers?: Record<string, string>; protocols?: string[] } = {},
   ): Promise<{ status: number; body: string }> {
-    const socket = new WebSocket(url, { headers: options.headers });
+    const socket =
+      options.protocols === undefined
+        ? new WebSocket(url, { headers: options.headers })
+        : new WebSocket(url, options.protocols, { headers: options.headers });
     return new Promise((resolve, reject) => {
       let status = 0;
       socket.on('unexpected-response', (_req, res) => {

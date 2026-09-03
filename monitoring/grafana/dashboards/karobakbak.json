@@ -875,7 +875,7 @@
     {
       "type": "timeseries",
       "title": "Headroom — connections against the derived ceiling",
-      "description": "chat_connections_limit is derived from the box's core count (cores x CONNECTIONS_PER_CORE), so it differs per deployment. Charting the ratio rather than the count is what keeps this panel true when the tier changes. Measured on 1 vCPU: the core saturates around 2,000 concurrent, and the default ceiling of 1400/core sits below that deliberately.",
+      "description": "chat_connections_limit is derived from the box's core count (cores x CONNECTIONS_PER_CORE), so it differs per deployment. Charting the ratio rather than the count is what keeps this panel true when the tier changes. Measured on 1 vCPU: the core saturates around 2,000 concurrent, and the default ceiling of 1400/core sits below that deliberately. A second series charts the same count against the ceiling minus the resumption reserve (D63), which is where a first-time visitor is actually refused: the reserve comes out of the limit rather than extending it, so headroom read against chat_connections_limit alone is 5% more generous than the one people meet.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -919,13 +919,21 @@
           },
           "expr": "max by (instance) (chat_connections_active / chat_connections_limit)",
           "legendFormat": "{{instance}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "max by (instance) (chat_connections_active / (chat_connections_limit - chat_connections_reserved))",
+          "legendFormat": "{{instance}} - against what new arrivals may have"
         }
       ]
     },
     {
       "type": "timeseries",
       "title": "Refused at capacity",
-      "description": "chat_connections_rejected_total{reason=\"at_capacity\"} is zero-initialised, so a flat zero means the ceiling has never bound rather than that nothing is watching. Any value above zero is people being turned away: check the headroom panel beside this one before raising the ceiling, because the ceiling exists to stop the box collapsing and raising it past what the cores serve just moves the failure from a refusal to latency for everybody.",
+      "description": "chat_connections_rejected_total{reason=\"at_capacity\"} is zero-initialised, so a flat zero means the ceiling has never bound rather than that nothing is watching. Any value above zero is people being turned away: check the headroom panel beside this one before raising the ceiling, because the ceiling exists to stop the box collapsing and raising it past what the cores serve just moves the failure from a refusal to latency for everybody. The two reserve series are the trade, both directions: `at_capacity_reserved` is cold arrivals turned away to keep the last seats free, and `chat_resume_reserve_admissions_total` is resumptions that took one of those seats - a conversation that would otherwise have ended for two people. Reserved refusals with no admissions beside them over a sustained period means the reserve is larger than the drop rate needs.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -952,6 +960,22 @@
           },
           "expr": "sum(chat_connections_active)",
           "legendFormat": "connections held"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_connections_rejected_total{reason=\"at_capacity_reserved\"}[$__rate_interval]))",
+          "legendFormat": "refused so a resumption could come back"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_resume_reserve_admissions_total[$__rate_interval]))",
+          "legendFormat": "conversations the reserve saved"
         }
       ]
     }
