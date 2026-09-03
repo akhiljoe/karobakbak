@@ -279,6 +279,12 @@ function buildProvider(config: ReturnType<typeof loadConfig>, logger: Logger): M
     apiKey: config.personas.apiKey,
     model: config.personas.model,
     logger,
+    // Only the OpenAI adapter reads this, and passing it to both is deliberate:
+    // an option one adapter ignores is cheaper than two option objects that
+    // drift. `PERSONA_REASONING_HEADROOM_TOKENS` was declared, documented and
+    // read by nothing until this line existed — the exact shape of F-045,
+    // inside the commit that fixed F-045.
+    reasoningHeadroomTokens: config.personas.reasoningHeadroomTokens,
   };
 
   switch (config.personas.provider) {

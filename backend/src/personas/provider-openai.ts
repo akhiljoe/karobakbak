@@ -98,6 +98,15 @@ export interface OpenAIProviderOptions {
    * cannot bind.
    */
   readonly model?: string;
+  /**
+   * Headroom left for a reasoning model's hidden tokens
+   * (`PERSONA_REASONING_HEADROOM_TOKENS`).
+   *
+   * Optional so a test can construct a provider with a key and a stub client
+   * and nothing else; production passes `config.personas`, which is where the
+   * default that ships actually lives.
+   */
+  readonly reasoningHeadroomTokens?: number;
   readonly logger: Logger;
   readonly timeoutMs?: number;
   /** Injected in tests so no network is touched. */
@@ -123,17 +132,20 @@ const REASONING_MODELS: ReadonlySet<string> = new Set(['gpt-5-nano', 'gpt-5-mini
  * an empty string and the persona goes silent, which is what this whole number
  * exists to stop.
  */
-const REASONING_HEADROOM_TOKENS = 1000;
+const DEFAULT_REASONING_HEADROOM_TOKENS = 1000;
 
 export class OpenAIProvider implements ModelProvider {
   readonly name = 'openai';
 
   private readonly client: Pick<OpenAI, 'chat'>;
   private readonly model: string;
+  private readonly reasoningHeadroomTokens: number;
   private readonly logger: Logger;
 
   constructor(options: OpenAIProviderOptions) {
     this.model = options.model ?? DEFAULT_MODEL;
+    this.reasoningHeadroomTokens =
+      options.reasoningHeadroomTokens ?? DEFAULT_REASONING_HEADROOM_TOKENS;
     this.logger = options.logger;
     this.client =
       options.client ??
@@ -157,7 +169,7 @@ export class OpenAIProvider implements ModelProvider {
         // well as the reply, so the reply ceiling alone leaves nothing to answer
         // with.
         max_completion_tokens: reasons
-          ? request.maxOutputTokens + REASONING_HEADROOM_TOKENS
+          ? request.maxOutputTokens + this.reasoningHeadroomTokens
           : request.maxOutputTokens,
         // Only where it is supported. Elsewhere it is a 400 on every call.
         ...(reasons ? { reasoning_effort: 'minimal' as const } : {}),
