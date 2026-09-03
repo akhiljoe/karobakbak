@@ -347,7 +347,7 @@ describe('the control plane has the last word', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'testing',
     });
 
@@ -366,7 +366,7 @@ describe('the control plane has the last word', () => {
       subject: CHARACTERS[0]?.id ?? 'x',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
