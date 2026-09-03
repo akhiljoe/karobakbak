@@ -285,6 +285,14 @@ export class Bot {
   private readonly flags = new Set<string>();
   private seq = 0;
   private queuedAt = 0;
+  /**
+   * The country this bot's *connection* claims, via `CF-IPCountry`.
+   *
+   * Null when the header was never sent. The server reads country from the
+   * connection rather than from the declaration (`c043479`), so this is the
+   * country every profile of this bot's comes back with, whatever it declared.
+   */
+  private connectionCountry: string | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
   private stopped = false;
   private finished = false;
@@ -378,6 +386,17 @@ export class Bot {
     if (this.declared.country !== null) {
       headers['CF-IPCountry'] = this.declared.country;
     }
+    /*
+      Remembered, because the server's echo is judged against it (F-037).
+
+      The header is set from whatever this bot was carrying **at connect time**,
+      and a persona may declare something different afterwards — G1 overwrites
+      `declared` with nothing in `onConnected`, after this runs. From then on the
+      bot declares no country and the server fills one in from the connection, so
+      "what I sent" and "what I should be echoed" are two different profiles and
+      only this field tells them apart.
+    */
+    this.connectionCountry = this.declared.country;
     if (this.clientToken) {
       headers['Cookie'] = `${CLIENT_TOKEN_COOKIE}=${this.clientToken}`;
     }
@@ -836,7 +855,26 @@ export class Bot {
     // Both normalise to the same thing server-side, and omitting it is what the
     // browser does for a user who declared nothing.
     this.send('join_queue', isEmptyProfile(profile) ? {} : { profile });
-    this.record({ type: 'queued', hash: profileHash(profile) });
+    /*
+      Hashed as the server will build it, not as it was sent (F-037).
+
+      `server.ts` builds the join profile as
+      `{ ...command.profile, country: connection.country }`, so a declared
+      country is discarded and the connection's is used — including when nothing
+      was declared at all, which is how an anonymous bot gets echoed a
+      country-only profile it never sent. Hashing what was sent made that read
+      as "the server did not echo the profile this bot declared", every time,
+      for every bot whose declaration and connection disagreed. Deterministic
+      per bot, which is what made it look like a product bug for a week.
+
+      Modelling the rule rather than dropping country out of the hash: dropping
+      it would make a genuine country-crossing bug invisible, and country is one
+      of the two fields a moderator reads first.
+    */
+    this.record({
+      type: 'queued',
+      hash: profileHash({ ...profile, country: this.connectionCountry as Profile['country'] }),
+    });
   }
 
   leaveQueue(): void {
