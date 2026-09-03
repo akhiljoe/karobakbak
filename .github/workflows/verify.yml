@@ -113,12 +113,27 @@ jobs:
       #
       # `high` rather than `moderate`, for the same reason. A gate that fires on
       # things nobody is going to act on today stops being read.
+      # `npm audit --omit=dev` reads the committed lockfile and filters dev
+      # dependencies itself. It used to be preceded by
+      # `npm install --package-lock-only --omit=dev`, which was belt-and-braces
+      # and **rewrote the lockfile in place** — so the "lockfiles agree" step
+      # below then reported a change that this step had made, and blamed
+      # `npm ci` for it.
+      #
+      # What it rewrote was not the dependency tree. The committed lockfile is
+      # written by npm 11, which records `"libc": ["glibc"]` on optional native
+      # packages; npm 10 does not know that field and silently drops it — 42
+      # lines of it. Every runner image on Node 20 *and* 22 currently ships
+      # npm 10, so this fired on every push regardless of the Node version.
+      #
+      # The rule this restores: a CI step may read the working tree or write to
+      # it, and a step that does both while a later step audits the difference
+      # will eventually accuse the wrong command.
       - name: Audit production dependencies
         run: |
           set -o pipefail
           for pkg in backend frontend; do
             echo "::group::npm audit ($pkg)"
-            npm --prefix "$pkg" install --package-lock-only --omit=dev
             npm --prefix "$pkg" audit --omit=dev --audit-level=high
             echo "::endgroup::"
           done
@@ -148,8 +163,12 @@ jobs:
       # deliberate `npm update` or somebody's editor. Both are fine; being
       # unable to tell them apart is not, because the diff is thousands of lines
       # and nobody reads it.
+      # Runs on a tree no earlier step has written to, which is the only way
+      # its verdict means anything.
       - name: Lockfiles agree with their manifests
         run: |
+          git diff --quiet -- backend/package-lock.json frontend/package-lock.json ||
+            { echo "::error::a lockfile was modified before this step ran"; exit 1; }
           for pkg in backend frontend; do
             npm --prefix "$pkg" ci --ignore-scripts --omit=dev >/dev/null
           done
