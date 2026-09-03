@@ -10,6 +10,9 @@
  * disagreed with the application. A test that invents its own id format is
  * testing a system nobody runs.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { newMatchId, newMessageId } from '../../src/util/ids';
 
 import { createPostgresContext, type PostgresContext } from '../helpers/postgres';
@@ -829,5 +832,81 @@ describe('backup monitoring (§8.1)', () => {
     // numbers matter and neither replaces the other.
     expect(status.health).toBe('ok');
     expect(status.failures).toBe(1);
+  });
+});
+
+/**
+ * Payment orders, on a statutory period rather than a chosen one.
+ *
+ * Two properties, and the second matters on every deployment that exists today.
+ *
+ * The table is staged in `migrations-pending/011_payments.sql`, so a database
+ * that has not turned payments on does not have it. A `delete from` against a
+ * missing relation raises 42P01 and would take the six deletions beside it down
+ * with the pass — six tables stop being swept because a seventh is absent,
+ * which is a retention failure caused by a feature nobody enabled.
+ */
+describe('payment orders (statutory retention)', () => {
+  it('sweeps nothing and fails nothing when payments were never applied', async () => {
+    // The default shape of every deployment. `to_regclass` answers null rather
+    // than raising, so the guard costs a lookup and the pass stays whole.
+    const present = await ctx.rows<{ present: boolean }>(
+      `select to_regclass('payment_orders') is not null as present`,
+    );
+    expect(present[0]?.present).toBe(false);
+
+    const result = await worker(new FakeLock()).runPass();
+    expect(result.failed).toBe(false);
+    expect(result.deleted.paymentOrders).toBe(0);
+  });
+
+  describe('once the staged migration is applied', () => {
+    beforeAll(async () => {
+      await ctx.db.query(
+        readFileSync(
+          join(__dirname, '..', '..', 'src', 'storage', 'migrations-pending', '011_payments.sql'),
+          'utf8',
+        ),
+      );
+    });
+
+    afterAll(async () => {
+      // Dropped again so the rest of this suite, and any suite sharing this
+      // schema, sees the shape production has. `payment_events` references
+      // `payment_orders`, so it goes first — `cascade` would work and would
+      // also quietly drop anything else that grew a dependency later.
+      await ctx.db.query(`drop table if exists payment_events`);
+      await ctx.db.query(`drop table if exists payment_orders`);
+    });
+
+    it('deletes an order past its deadline and keeps one inside it', async () => {
+      await ctx.db.query(
+        `insert into payment_orders
+           (order_id, account_id, product, amount_paise, currency, status, retention_expires_at)
+         values
+           ('order_expired', null, 'donation', 5000, 'INR', 'paid', now() - interval '1 day'),
+           ('order_live',    null, 'donation', 5000, 'INR', 'paid', now() + interval '365 days')`,
+      );
+
+      const result = await worker(new FakeLock()).runPass();
+      expect(result.failed).toBe(false);
+      expect(result.deleted.paymentOrders).toBe(1);
+
+      const left = await ctx.rows<{ order_id: string }>(`select order_id from payment_orders`);
+      expect(left.map((row) => row.order_id)).toEqual(['order_live']);
+    });
+
+    /**
+     * Seven years is far longer than anything else here, and that is the point:
+     * every other period in this schema argues for keeping as little as possible
+     * for as short as possible, and a financial record argues the other way.
+     */
+    it('stamps a deadline years out rather than days', async () => {
+      const rows = await ctx.rows<{ days: string }>(
+        `select extract(day from (now() + (interval '1 day' * $1)) - now())::text as days`,
+        [String(ctx.config.payments.recordRetentionDays)],
+      );
+      expect(Number(rows[0]?.days)).toBeGreaterThan(365 * 5);
+    });
   });
 });
