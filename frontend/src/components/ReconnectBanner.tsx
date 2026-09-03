@@ -12,10 +12,21 @@
  */
 import { WifiOff } from 'lucide-react';
 
-import type { ConnectionView } from '../view/presentation';
+import type { CapacityState } from '../capacity';
+import { connectionNotice, type ConnectionView } from '../view/presentation';
 
-export function ReconnectBanner({ connection }: { connection: ConnectionView }): JSX.Element | null {
-  if (connection === 'connected') return null;
+export function ReconnectBanner({
+  connection,
+  capacity,
+}: {
+  connection: ConnectionView;
+  capacity: CapacityState;
+}): JSX.Element | null {
+  // The words live in `presentation.ts` and are tested there, because which of
+  // them is right depends on a probe answer and this component cannot be asked
+  // that question without a render.
+  const message = connectionNotice(connection, capacity);
+  if (message === null) return null;
 
   return (
     <div
@@ -24,9 +35,7 @@ export function ReconnectBanner({ connection }: { connection: ConnectionView }):
       className="flex animate-fade-in items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 sm:px-4"
     >
       <WifiOff className="h-4 w-4 shrink-0" />
-      {connection === 'connecting'
-        ? 'Connecting…'
-        : 'Connection lost. Reconnecting — your conversation is held for a moment.'}
+      {message}
     </div>
   );
 }

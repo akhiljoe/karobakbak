@@ -39,6 +39,7 @@ import { Dices, Lock, Sparkles } from 'lucide-react';
 import type { ChatState } from '../state/machine';
 import type { Profile } from '../protocol/types';
 import { isEmptyProfile } from '../profile';
+import { capacityLine } from '../view/presentation';
 import { Button } from './Button';
 
 interface LandingScreenProps {
@@ -60,6 +61,7 @@ export function LandingScreen({
   profile,
 }: LandingScreenProps): JSX.Element {
   const connecting = state.screen === 'connecting' || state.screen === 'disconnected';
+  const capacityMessage = capacityLine(state.capacity);
   // The strapline claims "no profile", which stops being true the moment
   // someone fills one in. Saying it anyway would be the kind of small
   // dishonesty that costs trust when noticed.
@@ -146,6 +148,28 @@ export function LandingScreen({
                   ? 'Find someone else'
                   : 'Start chatting'}
           </Button>
+
+          {/*
+            Why the button has been saying "Connecting…" for a while.
+            ------------------------------------------------------------------
+            This is the case the capacity probe was built for. A refused
+            handshake gives page script a close with code 1006 and nothing
+            else, so without it a busy service and a broken laptop look
+            identical from here — and the person on the landing screen has no
+            conversation to explain the wait either.
+
+            `ok` and `unknown` say nothing at all: the first means the service
+            would have taken the connection, so the fault is local and the page
+            cannot describe it better than the button does, and the second means
+            the probe could not get through either, which is the same thing seen
+            from further away. The words live in `presentation.ts`, where they
+            are tested without a render.
+          */}
+          {connecting && capacityMessage !== null && (
+            <p role="status" className="mt-2 text-xs leading-relaxed text-amber-300/90">
+              {capacityMessage}
+            </p>
+          )}
 
           {/*
             A countdown that cannot be stopped is not a convenience. The cancel

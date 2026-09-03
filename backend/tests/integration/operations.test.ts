@@ -338,3 +338,62 @@ describe('graceful shutdown', () => {
     await server.ctx.close();
   });
 });
+
+
+/**
+ * The capacity probe (§28.9).
+ *
+ * The thing under test is that the three answers are distinguishable, because
+ * the browser cannot distinguish them any other way: a refused WebSocket
+ * handshake reaches page script as a close with code 1006, no status and no
+ * body, identical to a dead network.
+ */
+describe('the capacity probe', () => {
+  async function probe(server: TestServer): Promise<{ status: number; body: { state?: string } }> {
+    const base = server.url.replace('ws://', 'http://').replace(/\/ws$/, '');
+    const response = await fetch(`${base}/api/capacity`);
+    return { status: response.status, body: (await response.json()) as { state?: string } };
+  }
+
+  it('says the service would take another connection', async () => {
+    const server = await startTestServer();
+    try {
+      const { status, body } = await probe(server);
+      expect(status).toBe(200);
+      expect(body.state).toBe('ok');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('says busy while only the resumption reserve is left, and still answers 200', async () => {
+    // One seat, none of it reserved, so a single connection fills the instance
+    // and a cold arrival is refused (D63).
+    const server = await startTestServer({ MAX_CONNECTIONS: '1', RESUME_RESERVE_PERCENT: '0' });
+    const holder = await TestClient.connect(server.url);
+    try {
+      await holder.waitForFrame('connected');
+      const { status, body } = await probe(server);
+      // 200 and not 503: a 503 would be indistinguishable from the outage the
+      // caller is trying to rule out, which is the whole reason this exists.
+      expect(status).toBe(200);
+      expect(body.state).toBe('busy');
+    } finally {
+      holder.close();
+      await server.stop();
+    }
+  });
+
+  it('carries no count, no ceiling and no instance id', async () => {
+    const server = await startTestServer();
+    try {
+      const { body } = await probe(server);
+      // The caller needs to know whether waiting is worth it. A number invites
+      // the guess D21 refuses to hand out, and the instance id enumerates
+      // replicas for anybody polling it.
+      expect(Object.keys(body)).toEqual(['state']);
+    } finally {
+      await server.stop();
+    }
+  });
+});

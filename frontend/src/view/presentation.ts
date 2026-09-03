@@ -17,6 +17,7 @@
  */
 import type { Identity } from '../protocol/types';
 import type { ChatState, Screen } from '../state/machine';
+import type { CapacityState } from '../capacity';
 
 /** What the connection pill and the reconnect banner show. */
 export type ConnectionView = 'connecting' | 'connected' | 'reconnecting';
@@ -169,4 +170,69 @@ export function showPresence(
 export function searchingDetail(waiting: number): string {
   if (waiting > 1) return `${waiting.toLocaleString()} people are looking right now.`;
   return 'You are first in the queue. This usually takes a moment.';
+}
+
+/**
+ * What to say while the socket is away.
+ *
+ * ---------------------------------------------------------------------------
+ * THREE FAILURES THAT LOOK IDENTICAL TO A BROWSER
+ * ---------------------------------------------------------------------------
+ * A refused handshake, a dead backend and a dropped wifi all arrive as a close
+ * with code 1006 and nothing else. The capacity probe is the only thing that
+ * separates them, and this is where its answer becomes words.
+ *
+ * **Never "full", and never a number.** The same reasoning as `showPresence`
+ * below the threshold (D21): "busier than usual" is true whatever the load is,
+ * where "full" invites the question of how full and turns a wait into a verdict.
+ * The person is not being turned away — the client is still retrying on its own
+ * backoff — so the copy describes a wait, not a door.
+ *
+ * `unknown` keeps the ordinary reconnecting line, which is the honest answer
+ * when the probe could not get through either: from here it is indistinguishable
+ * from the network being gone, and that line already says so.
+ */
+export function connectionNotice(
+  connection: ConnectionView,
+  capacity: CapacityState,
+): string | null {
+  if (connection === 'connected') return null;
+  if (connection === 'connecting' && capacity === 'unknown') return 'Connecting…';
+
+  switch (capacity) {
+    case 'busy':
+      return 'It is busier than usual. Holding your place and trying again…';
+    case 'unavailable':
+      return 'We cannot reach the chat service right now. Trying again…';
+    default:
+      return connection === 'connecting'
+        ? 'Connecting…'
+        : 'Connection lost. Reconnecting — your conversation is held for a moment.';
+  }
+}
+
+/**
+ * The line under the Start button while the socket will not open.
+ *
+ * Separate copy from `connectionNotice` on purpose, and not drift: that one is
+ * a banner over a conversation that is being held, this one is a landing page
+ * where nothing is at stake but the person has been watching a button say
+ * "Connecting…" with no idea why. So it says what to do about it — which is
+ * nothing, and specifically not refreshing, because a refresh drops the queued
+ * retry and starts the backoff again.
+ *
+ * `ok` and `unknown` return null. Both mean the probe learned nothing worth
+ * repeating: `unknown` because it could not get through either, and `ok`
+ * because the service would have taken the connection, which makes this a
+ * local network problem the page cannot describe better than the button does.
+ */
+export function capacityLine(capacity: CapacityState): string | null {
+  switch (capacity) {
+    case 'busy':
+      return 'It is busier than usual right now. We will get you in as soon as a spot opens — no need to refresh.';
+    case 'unavailable':
+      return 'We cannot reach the chat service right now. Still trying — no need to refresh.';
+    default:
+      return null;
+  }
 }

@@ -933,7 +933,7 @@
     {
       "type": "timeseries",
       "title": "Refused at capacity",
-      "description": "chat_connections_rejected_total{reason=\"at_capacity\"} is zero-initialised, so a flat zero means the ceiling has never bound rather than that nothing is watching. Any value above zero is people being turned away: check the headroom panel beside this one before raising the ceiling, because the ceiling exists to stop the box collapsing and raising it past what the cores serve just moves the failure from a refusal to latency for everybody. The two reserve series are the trade, both directions: `at_capacity_reserved` is cold arrivals turned away to keep the last seats free, and `chat_resume_reserve_admissions_total` is resumptions that took one of those seats - a conversation that would otherwise have ended for two people. Reserved refusals with no admissions beside them over a sustained period means the reserve is larger than the drop rate needs.",
+      "description": "chat_connections_rejected_total{reason=\"at_capacity\"} is zero-initialised, so a flat zero means the ceiling has never bound rather than that nothing is watching. Any value above zero is people being turned away: check the headroom panel beside this one before raising the ceiling, because the ceiling exists to stop the box collapsing and raising it past what the cores serve just moves the failure from a refusal to latency for everybody. The two reserve series are the trade, both directions: `at_capacity_reserved` is cold arrivals turned away to keep the last seats free, and `chat_resume_reserve_admissions_total` is resumptions that took one of those seats - a conversation that would otherwise have ended for two people. Reserved refusals with no admissions beside them over a sustained period means the reserve is larger than the drop rate needs. `chat_capacity_probes_total{state=\"busy\"}` is the same event seen from the browser (D64): a refusal counts server-side whether or not anybody was watching, while a probe is somebody who was, and who is now reading \"busier than usual\" on a screen.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -976,6 +976,14 @@
           },
           "expr": "sum(rate(chat_resume_reserve_admissions_total[$__rate_interval]))",
           "legendFormat": "conversations the reserve saved"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "karobakbak-prometheus"
+          },
+          "expr": "sum(rate(chat_capacity_probes_total{state=\"busy\"}[$__rate_interval]))",
+          "legendFormat": "browsers told it is busy"
         }
       ]
     }

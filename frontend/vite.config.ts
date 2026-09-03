@@ -15,6 +15,11 @@ export default defineConfig({
     proxy: {
       '/ws': { target: 'ws://localhost:8080', ws: true },
       '/health': 'http://localhost:8080',
+      // The capacity probe, for the same reason as the sign-in routes below:
+      // without this it falls through to the SPA, answers 200 with index.html,
+      // and the JSON parse fails — which the client reads as "cannot reach the
+      // server", the one answer the probe exists to rule out.
+      '/api/capacity': 'http://localhost:8080',
       '/ready': 'http://localhost:8080',
       // The four sign-in routes, for the same reason nginx.conf proxies them:
       // without this they fall through to the SPA and `/auth/session` answers
