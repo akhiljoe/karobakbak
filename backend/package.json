@@ -6,7 +6,7 @@
   "license": "MIT",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../.env src/index.ts",

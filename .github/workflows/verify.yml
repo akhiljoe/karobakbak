@@ -44,7 +44,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install
         run: npm run install:all
@@ -103,7 +103,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       # `--omit=dev` on purpose. A vulnerability in a test runner is worth
       # knowing about and is not worth failing a build over: it does not ship,
@@ -221,7 +221,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install
         run: npm --prefix backend install
