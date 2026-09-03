@@ -507,7 +507,7 @@ export function ChatShell({
         </div>
       </header>
 
-      <ReconnectBanner connection={connection} />
+      <ReconnectBanner connection={connection} capacity={state.capacity} />
 
       <div className="flex flex-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden">

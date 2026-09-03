@@ -31,6 +31,7 @@ import {
   type ReportCategory,
 } from '../protocol/types';
 import { clientConfig } from '../config';
+import { probeCapacity } from '../capacity';
 import { loadResumeToken, saveResumeToken } from '../resume';
 import { initialState, reduce, type Action, type ChatState } from '../state/machine';
 
@@ -145,7 +146,13 @@ export function useChat(): ChatApi {
           : new WebSocket(url, [BASE_PROTOCOL, `${RESUME_PROTOCOL_PREFIX}${token}`]);
       socketRef.current = socket;
 
+      // Whether this particular socket ever came up. A close after an open is a
+      // dropped connection; a close *without* one is a handshake that was
+      // refused, and only the second is worth asking the server about.
+      let opened = false;
+
       socket.addEventListener('open', () => {
+        opened = true;
         attemptRef.current = 0;
         dispatch({ type: 'socket_open' });
       });
@@ -166,7 +173,29 @@ export function useChat(): ChatApi {
       socket.addEventListener('close', (event) => {
         socketRef.current = null;
         if (disposed || closedByUsRef.current) return;
-        dispatch({ type: 'socket_closed', code: event.code });
+        dispatch({ type: 'socket_closed', code: event.code, everOpened: opened });
+
+        /*
+          Ask why, but only for a handshake that never came up.
+
+          The server refuses an upgrade with 503 and the browser hands page
+          script a close with code 1006: no status, no body, nothing to read.
+          So "the service is busy", "the backend is down" and "the wifi went
+          away" are the same event here, and all three currently read as the
+          last one.
+
+          On failure only, never polled: this fires once per failed attempt and
+          the attempts are already spread by the jittered backoff below, so a
+          service refusing a crowd does not get a second crowd asking why.
+          `void` deliberately — nothing waits on the answer, the reconnect timer
+          is armed regardless, and a probe that never resolves must not be able
+          to delay it.
+        */
+        if (!opened) {
+          void probeCapacity().then((capacity) => {
+            if (!disposed) dispatch({ type: 'capacity_probed', state: capacity });
+          });
+        }
 
         const backoff = clientConfig.timings.reconnectBackoffMs;
         const base = backoff[Math.min(attemptRef.current, backoff.length - 1)] ?? 10_000;

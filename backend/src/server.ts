@@ -50,7 +50,11 @@ const COMPOSITION_LABELS: readonly string[] = [...GENDERS, 'none'];
 import type { RedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import type { BanCheck, RedisStore } from './redis/store';
-import { PREFERENCE_DIMENSION_WEIGHTS, type Metrics } from './metrics/registry';
+import {
+  PREFERENCE_DIMENSION_WEIGHTS,
+  type CapacityState,
+  type Metrics,
+} from './metrics/registry';
 import type { PaymentRoutes } from './payments/routes';
 import type { EntitlementService } from './accounts/entitlement';
 import type { PresenceService } from './accounts/presence';
@@ -566,6 +570,42 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
       // shows when one is draining, which is when a system is least robust.
       // The same value is on every metric series, where it belongs.
       json(res, 200, { status: draining ? 'draining' : 'ok' });
+      return;
+    }
+
+    /*
+      What a browser is told after a handshake it could not see fail.
+
+      A refused WebSocket upgrade reaches page script as a close with code 1006:
+      no status, no body, no reason. So the frontend cannot tell "this instance
+      is at capacity" from "the backend is down" from "the wifi went away", and
+      all three currently read as the last one. This endpoint is the only place
+      that difference exists, and it is fetched **on failure only** — never
+      polled — so the traffic it adds is bounded by the reconnection backoff
+      that already exists.
+
+      Deliberately **200 in every case**, including `busy`. A 503 here would be
+      ambiguous with the outage the caller is trying to diagnose: a fetch that
+      fails and a fetch that says "busy" would look the same from the browser,
+      which is the exact confusion this exists to remove.
+
+      No numbers, ever — not the connection count, not the ceiling, not the
+      instance id. The caller needs to know whether to wait, and a count invites
+      the guess D21 refuses to hand out. It also answers about **the service**
+      rather than the instance that refused: the probe goes through the load
+      balancer and may well land elsewhere, which is the more useful question.
+    */
+    if (path === '/api/capacity') {
+      const health = clients.health();
+      const band = admission(
+        registry.size,
+        config.limits.maxConnections,
+        config.limits.resumeReserve,
+      );
+      const state: CapacityState =
+        draining || health !== 'ready' ? 'unavailable' : band === 'open' ? 'ok' : 'busy';
+      metrics.capacityProbes.labels(state).inc();
+      json(res, 200, { state });
       return;
     }
 

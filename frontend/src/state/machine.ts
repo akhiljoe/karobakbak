@@ -37,6 +37,7 @@ import type {
   ServerFeatures,
   ServerLimits,
 } from '../protocol/types';
+import type { CapacityState } from '../capacity';
 
 /** What the screen is showing. Mirrors the server's session state (§5). */
 export type Screen = 'connecting' | 'idle' | 'searching' | 'chatting' | 'ended' | 'disconnected';
@@ -103,6 +104,16 @@ export interface ChatState {
   readonly endReason: EndReason | null;
   /** A short, developer-authored line to show. Never raw server internals. */
   readonly notice: string | null;
+  /**
+   * Why the socket would not open, as the capacity probe answered.
+   *
+   * A refused handshake reaches page script as a close with code 1006 and
+   * nothing else, so this is the only place "the service is busy" exists at
+   * all. `unknown` is both the default and the common answer — if the probe
+   * could not get through either, the network is the problem, which is what
+   * the ordinary reconnecting copy already says.
+   */
+  readonly capacity: CapacityState;
   /**
    * When the server last refused a command for rate limiting.
    *
@@ -242,6 +253,7 @@ export const initialState: ChatState = {
   presence: null,
   endReason: null,
   notice: null,
+  capacity: 'unknown',
   rateLimitedAt: null,
   resumeGraceSeconds: 0,
   partnerAway: null,
@@ -259,7 +271,19 @@ export const initialState: ChatState = {
 
 export type Action =
   | { type: 'socket_open' }
-  | { type: 'socket_closed'; code: number }
+  | {
+      type: 'socket_closed';
+      code: number;
+      /**
+       * Whether this socket was ever up.
+       *
+       * Absent means it was, which is the historical meaning and the case every
+       * existing caller describes. False is a handshake that was **refused** —
+       * nothing was lost, because nothing was ever held, and saying "connection
+       * lost" there is both wrong and alarming on a first visit.
+       */
+      everOpened?: boolean;
+    }
   | { type: 'connected'; payload: ConnectedPayload }
   | { type: 'queue_status'; payload: QueueStatusPayload }
   | { type: 'presence'; payload: PresencePayload }
@@ -293,7 +317,8 @@ export type Action =
   | { type: 'user_skipped' }
   | { type: 'user_left' }
   | { type: 'user_blocked' }
-  | { type: 'dismiss_notice' };
+  | { type: 'dismiss_notice' }
+  | { type: 'capacity_probed'; state: CapacityState };
 
 /**
  * How the wire's answer reads on screen.
@@ -343,7 +368,18 @@ function clearedConversation(state: ChatState): ChatState {
 export function reduce(state: ChatState, action: Action): ChatState {
   switch (action.type) {
     case 'socket_open':
-      return { ...state, screen: 'connecting', notice: null };
+      // The socket is up, so whatever the probe last said about why it was not
+      // is history. Left standing it would caption a working connection with
+      // the reason the previous attempt failed.
+      return { ...state, screen: 'connecting', notice: null, capacity: 'unknown' };
+
+    case 'capacity_probed':
+      // Only meaningful while the socket is away. The probe is fired from the
+      // close handler and answers over HTTP, so a reconnect can land first —
+      // and a late `busy` arriving after the socket came back would explain a
+      // failure that is already over.
+      if (state.screen !== 'connecting' && state.screen !== 'disconnected') return state;
+      return { ...state, capacity: action.state };
 
     case 'connected': {
       const base = {
@@ -405,7 +441,10 @@ export function reduce(state: ChatState, action: Action): ChatState {
         screen: 'disconnected',
         sessionId: null,
         partnerTyping: false,
-        notice: 'Connection lost. Reconnecting…',
+        // Nothing was lost if nothing was ever up. A refused handshake leaves
+        // the landing screen to explain itself — it has the room, and the
+        // capacity probe gives it something true to say.
+        notice: action.everOpened === false ? null : 'Connection lost. Reconnecting…',
       };
 
     case 'queue_status': {

@@ -876,3 +876,61 @@ describe('saving a connection', () => {
     ).toEqual({ type: 'connection_made', matchId: 'm_1' });
   });
 });
+
+/**
+ * What the capacity probe is allowed to change (§28.9).
+ *
+ * The probe answers over HTTP while the socket is retrying on its own timer,
+ * so the ordering between the two is not fixed and the reducer is where that
+ * race is resolved.
+ */
+describe('the capacity probe answer', () => {
+  it('is recorded while the socket is away', () => {
+    const dropped = reduce(initialState, { type: 'socket_closed', code: 1006 });
+    const probed = reduce(dropped, { type: 'capacity_probed', state: 'busy' });
+    expect(probed.capacity).toBe('busy');
+    // The screen is unchanged: the probe explains the wait, it does not decide
+    // what is on screen.
+    expect(probed.screen).toBe(dropped.screen);
+  });
+
+  it('is ignored once the socket has come back', () => {
+    // The probe is fired from a close handler and answered over HTTP, so a
+    // reconnect can easily land first. A late "busy" would then caption a
+    // working connection with the reason the previous attempt failed.
+    const talking = connected(reduce(initialState, { type: 'socket_open' }));
+    expect(reduce(talking, { type: 'capacity_probed', state: 'busy' })).toBe(talking);
+  });
+
+  it('is cleared when a socket opens, not left standing', () => {
+    const dropped = reduce(initialState, { type: 'socket_closed', code: 1006 });
+    const busy = reduce(dropped, { type: 'capacity_probed', state: 'busy' });
+    expect(reduce(busy, { type: 'socket_open' }).capacity).toBe('unknown');
+  });
+});
+
+describe('a handshake that was refused', () => {
+  it('does not claim a connection was lost, because none was ever held', () => {
+    // The toast said "Connection lost. Reconnecting…" on a first visit to a
+    // busy service, beside a landing line saying it was busy: two messages,
+    // one of them false and the more alarming of the two.
+    const refused = reduce(initialState, {
+      type: 'socket_closed',
+      code: 1006,
+      everOpened: false,
+    });
+    expect(refused.notice).toBeNull();
+    expect(refused.screen).toBe('disconnected');
+  });
+
+  it('still says so for a socket that was up and dropped', () => {
+    // The absent field means "it was up", which is what every caller before
+    // this one described.
+    expect(reduce(connected(), { type: 'socket_closed', code: 1006 }).notice).toContain(
+      'Connection lost',
+    );
+    expect(
+      reduce(connected(), { type: 'socket_closed', code: 1006, everOpened: true }).notice,
+    ).toContain('Connection lost');
+  });
+});

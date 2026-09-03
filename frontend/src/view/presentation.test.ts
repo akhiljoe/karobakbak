@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { initialState, type ChatState } from '../state/machine';
-import { composerDisabled, connectionOf, phaseOf,
+import { capacityLine, composerDisabled, connectionNotice, connectionOf, phaseOf,
   PRESENCE_MIN_TO_SHOW,
   showPresence,
 } from './presentation';
@@ -131,5 +131,75 @@ describe('showPresence', () => {
     // The frame is server-built and validated, but a hidden counter is a much
     // cheaper failure than "NaN online" on the landing page.
     expect(showPresence({ online: Number.NaN, conversations: 0 })).toBe(false);
+  });
+});
+
+/**
+ * What a person is told while the socket is away.
+ *
+ * The three failures are indistinguishable to a browser — a refused handshake,
+ * a dead backend and a dropped wifi all arrive as a close with code 1006 — so
+ * these assertions are the whole of the difference the capacity probe buys.
+ */
+describe('what the reconnect banner says', () => {
+  it('says nothing at all while connected', () => {
+    expect(connectionNotice('connected', 'unknown')).toBeNull();
+    expect(connectionNotice('connected', 'busy')).toBeNull();
+  });
+
+  it('never says full, and never says a number', () => {
+    const message = connectionNotice('reconnecting', 'busy');
+    expect(message).toContain('busier than usual');
+    // "Full" invites the question of how full and turns a wait into a verdict;
+    // a number is the thing D21 refuses to hand out. Neither is recoverable
+    // once it has been on a screen.
+    expect(message).not.toMatch(/full/i);
+    expect(message).not.toMatch(/[0-9]/);
+  });
+
+  it('says busy on the first connection as well as on a reconnect', () => {
+    // The landing screen is where this matters most: there is no conversation
+    // to explain the wait, so without the probe the button just says
+    // "Connecting…" for ever.
+    expect(connectionNotice('connecting', 'busy')).toContain('busier than usual');
+  });
+
+  it('separates a busy service from one that cannot be reached', () => {
+    expect(connectionNotice('reconnecting', 'unavailable')).toContain('cannot reach');
+    expect(connectionNotice('reconnecting', 'unavailable')).not.toContain('busier');
+  });
+
+  it('falls back to the ordinary line when the probe learned nothing', () => {
+    // Honest: if the probe could not get through either, this is
+    // indistinguishable from the network being gone, and the ordinary line
+    // already says exactly that.
+    expect(connectionNotice('reconnecting', 'unknown')).toContain('Connection lost');
+    expect(connectionNotice('reconnecting', 'ok')).toContain('Connection lost');
+    expect(connectionNotice('connecting', 'unknown')).toBe('Connecting…');
+  });
+});
+
+describe('the line under the Start button', () => {
+  it('explains a busy service without a number and without "full"', () => {
+    const line = capacityLine('busy');
+    expect(line).toContain('busier than usual');
+    expect(line).not.toMatch(/full/i);
+    expect(line).not.toMatch(/[0-9]/);
+  });
+
+  it('tells somebody not to refresh, because refreshing makes it worse', () => {
+    // A refresh drops the queued retry and starts the backoff again, so the
+    // instinctive response to a stuck button is the one that costs them their
+    // place in the retry schedule.
+    expect(capacityLine('busy')).toContain('no need to refresh');
+    expect(capacityLine('unavailable')).toContain('no need to refresh');
+  });
+
+  it('says nothing when the probe learned nothing worth repeating', () => {
+    // `ok` means the service would have taken the connection, so the fault is
+    // local; `unknown` means the probe could not get through either. Neither
+    // is something this page can describe better than the button already does.
+    expect(capacityLine('ok')).toBeNull();
+    expect(capacityLine('unknown')).toBeNull();
   });
 });

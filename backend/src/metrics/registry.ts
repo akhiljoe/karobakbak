@@ -62,6 +62,18 @@ export const REJECT_REASONS = [
 export const MODERATION_ACTIONS = ['allow', 'flag', 'withhold', 'block'] as const;
 
 /**
+ * What the capacity probe can answer.
+ *
+ * A browser cannot see the 503 on a refused WebSocket handshake — it arrives as
+ * a close with code 1006, no status and no body — so it cannot tell "we are
+ * busy" from "the server is down" from "your wifi died". The probe is the only
+ * place that difference exists, and this counter is the only place an operator
+ * can see how often somebody met it.
+ */
+export const CAPACITY_STATES = ['ok', 'busy', 'unavailable'] as const;
+export type CapacityState = (typeof CAPACITY_STATES)[number];
+
+/**
  * The product funnel, as one counter with a step label (D61).
  *
  * ---------------------------------------------------------------------------
@@ -299,6 +311,7 @@ export interface Metrics {
   readonly resumes: Counter<'outcome'>;
   readonly connectionsReserved: Gauge;
   readonly resumeReserveAdmissions: Counter<string>;
+  readonly capacityProbes: Counter<'state'>;
   /**
    * Searches whose declared preference was not applied, by which limit stopped
    * it (§29.4).
@@ -705,6 +718,11 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
       'chat_connections_reserved',
       'Of that limit, how many sockets are held back for resuming sessions (D63)',
     ),
+    capacityProbes: counter(
+      'chat_capacity_probes_total',
+      'Capacity probes answered, by what the browser was told',
+      ['state'],
+    ),
     resumeReserveAdmissions: counter(
       'chat_resume_reserve_admissions_total',
       'Resumptions admitted into a seat a fresh arrival would have been refused',
@@ -965,6 +983,9 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   // identical on a graph and mean very different things during an incident.
   for (const reason of REJECT_REASONS) metrics.connectionsRejected.labels(reason).inc(0);
   for (const route of DELIVERY_ROUTES) metrics.messagesDelivered.labels(route).inc(0);
+  // `busy` at zero is the point: a browser meeting the ceiling for the first
+  // time must be a series that rises, not one that appears.
+  for (const state of CAPACITY_STATES) metrics.capacityProbes.labels(state).inc(0);
   for (const action of MODERATION_ACTIONS) metrics.moderationFlags.labels(action).inc(0);
   for (const priority of PRIORITY_CLASSES) metrics.retentionQueueDepth.labels(priority).set(0);
 
