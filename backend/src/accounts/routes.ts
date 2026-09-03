@@ -42,7 +42,7 @@
  * ---------------------------------------------------------------------------
  * No password, no reset, no email sending, no account-deletion endpoint on the
  * chat process. The credential is the provider's problem, which is the entire
- * reason for taking a provider (`docs/FEATURE-INTAKE.md`).
+ * reason for taking a provider (`docs/product/FEATURE-INTAKE.md`).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';

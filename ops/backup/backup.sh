@@ -49,7 +49,7 @@
 # ---------------------------------------------------------------------------
 # An encrypted backup you cannot decrypt is not a backup. Store the passphrase
 # somewhere that survives losing this host — a password manager, not this
-# machine, and not only this machine. Restoring is `docs/OPERATIONS.md` §7c;
+# machine, and not only this machine. Restoring is `docs/operations/OPERATIONS.md` §7c;
 # do it once before you need it.
 
 set -eu

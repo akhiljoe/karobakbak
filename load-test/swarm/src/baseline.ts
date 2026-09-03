@@ -12,7 +12,7 @@
  *
  * So a change that halves throughput, or doubles the time to find somebody, or
  * quietly stops a persona group producing events, passes every oracle. The
- * verdict says PASS and the product is worse. `docs/OBSERVABILITY-AND-TESTING.md`
+ * verdict says PASS and the product is worse. `docs/testing/OBSERVABILITY-AND-TESTING.md`
  * §2.5 names this as the last gap in the load work: 130 run directories, no
  * baseline, no comparison, and nothing that would notice.
  *

@@ -303,7 +303,7 @@ export function createOidcClient(config: Config, logger: Logger): OidcClient {
          *
          * It also closes half of a gap that is otherwise surprising: our
          * sign-out revokes our own credential and deliberately does not touch
-         * the provider's session (see docs/SIGNIN-SETUP.md). Signing out and
+         * the provider's session (see docs/operations/SIGNIN-SETUP.md). Signing out and
          * back in would otherwise land on the same account with nothing asked,
          * which reads as the sign-out having done nothing at all.
          *

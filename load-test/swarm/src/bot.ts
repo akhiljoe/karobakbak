@@ -53,7 +53,7 @@ import type { Corpus } from './corpus';
 /* -------------------------------------------------------------------------- */
 
 export interface Persona {
-  /** Scenario id from `docs/LOADTEST-SCENARIOS.md`, e.g. `N1`. */
+  /** Scenario id from `docs/testing/LOADTEST-SCENARIOS.md`, e.g. `N1`. */
   readonly scenario: string;
   readonly label: string;
   /**

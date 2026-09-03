@@ -78,7 +78,7 @@ export interface SpamOracleInput {
   /**
    * Distinct conversations a repeated line must reach before an offline query
    * would call it a campaign. Five is the threshold in the SQL in
-   * `docs/LOADTEST-SCENARIOS.md` §6, kept identical so the two agree.
+   * `docs/testing/LOADTEST-SCENARIOS.md` §6, kept identical so the two agree.
    */
   readonly campaignThreshold: number;
 }

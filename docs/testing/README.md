@@ -9,6 +9,18 @@ Four documents, each answering a different question.
 | [`FINDINGS.md`](FINDINGS.md) | Every F-numbered finding and what is left to decide |
 | [`LAUNCH-GATE.md`](LAUNCH-GATE.md) | Every public claim, against the thing that demonstrates it |
 
+Five more live in this folder and answer narrower questions. They were moved
+here on 2026-09-04 from the top of `docs/`, where they had nothing to do with
+their neighbours.
+
+| | |
+|---|---|
+| [`SWARM-HANDOFF.md`](SWARM-HANDOFF.md) | The load harness: state, backlog, and the traps that have each cost a red run |
+| [`LOADTEST-SCENARIOS.md`](LOADTEST-SCENARIOS.md) | The scenario catalogue the swarm runs against |
+| [`OBSERVABILITY-AND-TESTING.md`](OBSERVABILITY-AND-TESTING.md) | The contract for phases 25–34, and decisions D52–D59 |
+| [`BUGS.md`](BUGS.md) | The bug register |
+| [`DEEP-CODEBASE-AUDIT.md`](DEEP-CODEBASE-AUDIT.md) | A full read of the codebase and what it turned up |
+
 **If you are deciding whether to launch, read `LAUNCH-GATE.md` and nothing
 else first.** It ends with three blocking items and five things you would be
 choosing to ship without.
@@ -104,7 +116,7 @@ npm run sentinel:failover
 npm run sentinel:restore && npm run sentinel:down
 ```
 
-`OPERATIONS.md` §17.3–17.4 has the procedure and the numbers it produced.
+`operations/OPERATIONS.md` §17.3–17.4 has the procedure and the numbers it produced.
 
 ### Watching it happen
 
@@ -134,7 +146,7 @@ One thing that is a known failure: **profile agreement reports a residual ~6%**
 
 ## Before adding a test
 
-Read `docs/LOADTEST-SCENARIOS.md` for the catalogue and `docs/SWARM-HANDOFF.md`
+Read `docs/testing/LOADTEST-SCENARIOS.md` for the catalogue and `docs/testing/SWARM-HANDOFF.md`
 for the thirty-odd traps that have each already cost a red run.
 
 Then ask where it belongs. Three groups were catalogued as swarm rows and are

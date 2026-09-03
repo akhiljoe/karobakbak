@@ -228,7 +228,7 @@ for (const field of [...declaredFields].sort()) {
  * the build. Drop any one of the three and the bundle ships the default with
  * nothing to show for it — which is the frontend's version of F-045, and the
  * reason `VITE_CONTACT_EMAIL` and `VITE_SUPPORT_URL` once reached nothing
- * (docs/UI-BACKLOG.md).
+ * (docs/product/UI-BACKLOG.md).
  */
 const frontendConfig = read('frontend', 'src', 'config.ts');
 const dockerfile = read('frontend', 'Dockerfile');
@@ -261,7 +261,7 @@ if (problems.length > 0) {
   console.error('config wiring check failed:\n');
   for (const problem of problems) console.error(`  - ${problem}`);
   console.error(
-    `\n${problems.length} problem(s). See docs/CONFIGURATION.md for what each surface needs.`,
+    `\n${problems.length} problem(s). See docs/operations/CONFIGURATION.md for what each surface needs.`,
   );
   process.exit(1);
 }

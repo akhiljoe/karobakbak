@@ -37,7 +37,7 @@ the ones most likely to go stale, and `RESULTS.md` records when each last ran.
 
 ## The scenario catalogue
 
-143 rows in `docs/LOADTEST-SCENARIOS.md`. Several groups have moved out of the
+143 rows in `docs/testing/LOADTEST-SCENARIOS.md`. Several groups have moved out of the
 swarm into the integration suite, and the "where" column says so — they were
 catalogued as load scenarios and are not: one client and one expected refusal
 does not need load, and a test that needs no load should run on every push.
