@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 # WHAT THIS IS FOR, AND WHAT IT IS NOT
 # ---------------------------------------------------------------------------
-# It is a drill rig. `docs/OPERATIONS.md` §14 walks through stopping the primary
+# It is a drill rig. `docs/operations/OPERATIONS.md` §14 walks through stopping the primary
 # and watching a replica take over, which is the only way to find out whether
 # the failover you are paying for works before the night it has to.
 #

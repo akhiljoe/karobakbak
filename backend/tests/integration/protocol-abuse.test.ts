@@ -1,5 +1,5 @@
 /**
- * The P group — protocol abuse, all 28 catalogued rows (`docs/LOADTEST-SCENARIOS.md` §P).
+ * The P group — protocol abuse, all 28 catalogued rows (`docs/testing/LOADTEST-SCENARIOS.md` §P).
  *
  * ---------------------------------------------------------------------------
  * WHY AGAINST A LIVE SERVER RATHER THAN AGAINST `parseClientFrame`
@@ -19,7 +19,7 @@
  * that are cheapest to get wrong are exactly the ones that cross the boundary.
  * So all of them run the way a client experiences them.
  *
- * `docs/LOADTEST-SCENARIOS.md` catalogued these as swarm rows and the swarm has
+ * `docs/testing/LOADTEST-SCENARIOS.md` catalogued these as swarm rows and the swarm has
  * never implemented any of them. They do not need load — one client each, and a
  * specific expected refusal — so they belong here, where they run on every push
  * rather than when somebody remembers to start a stack.

@@ -129,7 +129,7 @@ services:
       # Empty means the single node above. Set both together, or neither: a
       # half-specified topology is refused rather than quietly degraded, which
       # is the whole point of the feature. Three sentinels minimum -- two cannot
-      # form a majority after losing one. See `docs/OPERATIONS.md` §17.
+      # form a majority after losing one. See `docs/operations/OPERATIONS.md` §17.
       REDIS_SENTINELS: "${REDIS_SENTINELS-}"
       REDIS_SENTINEL_NAME: "${REDIS_SENTINEL_NAME-}"
       # Only if the nodes require AUTH. Separate credentials for separate
@@ -181,7 +181,7 @@ services:
       # Empty means the single node above. Set both together, or neither: a
       # half-specified topology is refused rather than quietly degraded, which
       # is the whole point of the feature. Three sentinels minimum -- two cannot
-      # form a majority after losing one. See `docs/OPERATIONS.md` §17.
+      # form a majority after losing one. See `docs/operations/OPERATIONS.md` §17.
       REDIS_SENTINELS: "${REDIS_SENTINELS-}"
       REDIS_SENTINEL_NAME: "${REDIS_SENTINEL_NAME-}"
       # Only if the nodes require AUTH. Separate credentials for separate

@@ -4,7 +4,7 @@
 # WHY THIS EXISTS BESIDE `docker-compose.sentinel.yml` RATHER THAN INSIDE IT
 # ---------------------------------------------------------------------------
 # That file is a rig: three Sentinels, a primary and a replica, and nothing
-# else. `OPERATIONS.md` §17 drills it by hand — stop the primary, watch the
+# else. `operations/OPERATIONS.md` §17 drills it by hand — stop the primary, watch the
 # replica take over, confirm a key survived — and it proves Redis fails over.
 #
 # What it cannot prove is what this system does *while* that happens. Every

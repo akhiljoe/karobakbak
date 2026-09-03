@@ -456,7 +456,7 @@ empty.
 |---|---|
 | [`DESIGN.md`](./DESIGN.md) | the contract: invariants, state machine, wire protocol, Redis data model, matchmaking, the §10 concurrency analysis, the threat model, and §23 on what was deliberately rejected |
 | [`PHASES.md`](./PHASES.md) | build order, what is done, and the trigger that pulls each deferred item in |
-| [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) | every command: docker, Redis, PostgreSQL, Prometheus, Grafana, clearing and resetting |
+| [`docs/operations/OPERATIONS.md`](./docs/operations/OPERATIONS.md) | every command: docker, Redis, PostgreSQL, Prometheus, Grafana, clearing and resetting |
 | [`docs/PROGRESS.md`](./docs/PROGRESS.md) | the running log: what changed each phase, what broke, and why |
 | [`CLAUDE.md`](./CLAUDE.md) | working notes — the rules that override normal judgement, and the things that will bite you |
 | [`docs/`](./docs) | the six product documents. `DESIGN.md` §1.2 records every place they conflicted and how each was resolved; on conflicts of fact, `DESIGN.md` wins |

@@ -59,7 +59,7 @@ const TERMS: StaticPage = {
     {
       heading: 'Overview',
       body: [
-        'Last updated: [not published yet]',
+        'Last updated: 7 September 2026',
         'Effective from: [not published yet]',
         'These Terms of Service (“Terms”) govern your access to and use of karobakbak (“karobakbak”, “we”, “us” or “our”).',
         'Please read them carefully. They explain what the service is, what you can expect from us, what we expect from you, and the circumstances in which we may restrict or end your access.',
@@ -773,7 +773,7 @@ const TERMS: StaticPage = {
       heading: 'Effective date',
       body: [
         'Effective from: [not published yet]',
-        'Last updated: [not published yet]',
+        'Last updated: 7 September 2026',
       ],
     },
   ],
@@ -788,7 +788,7 @@ const PRIVACY: StaticPage = {
       heading: 'Overview',
       body: [
         'Privacy Policy',
-        'Last updated: [not published yet]',
+        'Last updated: 7 September 2026',
         'Effective from: [not published yet]',
         'karobakbak is designed to let you talk to strangers without creating a conventional account for the free chat service.',
         'Premium is different. A Premium subscription requires an account, and we need an email address to create and manage that account and associate your subscription with you.',

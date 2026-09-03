@@ -457,7 +457,7 @@ describe('cross-instance events (§11)', () => {
 /*
  * The catalogued R rows that had no test.
  *
- * `docs/LOADTEST-SCENARIOS.md` lists fifteen and records the group as having no
+ * `docs/testing/LOADTEST-SCENARIOS.md` lists fifteen and records the group as having no
  * dedicated coverage. That was out of date: R1, R4, R13 and R14 are already
  * exercised above, under names that describe the behaviour rather than the row.
  * These are four of the ones that genuinely were not.

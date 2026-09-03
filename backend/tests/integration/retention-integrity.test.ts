@@ -1,6 +1,6 @@
 /**
  * The D group — data integrity, the rows that are about retention
- * (`docs/LOADTEST-SCENARIOS.md` §D).
+ * (`docs/testing/LOADTEST-SCENARIOS.md` §D).
  *
  * ---------------------------------------------------------------------------
  * D10 IS THE ONE THAT DEFENDS A PUBLISHED CLAIM
