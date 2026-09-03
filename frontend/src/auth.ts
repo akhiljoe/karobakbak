@@ -126,9 +126,23 @@ export interface SessionState {
    * comes from this origin or not at all.
    */
   readonly avatar: boolean;
+  /**
+   * Whether this account currently holds premium.
+   *
+   * Here rather than on the socket because the entitlement is stamped onto the
+   * session row asynchronously after a connection binds an account (D51) — the
+   * `connected` frame would race it, and a paying user seeing the control
+   * vanish for a moment is worse than the problem this solves.
+   *
+   * It is **not** a gate. The server's is the only gate, and a refused
+   * preference stays invisible by design (§29.4). This exists so the interface
+   * does not offer a control the server will silently refuse, which is a
+   * promise the client would be making on the server's behalf.
+   */
+  readonly premium: boolean;
 }
 
-const SIGNED_OUT: SessionState = { signedIn: false, avatar: false };
+const SIGNED_OUT: SessionState = { signedIn: false, avatar: false, premium: false };
 
 /** The image, served by this origin. Cached hard by the browser. */
 export const AVATAR_URL = '/auth/avatar';
@@ -157,12 +171,16 @@ export async function readSession(): Promise<SessionState> {
   try {
     const body: unknown = await response.json();
     if (typeof body !== 'object' || body === null) return SIGNED_OUT;
-    const shape = body as { signedIn?: unknown; avatar?: unknown };
+    const shape = body as { signedIn?: unknown; avatar?: unknown; premium?: unknown };
     // Strict, not truthy. A server that ever answered `"signedIn": "no"` would
     // otherwise read as signed in, and this is the check the whole account
     // surface hangs off.
     if (shape.signedIn !== true) return SIGNED_OUT;
-    return { signedIn: true, avatar: shape.avatar === true };
+    // `premium` is read the same way and defaults to false, which is the safe
+    // direction: a page that wrongly hides a paid control costs a click, and
+    // one that wrongly shows it promises something the server will not honour
+    // and then silently does not (§29.4, D51).
+    return { signedIn: true, avatar: shape.avatar === true, premium: shape.premium === true };
   } catch {
     return SIGNED_OUT;
   }

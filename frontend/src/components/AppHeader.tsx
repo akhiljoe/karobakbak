@@ -22,6 +22,19 @@
  * surface whose only function was to say no. `FILTERS_AVAILABLE` hides it until
  * filters both exist and can be paid for; Premium is described on its own page,
  * which is where somebody goes to find out what it costs.
+ *
+ * `session.premium` is the second half of that, and it is per-user rather than
+ * per-deployment. Without it, the day payments are switched on every visitor
+ * gets the control, sets a preference, and has it dropped by the D51 gate on
+ * the server — silently, because §29.4 requires a refused preference to be
+ * invisible. That rule is right for somebody who has paid and spent their
+ * hourly budget, and exactly wrong for somebody who never paid at all: they
+ * would watch the setting be accepted and never learn it did nothing.
+ *
+ * It is false during the first `/auth/session` round trip, so a paying user
+ * sees the control appear a moment after the page does. That is the same trade
+ * the sign-in button makes above, in the same direction: showing nothing
+ * briefly beats showing something false.
  */
 import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
@@ -102,7 +115,7 @@ export function AppHeader({
           </div>
         )}
 
-        {FILTERS_AVAILABLE && (
+        {FILTERS_AVAILABLE && session.premium && (
         <button
           onClick={onOpenFilters}
           aria-label="Matching filters"

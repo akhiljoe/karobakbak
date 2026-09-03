@@ -215,6 +215,11 @@ async function main(): Promise<void> {
       connections,
       blocks: accountBlocks,
       presence,
+      // So `/auth/session` can say whether this account holds premium, and the
+      // interface can stop offering a control the server would refuse (D51).
+      // The same service the session row is stamped from, so the page and the
+      // matchmaker cannot disagree about who paid.
+      entitlement,
       /*
         Sign-in, the avatar relay and reconnect wrote no metrics at all until
         now — nor did anything else in `accounts/`, so phases 20 to 24 shipped
