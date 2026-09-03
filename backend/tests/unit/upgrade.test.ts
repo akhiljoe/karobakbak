@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 
 import { loadConfig, type Env } from '../../src/config';
 import {
+  admission,
   CLIENT_TOKEN_COOKIE,
   clientAddress,
   clientTokenCookie,
@@ -186,5 +187,40 @@ describe('clientTokenCookie', () => {
         }),
       ),
     ).toContain('Secure');
+  });
+});
+
+
+/**
+ * The three admission bands (D63).
+ *
+ * Boundaries, because that is the whole of the function: the interesting cases
+ * are the first seat inside the reserve and the last seat overall, and neither
+ * is reachable in a test that fills a real instance.
+ */
+describe('admission', () => {
+  it('admits freely below the reserve', () => {
+    expect(admission(0, 100, 5)).toBe('open');
+    expect(admission(94, 100, 5)).toBe('open');
+  });
+
+  it('holds the last seats for resumptions', () => {
+    expect(admission(95, 100, 5)).toBe('reserved');
+    expect(admission(99, 100, 5)).toBe('reserved');
+  });
+
+  it('refuses everybody at the ceiling, resumption or not', () => {
+    // The reserve is headroom for people coming back, not an extension of the
+    // ceiling: the ceiling is what the box can actually serve.
+    expect(admission(100, 100, 5)).toBe('full');
+    expect(admission(140, 100, 5)).toBe('full');
+  });
+
+  it('has no reserved band at all when nothing is reserved', () => {
+    // RESUME_GRACE_SECONDS=0 derives a reserve of zero, and this is the shape
+    // that has to stay correct: two bands, and the ceiling in the same place it
+    // was before any of this existed.
+    expect(admission(99, 100, 0)).toBe('open');
+    expect(admission(100, 100, 0)).toBe('full');
   });
 });

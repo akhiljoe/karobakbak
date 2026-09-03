@@ -16,6 +16,35 @@ import { newClientToken } from '../util/ids';
 export const CLIENT_TOKEN_COOKIE = 'kbb_ct';
 
 /**
+ * What an instance at a given occupancy will admit.
+ *
+ * `full` refuses everybody, `reserved` refuses everybody except a connection
+ * that genuinely resumes a session, `open` admits.
+ */
+export type Admission = 'open' | 'reserved' | 'full';
+
+/**
+ * Decide which of the three bands this connection arrives in.
+ *
+ * Pure, and separated from the handler for the same reason the address and the
+ * origin are: it is the arithmetic that decides whether somebody is turned
+ * away, and it is worth being able to test it directly at the boundaries
+ * rather than by filling a real instance.
+ *
+ * `reserved` is not "admit because a token was presented". The seats are for
+ * resumptions, and a token is presented by anything that cares to send a
+ * subprotocol - so the handler runs the resume attempt and refuses the
+ * connection when it did not resume anything. Otherwise a client that wanted a
+ * seat at capacity would only have to invent a token, which is the cheapest
+ * possible thing to invent.
+ */
+export function admission(active: number, maxConnections: number, resumeReserve: number): Admission {
+  if (active >= maxConnections) return 'full';
+  if (active >= maxConnections - resumeReserve) return 'reserved';
+  return 'open';
+}
+
+/**
  * Resolve the client's address.
  *
  * With no trusted proxy the peer address *is* the client. With N trusted
