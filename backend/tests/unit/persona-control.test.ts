@@ -146,7 +146,7 @@ describe('the levers', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'costs',
     });
 
@@ -162,7 +162,7 @@ describe('the levers', () => {
       subject: 'marco-forward',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'behaving badly',
     });
 
@@ -177,7 +177,7 @@ describe('the levers', () => {
       subject: 'vendor-b',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'refusal storm',
     });
 
@@ -194,7 +194,7 @@ describe('the levers', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -211,7 +211,7 @@ describe('drain versus hard', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -228,7 +228,7 @@ describe('drain versus hard', () => {
       subject: '',
       enabled: false,
       mode: 'hard',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'emergency',
     });
 
@@ -245,7 +245,7 @@ describe('drain versus hard', () => {
       subject: 'marco-forward',
       enabled: false,
       mode: 'hard',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -283,7 +283,7 @@ describe('failing closed', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -307,7 +307,7 @@ describe('surviving a Redis restart', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'turned off deliberately',
     });
     expect((await control.canJoin('x', 'y')).allowed).toBe(false);
@@ -326,7 +326,7 @@ describe('surviving a Redis restart', () => {
       subject: 'bea-tangent',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -341,7 +341,7 @@ describe('surviving a Redis restart', () => {
     const { control, db, cache } = build();
     db.rows = [
       { scope: 'global', subject: '', enabled: true, mode: 'drain', updatedBy: 'system', reason: null },
-      { scope: 'character', subject: 'bea-tangent', enabled: false, mode: 'hard', updatedBy: '***REMOVED***', reason: null },
+      { scope: 'character', subject: 'bea-tangent', enabled: false, mode: 'hard', updatedBy: 'operator', reason: null },
     ];
     cache.flush();
 
@@ -377,7 +377,7 @@ describe('writes go to PostgreSQL first', () => {
       subject: '',
       enabled: false,
       mode: 'drain',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: null,
     });
 
@@ -392,20 +392,20 @@ describe('writes go to PostgreSQL first', () => {
       subject: '',
       enabled: false,
       mode: 'hard',
-      updatedBy: '***REMOVED***',
+      updatedBy: 'operator',
       reason: 'bill',
     });
 
     const rows = await control.list();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.updatedBy).toBe('***REMOVED***');
+    expect(rows[0]?.updatedBy).toBe('operator');
     expect(rows[0]?.reason).toBe('bill');
     expect(rows[0]?.mode).toBe('hard');
   });
 
   it('updates an existing switch rather than duplicating it', async () => {
     const { control } = build();
-    const row = { scope: 'global', subject: '', mode: 'drain', updatedBy: '***REMOVED***', reason: null } as const;
+    const row = { scope: 'global', subject: '', mode: 'drain', updatedBy: 'operator', reason: null } as const;
 
     await control.set({ ...row, enabled: false });
     await control.set({ ...row, enabled: true });

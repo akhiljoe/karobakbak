@@ -18,7 +18,7 @@ let service: PersonaConsoleService;
 
 const identity: AdminIdentity = {
   accountId: newAdminAccountId(),
-  username: '***REMOVED***',
+  username: 'operator',
   role: 'senior_moderator',
 };
 
