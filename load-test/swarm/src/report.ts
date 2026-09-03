@@ -220,6 +220,29 @@ export function printReport(input: ReportInput): void {
         ? `VERDICT: FAIL — ${failed.map((oracle) => oracle.name).join(', ')}`
         : `VERDICT: PASS${skipped.length > 0 ? ` (${skipped.length} oracle(s) did not run)` : ''}`,
     );
+
+    /*
+      Name the oracles that skipped for want of a flag, not the ones the run
+      never asked for.
+
+      "PASS (2 oracle(s) did not run)" reads as a complete run with a footnote,
+      and it is not: `database agreement` is the only check that looks at
+      PostgreSQL at all, and it skipped out of every documented invocation for
+      months because `--postgres` was missing from the command in the README.
+      A pass that never opened the database is a different, much weaker claim
+      than a pass that did, and the summary line was not saying so.
+
+      `--chaos` and an absent A14 group are deliberate omissions and stay quiet.
+      What is listed here is configuration that was probably forgotten.
+    */
+    const forgotten = skipped.filter((oracle) => oracle.needsConfiguration === true);
+    if (forgotten.length > 0) {
+      lines.push(
+        `  ...but ${forgotten.length} of those needed a flag this run did not pass: ` +
+          `${forgotten.map((oracle) => oracle.name).join(', ')}.`,
+      );
+      lines.push('  A pass that skipped them is a weaker claim than a pass that did not.');
+    }
   }
   lines.push('-'.repeat(72));
   lines.push('');

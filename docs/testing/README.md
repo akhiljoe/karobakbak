@@ -34,19 +34,30 @@ in CI.
 ```bash
 npm run loadtest:up                 # the load stack: its own database, its own ports
 
+# every oracle, without having to remember four flags
+npm run swarm:full -- --bots 5000 --duration 300 --profile realistic
+
+# the same thing spelled out, if you need to point it somewhere else
 npm run swarm -- --bots 5000 --duration 300 --profile realistic \
   --redis      karobakbak-loadtest-redis-1 \
   --metrics    karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2 \
-  --containers karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2
+  --containers karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2 \
+  --postgres   karobakbak-loadtest-postgres-1
 
 npm run security:install && npm run security:probe   # 11 live probes
 npm run verify:logs                                  # what actually reached Loki
 ```
 
-Pass `--redis`, `--metrics` and `--containers` or six of the eight oracles skip,
-including the log-leak check, which is the strongest safety assertion the swarm
-makes. A run that skips them is not a smaller version of a full run; it is a
+Pass `--redis`, `--metrics`, `--containers` and `--postgres` or most of the nine
+oracles skip — including the log-leak check, the strongest safety assertion the
+swarm makes, and `database agreement`, the only one that looks at PostgreSQL at
+all. A run that skips them is not a smaller version of a full run; it is a
 different, much weaker claim.
+
+`--postgres` was missing from this command until 2026-09-04, so every documented
+run for months proved nothing about what was stored. Use `npm run swarm:full`,
+which passes all four. The verdict line now names any oracle that skipped for
+want of a flag rather than by choice, so the omission cannot be silent again.
 
 ### Catching a regression
 

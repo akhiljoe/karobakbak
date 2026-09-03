@@ -220,6 +220,7 @@ export async function checkMetrics(input: MetricsInput): Promise<OracleResult> {
       name: 'metric conservation',
       status: 'skipped',
       summary: 'no metrics endpoints given; pass --metrics to enable',
+      needsConfiguration: true,
       details: [
         'nginx does not proxy /metrics by design, and replicas cannot publish a host port,',
         'so pass container names and they are scraped from inside:',

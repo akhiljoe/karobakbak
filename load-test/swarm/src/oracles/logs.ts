@@ -44,6 +44,7 @@ export async function checkLogsForLeaks(input: LogOracleInput): Promise<OracleRe
       name: 'log leak (invariant I8)',
       status: 'skipped',
       summary: 'no containers given; pass --containers to enable the strongest safety check',
+      needsConfiguration: true,
       details: [
         'example: --containers karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2',
       ],
@@ -130,6 +131,15 @@ export async function checkLogsForLeaks(input: LogOracleInput): Promise<OracleRe
   return {
     name: 'log leak (invariant I8)',
     status,
+    /*
+      A skip here is never a choice, so it is always worth naming in the
+      verdict. Either the containers were not given, or they were given and
+      produced nothing to search — and the second is the more misleading of the
+      two, because the flag was passed and the check still proved nothing. This
+      is the strongest safety assertion the swarm makes; a run that skipped it
+      should not read as a clean run with a footnote.
+    */
+    needsConfiguration: status === 'skipped',
     summary:
       hits.length > 0
         ? `${hits.length} message body/bodies found in backend logs`
