@@ -71,7 +71,23 @@ const TERMS: StaticPage = {
       heading: 'Who operates karobakbak',
       body: [
         'karobakbak is operated by:',
-        'Operator: [operator name — not published yet]',
+        /*
+          The registered enterprise, never the individual (register row 19, and
+          the operator's instruction of 2026-09-04).
+
+          This replaced "Operator: [operator name — not published yet]", which
+          was a blank waiting for a person's name — the one fact that is not
+          going to be filled in here. What waits in the gap now is a
+          registration number, which is verifiable by anyone with standing to
+          ask and printed on nobody's screen.
+
+          It keeps the `[...]` shape deliberately: `pages.test.ts` skips a
+          rendered gap when it checks that this page transcribes the draft
+          rather than paraphrasing it, and a line without one would have to be
+          added to the legal draft first. This says no more than the draft's own
+          opening sentence already does.
+        */
+        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
         'Business structure: Sole proprietorship',
         'Country: India',
         `Email: ${contact}`,
@@ -739,7 +755,11 @@ const TERMS: StaticPage = {
       body: [
         'If you have a question about these Terms, contact:',
         'karobakbak',
-        'Operator: [operator name — not published yet]',
+        // The third of these, and the easiest to miss: a contact block asking
+        // for an operator's name beside an email address that already reaches
+        // them. The enterprise and its registration answer "who is this",
+        // which is the question a reader of a contact block is actually asking.
+        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
         `Email: ${contact}`,
         'Address: [business address — not published yet]',
         'For privacy-related requests, please see the contact information in the Privacy Policy.',
@@ -776,7 +796,11 @@ const PRIVACY: StaticPage = {
       heading: 'Who is responsible for your data',
       body: [
         'karobakbak is operated by:',
-        'Legal name: [operator name — not published yet]',
+        // Same rule as the Terms above: the enterprise and its registration,
+        // not a person. "Legal name: [operator name — not published yet]" was
+        // the sharper version of the problem, because it asks by name for
+        // exactly the thing that is not going to be published.
+        'Legal entity: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
         'Business structure: Sole proprietorship',
         'Country: India',
         `Email: ${contact}`,
@@ -1480,7 +1504,10 @@ const PRIVACY: StaticPage = {
       body: [
         'For privacy questions, account-related privacy requests or concerns about this Privacy Policy:',
         'karobakbak',
-        'Operator: [operator name — not published yet]',
+        // The fourth and last. Four blanks for the same fact, in two documents,
+        // each of which would have been filled in by hand on launch day — which
+        // is how a decision not to publish something gets undone by a chore.
+        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
         `Email: ${contact}`,
         'Address: [business address — not published yet]',
         'For problems involving another user or a particular conversation, use the Report function inside the service where possible.',
