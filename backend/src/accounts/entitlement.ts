@@ -65,13 +65,12 @@ export interface EntitlementService {
  * boundary: the deadline itself is in the cached value, so an entitlement that
  * expires *during* the cache window is still read as expired.
  */
-const CACHE_SECONDS = 300;
-
 export function createEntitlementService(
   db: Database,
   redis: Redis,
   logger: Logger,
   keyPrefix: string,
+  cacheSeconds: number,
 ): EntitlementService {
   const keys = createKeys(keyPrefix);
 
@@ -113,7 +112,7 @@ export function createEntitlementService(
       }
 
       try {
-        await redis.set(key, untilMs === null ? '' : String(untilMs), 'EX', CACHE_SECONDS);
+        await redis.set(key, untilMs === null ? '' : String(untilMs), 'EX', cacheSeconds);
       } catch (err) {
         // The answer is already known, so a cache that will not accept it costs
         // a query next time and nothing else.

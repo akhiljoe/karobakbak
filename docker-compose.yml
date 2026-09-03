@@ -66,6 +66,19 @@ services:
         # tracked. A value here is inlined into the bundle and readable by
         # anyone who loads the page — see `frontend/src/config.ts`.
         VITE_DEV_ACCOUNT_CREDENTIAL: "${VITE_DEV_ACCOUNT_CREDENTIAL:-}"
+
+        # Client-side timings, blank so `frontend/src/config.ts` decides. A
+        # frontend value has to appear in three places — here, as a Dockerfile
+        # ARG, and as the ENV that hands it to vite — and dropping any one of
+        # them ships the default with nothing to show for it. `verify-config`
+        # checks all three.
+        VITE_TYPING_IDLE_MS: "${VITE_TYPING_IDLE_MS:-}"
+        VITE_RECONNECT_BACKOFF_MS: "${VITE_RECONNECT_BACKOFF_MS:-}"
+        VITE_MESSAGE_GROUPING_MS: "${VITE_MESSAGE_GROUPING_MS:-}"
+        VITE_TOAST_VISIBLE_MS: "${VITE_TOAST_VISIBLE_MS:-}"
+        VITE_CAPACITY_PROBE_TIMEOUT_MS: "${VITE_CAPACITY_PROBE_TIMEOUT_MS:-}"
+        VITE_AUTOSEARCH_BACKOFF_MS: "${VITE_AUTOSEARCH_BACKOFF_MS:-}"
+        VITE_CHECKOUT_LOAD_TIMEOUT_MS: "${VITE_CHECKOUT_LOAD_TIMEOUT_MS:-}"
     ports:
       - "${FRONTEND_PORT:-8081}:80"
     environment:
@@ -91,6 +104,33 @@ services:
   backend:
     build:
       context: ./backend
+    # ---------------------------------------------------------------------
+    # THE ENV FILE IS WHAT MAKES `.env` REACH THIS PROCESS AT ALL
+    # ---------------------------------------------------------------------
+    # `docker compose --env-file X` populates `${VAR}` substitutions in this
+    # YAML and puts **nothing** into a container. So before this line existed,
+    # a service received exactly the names enumerated under `environment:` and
+    # every other setting `config.ts` reads was inert: settable in an env file,
+    # documented as supported, and silently running on its compiled-in default.
+    # F-045 counted 108 of them, and `HEARTBEAT_INTERVAL_MS` is the one that
+    # cost a capacity measurement before anybody noticed.
+    #
+    # The path follows the profile rather than being fixed at `.env`, because
+    # each profile is invoked with its own `--env-file` and a hardcoded path
+    # here would have quietly served development values to the load stack. Each
+    # env file names itself in `APP_ENV_FILE`, which is self-referential on
+    # purpose: the value arrives through the same mechanism it configures, so a
+    # profile that forgets it falls back to `.env` rather than to nothing.
+    #
+    # `required: false` because `.env` is not tracked, and a fresh clone must
+    # still be able to `docker compose up`.
+    #
+    # `environment:` below still wins over anything in the file — that is the
+    # documented precedence, and it is what keeps the topology values (the
+    # service hostnames, the per-replica instance id) authoritative.
+    env_file:
+      - path: ${APP_ENV_FILE:-.env}
+        required: false
     environment:
       # `development`, even though the image is a production build.
       #
@@ -306,6 +346,33 @@ services:
     build:
       context: ./backend
     command: ["node", "dist/personas/main.js"]
+    # ---------------------------------------------------------------------
+    # THE ENV FILE IS WHAT MAKES `.env` REACH THIS PROCESS AT ALL
+    # ---------------------------------------------------------------------
+    # `docker compose --env-file X` populates `${VAR}` substitutions in this
+    # YAML and puts **nothing** into a container. So before this line existed,
+    # a service received exactly the names enumerated under `environment:` and
+    # every other setting `config.ts` reads was inert: settable in an env file,
+    # documented as supported, and silently running on its compiled-in default.
+    # F-045 counted 108 of them. The persona process reads the same `Config`,
+    # so it had the same hole.
+    #
+    # The path follows the profile rather than being fixed at `.env`, because
+    # each profile is invoked with its own `--env-file` and a hardcoded path
+    # here would have quietly served development values to the load stack. Each
+    # env file names itself in `APP_ENV_FILE`, which is self-referential on
+    # purpose: the value arrives through the same mechanism it configures, so a
+    # profile that forgets it falls back to `.env` rather than to nothing.
+    #
+    # `required: false` because `.env` is not tracked, and a fresh clone must
+    # still be able to `docker compose up`.
+    #
+    # `environment:` below still wins over anything in the file — that is the
+    # documented precedence, and it is what keeps the topology values (the
+    # service hostnames, the per-replica instance id) authoritative.
+    env_file:
+      - path: ${APP_ENV_FILE:-.env}
+        required: false
     environment:
       # `development` for the same reason the backend uses it: outside
       # production the message-content denylist THROWS rather than redacting,

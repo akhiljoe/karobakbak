@@ -21,18 +21,10 @@
  * "Connection lost" copy already describes correctly.
  */
 
+import { clientConfig } from './config';
+
 /** Where the probe lives. Same origin, so no CORS and no configuration. */
 const CAPACITY_URL = '/api/capacity';
-
-/**
- * How long to wait before giving up on the probe.
- *
- * Short on purpose. This runs while somebody is looking at a screen that says
- * the connection dropped, and an answer that arrives after the next reconnect
- * attempt has already succeeded is worse than no answer — it would replace a
- * working conversation's screen with an explanation of a failure that is over.
- */
-const PROBE_TIMEOUT_MS = 3000;
 
 export type CapacityState = 'ok' | 'busy' | 'unavailable' | 'unknown';
 
@@ -46,7 +38,11 @@ export type CapacityState = 'ok' | 'busy' | 'unavailable' | 'unknown';
  */
 export async function probeCapacity(): Promise<CapacityState> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  // Short on purpose, and configurable (`VITE_CAPACITY_PROBE_TIMEOUT_MS`): this
+  // runs while somebody is looking at a screen that says the connection
+  // dropped, and an answer arriving after the next reconnect has succeeded
+  // would explain a failure that is already over.
+  const timer = setTimeout(() => controller.abort(), clientConfig.timings.capacityProbeTimeoutMs);
   try {
     const response = await fetch(CAPACITY_URL, {
       method: 'GET',

@@ -66,7 +66,7 @@ const PENDING_PAYMENTS_SQL = join(
 beforeAll(async () => {
   ctx = await createPostgresContext();
   await ctx.db.query(readFileSync(PENDING_PAYMENTS_SQL, 'utf8'));
-  payments = new PaymentRepository(ctx.db, createNullLogger());
+  payments = new PaymentRepository(ctx.db, createNullLogger(), ctx.config.payments);
 });
 
 afterAll(async () => {

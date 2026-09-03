@@ -11,6 +11,8 @@
  */
 import { availableParallelism } from 'node:os';
 
+import { DEFAULT_CADENCE, type CadenceTuning } from './personas/cadence';
+
 import { RULE_IDS } from './moderation/rules';
 import { MODEL_PRICES, PROVIDER_MODELS, PROVIDER_NAMES } from './personas/provider';
 import type { ClientEventType } from './protocol/types';
@@ -93,6 +95,22 @@ export interface Config {
     readonly sentinelPassword: string;
     readonly keyPrefix: string;
     readonly commandTimeoutMs: number;
+    /**
+     * Reconnection backoff: attempt N waits `N * step`, capped at `max`.
+     *
+     * Reconnection is routine rather than exceptional — D12 keeps no
+     * persistence, so Redis may restart empty at any time and every instance
+     * has to come back on its own.
+     */
+    readonly retryStepMs: number;
+    readonly retryMaxMs: number;
+    /**
+     * How long startup waits for both connections before giving up.
+     *
+     * The boot deadline, not a command timeout: a process that cannot reach
+     * Redis has nothing to serve, and `/ready` is derived from Redis alone.
+     */
+    readonly readyTimeoutMs: number;
   };
 
   readonly limits: {
@@ -145,6 +163,15 @@ export interface Config {
      * built (D23, R6).
      */
     readonly defaultSegment: string;
+    /**
+     * How many waiting sessions the composition gauge samples.
+     *
+     * A gauge, not a decision: nothing matches on it. Sampling rather than
+     * counting the whole queue keeps an observation off the hot path, and the
+     * cost of the cap is that the shares are approximate on a very large queue,
+     * which is exactly where they matter least.
+     */
+    readonly compositionSample: number;
   };
 
   /**
@@ -183,6 +210,15 @@ export interface Config {
      * error (§29.4).
      */
     readonly hourlyBudget: number;
+    /**
+     * How long the preference token bucket survives with no activity.
+     *
+     * Deliberately not the session TTL: the bucket outlives any one connection,
+     * or reconnecting would clear it — and replacing a connection is the first
+     * thing somebody hunting for a preference would do (§29, D18). Worthless
+     * once it has fully refilled, which is what sets the floor.
+     */
+    readonly bucketTtlSeconds: number;
   };
 
   readonly blocks: {
@@ -252,6 +288,22 @@ export interface Config {
      * console.
      */
     readonly allowedOrigins: readonly string[];
+    /**
+     * Cap on a console request body.
+     *
+     * Every console request is a small JSON object — a username, a code, an id,
+     * a justification. Generous for all of them, and small enough that an
+     * unauthenticated caller cannot make the process buffer anything.
+     */
+    readonly maxBodyBytes: number;
+    /**
+     * The window `ADMIN_LOGIN_ATTEMPTS_PER_MINUTE` is counted against.
+     *
+     * The budget was configurable and the window was not, which makes the name
+     * a lie as soon as either moves: a deployment could set a generous count
+     * against an hour-long window and believe it was throttled.
+     */
+    readonly loginWindowMs: number;
   };
 
   /**
@@ -316,6 +368,47 @@ export interface Config {
     readonly model: string;
     /** Read from the environment; never logged, never in an error message. */
     readonly apiKey: string;
+    /**
+     * How a persona reads, types and pauses (`personas/cadence.ts`).
+     *
+     * Delivery is not the same problem as speech, and both are tells: a reply
+     * that arrives whole, instantly, with no `typing` frame is identifiable as
+     * machine-written without reading a word of it, because every real client
+     * on this server types visibly and sends in bursts.
+     *
+     * Grouped because the intervals only make sense against each other. The
+     * defaults are `DEFAULT_CADENCE` and the two must stay equal — there is a
+     * test that says so, because two defaults for one value is the drift this
+     * whole phase exists to remove.
+     */
+    readonly cadence: CadenceTuning;
+    /**
+     * Identical messages in a row before a persona decides this is not a person.
+     *
+     * Deliberately crude, and deliberately not a model call: judging whether
+     * the other party is a bot is not worth paying for on every turn. Three
+     * rather than two, because a person genuinely does repeat themselves once
+     * when they think a message did not send.
+     */
+    readonly repeatsBeforeLeaving: number;
+    /** How many recent turns of a conversation the model is shown. */
+    readonly contextTurns: number;
+    /** The ceiling on one generated reply. */
+    readonly maxOutputTokens: number;
+    /** How many messages the scripted voice will send before it runs dry. */
+    readonly scriptedMaxMessages: number;
+    /**
+     * Headroom left for a reasoning model's hidden tokens.
+     *
+     * OpenAI's reasoning models spend tokens before they emit any, and a
+     * `max_completion_tokens` sized only for the visible reply comes back empty
+     * — which falls back to the scripted voice and looks like a model that has
+     * nothing to say rather than a budget that was too small.
+     */
+    readonly reasoningHeadroomTokens: number;
+    /** How often a generated surface declines to give a name, or a whole field. */
+    readonly noNameChance: number;
+    readonly declineChance: number;
   };
 
   /**
@@ -424,6 +517,54 @@ export interface Config {
      * bearer credential and a cleartext one is a credential in transit.
      */
     readonly secureCookies: boolean;
+    /**
+     * How much clock skew to allow when checking `exp` and `iat`.
+     *
+     * Not zero: the provider's clock and this one disagree by a little, and a
+     * token rejected for being one second early is a sign-in that fails for
+     * nobody's reason. Not large either — every second here is a second a
+     * genuinely expired token keeps working.
+     */
+    readonly clockSkewSeconds: number;
+    /**
+     * The floor between two JWKS re-fetches.
+     *
+     * An unknown `kid` triggers a re-fetch, and an attacker can produce unknown
+     * `kid`s at will, so without a floor this is a request amplifier pointed at
+     * the identity provider.
+     */
+    readonly jwksMinRefetchMs: number;
+    /** How long to wait for the key set before giving up on a sign-in. */
+    readonly jwksTimeoutMs: number;
+    /** How long to wait for the token exchange. Longer: it is one round trip on the critical path. */
+    readonly tokenTimeoutMs: number;
+    /**
+     * The ceiling on a relayed avatar, in bytes.
+     *
+     * Enforced on the bytes actually read, never on `Content-Length`, which the
+     * sender chooses.
+     */
+    readonly avatarMaxBytes: number;
+    /** A sign-in is a person waiting; a slow CDN must not become a slow sign-in. */
+    readonly avatarFetchTimeoutMs: number;
+    /**
+     * How long a browser may cache a relayed avatar.
+     *
+     * `private`, so it is the viewer's own cache and not a shared one. Long,
+     * because the image only changes when somebody changes their provider
+     * picture, and a stale avatar is the cheapest possible staleness.
+     */
+    readonly avatarCacheSeconds: number;
+    /**
+     * How long the premium entitlement is cached in Redis, negatives included.
+     *
+     * Almost every account is a negative, which is what makes caching them
+     * worth it. The cost of the cache is that an entitlement bought during the
+     * window applies late — and D51 already makes it apply on the next
+     * connection rather than the next search, so this changes nothing a user
+     * can perceive.
+     */
+    readonly premiumCacheSeconds: number;
   };
 
   readonly payments: {
@@ -462,6 +603,29 @@ export interface Config {
      * for a number counsel gives, and nothing sweeps these tables yet.
      */
     readonly recordRetentionDays: number;
+    /**
+     * The premium price, in paise, and what it grants.
+     *
+     * Paise because that is the unit Razorpay charges in; a rupees field that
+     * gets multiplied somewhere is an extra place for a factor of 100 to go
+     * missing.
+     *
+     * **The Premium page states this price in prose** (`PremiumPage.tsx` says
+     * "₹99 / month"). Nothing can check that for you: change one and the other
+     * has to change in the same commit, or the page advertises a price the
+     * checkout does not charge. That is the reason this is documented here
+     * rather than only in `.env.example`.
+     */
+    readonly premiumPricePaise: number;
+    readonly premiumGrantDays: number;
+    /**
+     * The floor and ceiling on a donation, in paise.
+     *
+     * A donation grants nothing — buying goodwill is not an entitlement, and
+     * the Support page says so — so these bound a gift rather than a purchase.
+     */
+    readonly donationMinPaise: number;
+    readonly donationMaxPaise: number;
   };
 
   readonly enforcement: {
@@ -532,6 +696,14 @@ export interface Config {
     readonly ssl: boolean;
     /** Refuse to start in production on a connection that would not use TLS. */
     readonly requireSslInProduction: boolean;
+    /**
+     * How long an idle pooled connection is kept before it is closed.
+     *
+     * Not the same clock as the statement timeout, and not a safety control:
+     * it trades a reconnection against holding a server-side session open on a
+     * database that charges for them.
+     */
+    readonly idleTimeoutMs: number;
   };
 
   readonly retention: {
@@ -565,6 +737,13 @@ export interface Config {
       readonly enforcement: number;
       readonly adminAudit: number;
     };
+    /**
+     * How many unobserved batch durations to keep.
+     *
+     * Generous next to the publish interval, and bounded so a process with
+     * metrics switched off does not accumulate an array for its whole life.
+     */
+    readonly pendingDurationsMax: number;
   };
 
   readonly breaker: {
@@ -859,6 +1038,9 @@ function redisConfig(env: Env): Config['redis'] {
     sentinelPassword: str(env, 'REDIS_SENTINEL_PASSWORD', ''),
     keyPrefix: str(env, 'REDIS_KEY_PREFIX', 'chat'),
     commandTimeoutMs: int(env, 'REDIS_COMMAND_TIMEOUT_MS', 5000, 100, 60_000),
+    retryStepMs: int(env, 'REDIS_RETRY_STEP_MS', 200, 10, 60_000),
+    retryMaxMs: int(env, 'REDIS_RETRY_MAX_MS', 5000, 100, 300_000),
+    readyTimeoutMs: int(env, 'REDIS_READY_TIMEOUT_MS', 10_000, 500, 300_000),
   };
 }
 
@@ -1215,6 +1397,7 @@ export function loadConfig(
 
     matchmaking: {
       candidateSample: int(env, 'MATCH_CANDIDATE_SAMPLE', 8, 1, 1000),
+      compositionSample: int(env, 'QUEUE_COMPOSITION_SAMPLE', 500, 10, 100_000),
       retryAttempts: int(env, 'MATCH_RETRY_ATTEMPTS', 3, 1, 20),
       defaultSegment: segment(env, 'DEFAULT_QUEUE_SEGMENT', 'default'),
     },
@@ -1224,6 +1407,7 @@ export function loadConfig(
       wideSample: int(env, 'PREFERENCE_WIDE_SAMPLE', 32, 1, 1000),
       cooldownMs: int(env, 'PREFERENCE_COOLDOWN_MS', 10_000, 0, 600_000),
       hourlyBudget: int(env, 'PREFERENCE_HOURLY_BUDGET', 120, 1, 100_000),
+      bucketTtlSeconds: int(env, 'PREFERENCE_BUCKET_TTL_SECONDS', 7200, 60, 604_800),
     },
 
     blocks: {
@@ -1245,6 +1429,37 @@ export function loadConfig(
       activeEndHour: int(env, 'PERSONA_ACTIVE_END_HOUR', 0, 0, 23),
       utcOffsetMinutes: int(env, 'PERSONA_UTC_OFFSET_MINUTES', 330, -720, 840),
       controlCacheTtlSeconds: int(env, 'PERSONA_CONTROL_CACHE_TTL_SECONDS', 20, 1, 3600),
+      /*
+        The cadence, read one number at a time.
+
+        Every default is the matching field of `DEFAULT_CADENCE` rather than a
+        literal, so there is exactly one place the shipped value lives and a
+        change to it cannot leave the two halves disagreeing.
+      */
+      cadence: {
+        softBubbleChars: int(env, 'PERSONA_BUBBLE_SOFT_CHARS', DEFAULT_CADENCE.softBubbleChars, 20, 2000),
+        keepWholeBelow: int(env, 'PERSONA_BUBBLE_KEEP_WHOLE_BELOW', DEFAULT_CADENCE.keepWholeBelow, 0, 2000),
+        maxBubbles: int(env, 'PERSONA_MAX_BUBBLES', DEFAULT_CADENCE.maxBubbles, 1, 10),
+        readMsPerChar: int(env, 'PERSONA_READ_MS_PER_CHAR', DEFAULT_CADENCE.readMsPerChar, 0, 1000),
+        readFloorMs: int(env, 'PERSONA_READ_FLOOR_MS', DEFAULT_CADENCE.readFloorMs, 0, 60_000),
+        readCeilingMs: int(env, 'PERSONA_READ_CEILING_MS', DEFAULT_CADENCE.readCeilingMs, 0, 120_000),
+        typeMsPerChar: int(env, 'PERSONA_TYPE_MS_PER_CHAR', DEFAULT_CADENCE.typeMsPerChar, 0, 1000),
+        typeFloorMs: int(env, 'PERSONA_TYPE_FLOOR_MS', DEFAULT_CADENCE.typeFloorMs, 0, 60_000),
+        typeCeilingMs: int(env, 'PERSONA_TYPE_CEILING_MS', DEFAULT_CADENCE.typeCeilingMs, 0, 120_000),
+        gapFloorMs: int(env, 'PERSONA_GAP_FLOOR_MS', DEFAULT_CADENCE.gapFloorMs, 0, 60_000),
+        gapSpreadMs: int(env, 'PERSONA_GAP_SPREAD_MS', DEFAULT_CADENCE.gapSpreadMs, 0, 60_000),
+        thinkFloorMs: int(env, 'PERSONA_THINK_FLOOR_MS', DEFAULT_CADENCE.thinkFloorMs, 0, 60_000),
+        thinkSpreadMs: int(env, 'PERSONA_THINK_SPREAD_MS', DEFAULT_CADENCE.thinkSpreadMs, 0, 60_000),
+        openingTurns: int(env, 'PERSONA_OPENING_TURNS', DEFAULT_CADENCE.openingTurns, 0, 100),
+        openingMaxWords: int(env, 'PERSONA_OPENING_MAX_WORDS', DEFAULT_CADENCE.openingMaxWords, 1, 500),
+      },
+      repeatsBeforeLeaving: int(env, 'PERSONA_REPEATS_BEFORE_LEAVING', 3, 1, 100),
+      contextTurns: int(env, 'PERSONA_CONTEXT_TURNS', 10, 1, 200),
+      maxOutputTokens: int(env, 'PERSONA_MAX_OUTPUT_TOKENS', 300, 16, 8000),
+      scriptedMaxMessages: int(env, 'PERSONA_SCRIPTED_MAX_MESSAGES', 12, 1, 200),
+      reasoningHeadroomTokens: int(env, 'PERSONA_REASONING_HEADROOM_TOKENS', 1000, 0, 32_000),
+      noNameChance: num(env, 'PERSONA_NO_NAME_CHANCE', 0.12, 0, 1),
+      declineChance: num(env, 'PERSONA_DECLINE_CHANCE', 0.08, 0, 1),
       monthlyLimitMicroCents: int(
         env,
         'PERSONA_MONTHLY_LIMIT_MICRO_CENTS',
@@ -1276,6 +1491,14 @@ export function loadConfig(
       // bounds how long a state/verifier pair is worth stealing.
       flowTtlSeconds: int(env, 'AUTH_FLOW_TTL_SECONDS', 600, 60, 3600),
       secureCookies: bool(env, 'AUTH_SECURE_COOKIES', true),
+      clockSkewSeconds: int(env, 'OIDC_CLOCK_SKEW_SECONDS', 60, 0, 600),
+      jwksMinRefetchMs: int(env, 'OIDC_JWKS_MIN_REFETCH_MS', 60_000, 1000, 3_600_000),
+      jwksTimeoutMs: int(env, 'OIDC_JWKS_TIMEOUT_MS', 5000, 250, 60_000),
+      tokenTimeoutMs: int(env, 'OIDC_TOKEN_TIMEOUT_MS', 10_000, 250, 60_000),
+      avatarMaxBytes: int(env, 'AVATAR_MAX_BYTES', 128 * 1024, 1024, 10 * 1024 * 1024),
+      avatarFetchTimeoutMs: int(env, 'AVATAR_FETCH_TIMEOUT_MS', 4000, 250, 60_000),
+      avatarCacheSeconds: int(env, 'AVATAR_CACHE_SECONDS', 86_400, 0, 31_536_000),
+      premiumCacheSeconds: int(env, 'PREMIUM_CACHE_SECONDS', 300, 0, 86_400),
     },
 
     payments: {
@@ -1284,6 +1507,10 @@ export function loadConfig(
       keySecret: str(env, 'RAZORPAY_KEY_SECRET', ''),
       webhookSecret: str(env, 'RAZORPAY_WEBHOOK_SECRET', ''),
       currency: str(env, 'PAYMENTS_CURRENCY', 'INR'),
+      premiumPricePaise: int(env, 'PREMIUM_PRICE_PAISE', 9900, 100, 10_000_000),
+      premiumGrantDays: int(env, 'PREMIUM_GRANT_DAYS', 30, 1, 3650),
+      donationMinPaise: int(env, 'DONATION_MIN_PAISE', 5000, 100, 10_000_000),
+      donationMaxPaise: int(env, 'DONATION_MAX_PAISE', 5_000_000, 100, 100_000_000),
       // 10 an hour. An order is a round trip to the payment provider and a row
       // in the database; nobody buying something honestly needs a eleventh
       // attempt in an hour, and a script does.
@@ -1309,6 +1536,8 @@ export function loadConfig(
       lockoutSeconds: int(env, 'ADMIN_LOCKOUT_SECONDS', 900, 30, 86_400),
       loginAttemptsPerMinute: int(env, 'ADMIN_LOGIN_ATTEMPTS_PER_MINUTE', 10, 1, 10_000),
       allowedOrigins: list(env, 'ADMIN_ALLOWED_ORIGINS', ''),
+      maxBodyBytes: int(env, 'ADMIN_MAX_BODY_BYTES', 16 * 1024, 1024, 1_048_576),
+      loginWindowMs: int(env, 'ADMIN_LOGIN_WINDOW_MS', 60_000, 1000, 3_600_000),
     },
 
     resume: {
@@ -1328,6 +1557,7 @@ export function loadConfig(
       poolMax: int(env, 'DATABASE_POOL_MAX', 10, 1, 500),
       connectTimeoutMs: int(env, 'DATABASE_CONNECT_TIMEOUT_MS', 5000, 100, 120_000),
       statementTimeoutMs: int(env, 'DATABASE_STATEMENT_TIMEOUT_MS', 10_000, 100, 600_000),
+      idleTimeoutMs: int(env, 'DATABASE_IDLE_TIMEOUT_MS', 30_000, 1000, 3_600_000),
       ssl: bool(env, 'DATABASE_SSL', false),
       requireSslInProduction: bool(env, 'DATABASE_REQUIRE_SSL_IN_PRODUCTION', true),
     },
@@ -1336,6 +1566,7 @@ export function loadConfig(
       enabled: bool(env, 'RETENTION_ENABLED', true),
       batchSize: int(env, 'RETENTION_BATCH_SIZE', 100, 1, 10_000),
       missingParentRetries: int(env, 'RETENTION_MISSING_PARENT_RETRIES', 5, 0, 100),
+      pendingDurationsMax: int(env, 'RETENTION_PENDING_DURATIONS_MAX', 512, 16, 100_000),
       flushIntervalMs: int(env, 'RETENTION_FLUSH_INTERVAL_MS', 1000, 10, 600_000),
       queueMax: {
         p0: int(env, 'RETENTION_QUEUE_MAX_P0', 2000, 1, 1_000_000),

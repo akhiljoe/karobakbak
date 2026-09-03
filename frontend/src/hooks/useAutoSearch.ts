@@ -42,6 +42,7 @@
  * Skipping does not spend a token, so the ordinary rhythm of "skip, skip, skip"
  * never touches this at all.
  */
+import { clientConfig } from '../config';
 import { useEffect, useRef, useState } from 'react';
 
 import type { ChatState } from '../state/machine';
@@ -58,7 +59,7 @@ export const AUTO_SEARCH_DELAY_MS = 2000;
  * tunes it. Being slightly too patient costs one countdown; being too eager
  * costs the feature.
  */
-const BACKOFF_MS = 6000;
+
 
 export interface AutoSearchApi {
   /** Seconds left, or null when no countdown is running. */
@@ -91,8 +92,8 @@ export function useAutoSearch(options: {
     // A refusal in the last few seconds means the bucket is empty; wait longer
     // rather than asking again immediately and being refused again.
     const refusedRecently =
-      state.rateLimitedAt !== null && Date.now() - state.rateLimitedAt < BACKOFF_MS;
-    setDeadline(Date.now() + (refusedRecently ? BACKOFF_MS : AUTO_SEARCH_DELAY_MS));
+      state.rateLimitedAt !== null && Date.now() - state.rateLimitedAt < clientConfig.timings.autoSearchBackoffMs;
+    setDeadline(Date.now() + (refusedRecently ? clientConfig.timings.autoSearchBackoffMs : AUTO_SEARCH_DELAY_MS));
   }, [enabled, qualifies, state.rateLimitedAt]);
 
   // Tick the visible number, and fire once it reaches zero.

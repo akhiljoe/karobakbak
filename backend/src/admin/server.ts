@@ -40,7 +40,6 @@ export const ADMIN_SESSION_COOKIE = 'kbb_admin';
  * justification. 16 KB is generous for all of them and small enough that an
  * unauthenticated caller cannot make the process buffer anything meaningful.
  */
-const MAX_BODY_BYTES = 16 * 1024;
 
 /**
  * The window the per-address login budget is counted over.
@@ -53,7 +52,6 @@ const MAX_BODY_BYTES = 16 * 1024;
  * giving it a Redis dependency would mean the moderation tool goes down with
  * the chat's cache — exactly when someone needs to look at a report.
  */
-const LOGIN_WINDOW_MS = 60_000;
 
 /**
  * The console's own three files.
@@ -215,7 +213,7 @@ export function createAdminServer(deps: {
 
     let body: Record<string, unknown> = {};
     if (method === 'POST') {
-      const parsed = await readJsonBody(req);
+      const parsed = await readJsonBody(req, config.admin.maxBodyBytes);
       if (parsed === null) {
         json(res, 400, { error: 'invalid_body' });
         return;
@@ -234,7 +232,7 @@ export function createAdminServer(deps: {
       return;
     }
 
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, config.admin.maxBodyBytes);
     if (body === null) {
       json(res, 400, { error: 'invalid_body' });
       return;
@@ -315,7 +313,7 @@ export function createAdminServer(deps: {
     const now = Date.now();
     const existing = attempts.get(address);
     if (existing === undefined || existing.resetAt <= now) {
-      attempts.set(address, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+      attempts.set(address, { count: 1, resetAt: now + config.admin.loginWindowMs });
       if (attempts.size > 1024) {
         for (const [key, entry] of attempts) if (entry.resetAt <= now) attempts.delete(key);
       }
@@ -365,13 +363,16 @@ export function readCookie(header: string | undefined, name: string): string | n
  * object. Returning null rather than throwing keeps every bad body a 400
  * instead of a 500 that distinguishes shapes of badness.
  */
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+async function readJsonBody(
+  req: IncomingMessage,
+  maxBodyBytes: number,
+): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buffer = chunk as Buffer;
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) return null;
+    if (size > maxBodyBytes) return null;
     chunks.push(buffer);
   }
   if (size === 0) return {};

@@ -39,12 +39,13 @@
  * browser ignores it entirely and the styling silently does nothing. And this
  * way the stylesheet travels with the only module that can make it matter.
  */
+import { clientConfig } from './config';
 import './razorpay-override.css';
 
 const CHECKOUT_SRC = 'https://checkout.razorpay.com/v1/checkout.js';
 
 /** Beyond this, the network is not going to produce a checkout worth waiting for. */
-const LOAD_TIMEOUT_MS = 15_000;
+
 
 export type CheckoutOutcome =
   | { readonly status: 'paid' }
@@ -105,7 +106,7 @@ export function loadCheckout(): Promise<boolean> {
 
     // A script tag that never fires either event — a captive portal, a
     // filtering proxy — otherwise leaves the button spinning forever.
-    const timer = window.setTimeout(() => settle(false), LOAD_TIMEOUT_MS);
+    const timer = window.setTimeout(() => settle(false), clientConfig.timings.checkoutLoadTimeoutMs);
 
     script.src = CHECKOUT_SRC;
     script.async = true;

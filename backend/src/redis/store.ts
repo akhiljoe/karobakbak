@@ -1066,7 +1066,7 @@ export class RedisStore {
         // The bucket is worthless once it has fully refilled, and the session
         // TTL is the wrong clock for it — this outlives any one connection on
         // purpose, or reconnecting would clear it.
-        3600 * 2,
+        this.config.preference.bucketTtlSeconds,
       ],
     );
     const status = str(reply, 0);
@@ -1430,7 +1430,10 @@ export class RedisStore {
    * dropped. They are part of the pool and a preference can never match them,
    * so leaving them out would make the preferred share look larger than it is.
    */
-  async queueComposition(segment: string, cap = 500): Promise<Record<string, number>> {
+  async queueComposition(
+    segment: string,
+    cap = this.config.matchmaking.compositionSample,
+  ): Promise<Record<string, number>> {
     const members: string[] = await this.client.srandmember(this.keys.queue(segment), cap);
     const counts: Record<string, number> = {};
     if (members.length === 0) return counts;

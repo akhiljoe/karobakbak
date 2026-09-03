@@ -36,37 +36,70 @@
  * message rate limit.
  */
 
-/** No bubble longer than this if it can be split at a boundary. */
-const SOFT_BUBBLE_CHARS = 90;
-
-/** Below this, a reply is one thought and stays one message. */
-const KEEP_WHOLE_BELOW = 60;
-
-/** More than this and it stops reading as a burst and starts reading as a bot. */
-const MAX_BUBBLES = 3;
-
-/** Milliseconds per character of *incoming* text, i.e. reading speed. */
-const READ_MS_PER_CHAR = 22;
-const READ_FLOOR_MS = 400;
-const READ_CEILING_MS = 4000;
-
 /**
- * Milliseconds per character of *outgoing* text, i.e. thumb speed.
+ * Every number that decides how a persona reads, types and pauses.
  *
- * Deliberately faster than real phone typing (~300ms/char at 40wpm). A literal
- * rate would leave a stranger watching "typing…" for eighteen seconds over one
- * sentence, which is accurate and unusable. This is fast-but-visible.
+ * One object rather than a dozen module constants, because they are one
+ * decision: the intervals only make sense against each other, and a deployment
+ * moving one of them wants to see the rest. `config.personas.cadence` supplies
+ * them in production; `DEFAULT_CADENCE` is what this project ships and what a
+ * test gets by default.
  */
-const TYPE_MS_PER_CHAR = 90;
-const TYPE_FLOOR_MS = 700;
-const TYPE_CEILING_MS = 6000;
+export interface CadenceTuning {
+  /** No bubble longer than this if it can be split at a boundary. */
+  readonly softBubbleChars: number;
+  /** Below this, a reply is one thought and stays one message. */
+  readonly keepWholeBelow: number;
+  /** More than this and it stops reading as a burst and starts reading as a bot. */
+  readonly maxBubbles: number;
+  /** Milliseconds per character of *incoming* text, i.e. reading speed. */
+  readonly readMsPerChar: number;
+  readonly readFloorMs: number;
+  readonly readCeilingMs: number;
+  /**
+   * Milliseconds per character of *outgoing* text, i.e. thumb speed.
+   *
+   * Deliberately faster than real phone typing (~300ms/char at 40wpm). A
+   * literal rate would leave a stranger watching "typing…" for eighteen seconds
+   * over one sentence, which is accurate and unusable. Fast-but-visible.
+   */
+  readonly typeMsPerChar: number;
+  readonly typeFloorMs: number;
+  readonly typeCeilingMs: number;
+  readonly gapFloorMs: number;
+  readonly gapSpreadMs: number;
+  /** Hesitation before the thumbs start moving. Not proportional to anything. */
+  readonly thinkFloorMs: number;
+  readonly thinkSpreadMs: number;
+  /**
+   * How many of a persona's own turns count as "the beginning".
+   *
+   * Three: the greeting, and the two exchanges after it. That is the span in
+   * which a real conversation is still deciding whether it is a conversation.
+   */
+  readonly openingTurns: number;
+  /** The most words an opening reply may carry, however many it was given. */
+  readonly openingMaxWords: number;
+}
 
-const GAP_FLOOR_MS = 500;
-const GAP_SPREAD_MS = 900;
-
-/** Hesitation before the thumbs start moving. Not proportional to anything. */
-const THINK_FLOOR_MS = 300;
-const THINK_SPREAD_MS = 1200;
+/** What this project ships. The defaults in `config.ts` are these numbers. */
+export const DEFAULT_CADENCE: CadenceTuning = Object.freeze({
+  softBubbleChars: 90,
+  keepWholeBelow: 60,
+  maxBubbles: 3,
+  readMsPerChar: 22,
+  readFloorMs: 400,
+  readCeilingMs: 4000,
+  typeMsPerChar: 90,
+  typeFloorMs: 700,
+  typeCeilingMs: 6000,
+  gapFloorMs: 500,
+  gapSpreadMs: 900,
+  thinkFloorMs: 300,
+  thinkSpreadMs: 1200,
+  openingTurns: 3,
+  openingMaxWords: 12,
+});
 
 export interface Cadence {
   /** Time spent looking at what the stranger said, before typing starts. */
@@ -83,41 +116,33 @@ export interface Cadence {
  * `random` is injected so a test can pin every interval; nothing here reads the
  * clock, so the client's injected scheduler stays the only source of time.
  */
-export function humanCadence(random: () => number = Math.random): Cadence {
+export function humanCadence(
+  random: () => number = Math.random,
+  tuning: CadenceTuning = DEFAULT_CADENCE,
+): Cadence {
   const jitter = (floor: number, spread: number): number =>
     Math.round(floor + random() * spread);
 
   return {
     readingPauseMs(incoming: string | undefined): number {
-      const think = jitter(THINK_FLOOR_MS, THINK_SPREAD_MS);
+      const think = jitter(tuning.thinkFloorMs, tuning.thinkSpreadMs);
       if (incoming === undefined || incoming === '') return think;
-      const read = incoming.length * READ_MS_PER_CHAR;
-      return Math.min(READ_CEILING_MS, Math.max(READ_FLOOR_MS, read)) + think;
+      const read = incoming.length * tuning.readMsPerChar;
+      return Math.min(tuning.readCeilingMs, Math.max(tuning.readFloorMs, read)) + think;
     },
 
     typingPauseMs(text: string): number {
-      const typed = text.length * TYPE_MS_PER_CHAR;
-      const base = Math.min(TYPE_CEILING_MS, Math.max(TYPE_FLOOR_MS, typed));
+      const typed = text.length * tuning.typeMsPerChar;
+      const base = Math.min(tuning.typeCeilingMs, Math.max(tuning.typeFloorMs, typed));
       // +-15%, so two bubbles of equal length are not two equal pauses.
       return Math.round(base * (0.85 + random() * 0.3));
     },
 
     bubbleGapMs(): number {
-      return jitter(GAP_FLOOR_MS, GAP_SPREAD_MS);
+      return jitter(tuning.gapFloorMs, tuning.gapSpreadMs);
     },
   };
 }
-
-/**
- * How many of a persona's own turns count as "the beginning".
- *
- * Three: the greeting, and the two exchanges after it. That is the span in
- * which a real conversation is still deciding whether it is a conversation.
- */
-const OPENING_TURNS = 3;
-
-/** The most words an opening reply may carry, however many it was given. */
-const OPENING_MAX_WORDS = 12;
 
 /**
  * Cut an early reply down to the size a stranger actually opens with.
@@ -145,8 +170,12 @@ const OPENING_MAX_WORDS = 12;
  * earned the right to a longer answer, and by then the other person has decided
  * they are talking to a person.
  */
-export function openingBrevity(text: string, sent: number): string {
-  if (sent >= OPENING_TURNS) return text;
+export function openingBrevity(
+  text: string,
+  sent: number,
+  tuning: CadenceTuning = DEFAULT_CADENCE,
+): string {
+  if (sent >= tuning.openingTurns) return text;
 
   const trimmed = text.trim();
   if (trimmed === '') return trimmed;
@@ -159,8 +188,8 @@ export function openingBrevity(text: string, sent: number): string {
   const kept = sentence === '' ? firstLine : sentence;
 
   const words = kept.split(/\s+/);
-  if (words.length <= OPENING_MAX_WORDS) return kept;
-  return words.slice(0, OPENING_MAX_WORDS).join(' ');
+  if (words.length <= tuning.openingMaxWords) return kept;
+  return words.slice(0, tuning.openingMaxWords).join(' ');
 }
 
 /**
@@ -196,7 +225,11 @@ function firstSentence(line: string): string {
  * that is hard-cut, because the alternative is a frame the server refuses and
  * a model call already paid for.
  */
-export function splitIntoBubbles(text: string, maxLength?: number): string[] {
+export function splitIntoBubbles(
+  text: string,
+  maxLength?: number,
+  tuning: CadenceTuning = DEFAULT_CADENCE,
+): string[] {
   const trimmed = text.trim();
   if (trimmed === '') return [];
 
@@ -212,9 +245,9 @@ export function splitIntoBubbles(text: string, maxLength?: number): string[] {
   const pieces =
     lines.length > 1
       ? lines
-      : trimmed.length <= KEEP_WHOLE_BELOW
+      : trimmed.length <= tuning.keepWholeBelow
         ? [trimmed]
-        : group(sentences(trimmed));
+        : group(sentences(trimmed), tuning);
 
   const capped: string[] = [];
   for (const piece of pieces) {
@@ -227,7 +260,7 @@ export function splitIntoBubbles(text: string, maxLength?: number): string[] {
     }
   }
 
-  return capped.slice(0, MAX_BUBBLES);
+  return capped.slice(0, tuning.maxBubbles);
 }
 
 /**
@@ -250,7 +283,7 @@ function sentences(text: string): string[] {
 }
 
 /** Pack sentences into bubbles, starting a new one past the soft limit. */
-function group(parts: readonly string[]): string[] {
+function group(parts: readonly string[], tuning: CadenceTuning): string[] {
   const out: string[] = [];
   let current = '';
 
@@ -259,7 +292,7 @@ function group(parts: readonly string[]): string[] {
       current = part;
       continue;
     }
-    if (current.length + 1 + part.length <= SOFT_BUBBLE_CHARS) {
+    if (current.length + 1 + part.length <= tuning.softBubbleChars) {
       current = `${current} ${part}`;
       continue;
     }

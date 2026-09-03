@@ -171,7 +171,7 @@ async function main(): Promise<void> {
         { keyId: config.payments.keyId, keySecret: config.payments.keySecret },
         logger,
       ),
-      repository: new PaymentRepository(database, logger),
+      repository: new PaymentRepository(database, logger, config.payments),
     });
     logger.info('payment routes enabled');
   }
@@ -201,6 +201,7 @@ async function main(): Promise<void> {
       clients.command,
       logger,
       config.redis.keyPrefix,
+      config.auth.premiumCacheSeconds,
     );
     auth = createAuthRoutes({
       config,

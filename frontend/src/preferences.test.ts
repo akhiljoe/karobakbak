@@ -114,4 +114,43 @@ describe('client config', () => {
     const backoff = [...timings.reconnectBackoffMs];
     expect([...backoff].sort((a, b) => a - b)).toEqual(backoff);
   });
+
+  /**
+   * The timings are settable at build time (phase 38), and a build-time value
+   * is inlined: a bad one cannot be corrected without another build, and a
+   * `0` would turn a backoff into a spin and a timeout into an instant
+   * failure. Both look like a broken server rather than a bad setting, which
+   * is why they fall back rather than being taken literally.
+   */
+  it('takes the timings from the environment', () => {
+    const config = loadClientConfig({
+      VITE_TYPING_IDLE_MS: '1500',
+      VITE_TOAST_VISIBLE_MS: '9000',
+      VITE_RECONNECT_BACKOFF_MS: '100, 200, 400',
+      VITE_CAPACITY_PROBE_TIMEOUT_MS: '750',
+    });
+    expect(config.timings.typingIdleMs).toBe(1500);
+    expect(config.timings.toastVisibleMs).toBe(9000);
+    expect(config.timings.reconnectBackoffMs).toEqual([100, 200, 400]);
+    expect(config.timings.capacityProbeTimeoutMs).toBe(750);
+  });
+
+  it('refuses a value that would break the thing it configures', () => {
+    const defaults = loadClientConfig({}).timings;
+    for (const bad of ['0', '-5', 'soon', '', '  ']) {
+      expect(loadClientConfig({ VITE_TYPING_IDLE_MS: bad }).timings.typingIdleMs).toBe(
+        defaults.typingIdleMs,
+      );
+    }
+  });
+
+  it('falls back to the whole backoff curve rather than half of one', () => {
+    // The shape is the point: the last entry repeats for every attempt after
+    // it, so a partially-parsed list is a curve nobody designed.
+    const defaults = loadClientConfig({}).timings.reconnectBackoffMs;
+    expect(loadClientConfig({ VITE_RECONNECT_BACKOFF_MS: '100,nope,400' }).timings
+      .reconnectBackoffMs).toEqual(defaults);
+    expect(loadClientConfig({ VITE_RECONNECT_BACKOFF_MS: '100,0,400' }).timings
+      .reconnectBackoffMs).toEqual(defaults);
+  });
 });

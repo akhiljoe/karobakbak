@@ -60,13 +60,18 @@ export async function startPersona(
   character: PersonaCharacter,
   deps: RunnerDeps,
 ): Promise<LivePersona | null> {
-  const surface = generateSurface(character);
+  const surface = generateSurface(character, {
+    noNameChance: deps.config.personas.noNameChance,
+    declineChance: deps.config.personas.declineChance,
+  });
 
   // Scripted always exists. It is the opening act before A4's model is
   // configured, and afterwards it is the fallback when the ceiling is reached
   // or a provider is down — a persona that says something plain beats one that
   // goes silent mid-conversation.
-  const scripted = scriptedVoice(character);
+  const scripted = scriptedVoice(character, {
+    maxMessages: deps.config.personas.scriptedMaxMessages,
+  });
 
   const inner: PersonaVoice =
     deps.provider === null
@@ -82,6 +87,8 @@ export async function startPersona(
             deps.metrics.spend(event);
             state.cost += event.costMicroCents;
           },
+          recentTurns: deps.config.personas.contextTurns,
+          maxOutputTokens: deps.config.personas.maxOutputTokens,
         });
 
   const state = {
@@ -122,6 +129,11 @@ export async function startPersona(
     intent: surface.intent,
     voice,
     silenceTimeoutMs: deps.config.personas.silenceTimeoutSeconds * 1000,
+    // Delivery is a tell of its own, so the intervals are configuration rather
+    // than constants: a deployment that finds its personas readable can move
+    // them without a rebuild (`PERSONA_*_MS`).
+    tuning: deps.config.personas.cadence,
+    repeatsBeforeLeaving: deps.config.personas.repeatsBeforeLeaving,
     onEvent: (event) => {
       switch (event.kind) {
         case 'matched':

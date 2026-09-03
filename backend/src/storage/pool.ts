@@ -133,7 +133,7 @@ function poolConfig(config: Config): PoolConfig {
     // connection until something else times out.
     statement_timeout: config.database.statementTimeoutMs,
     query_timeout: config.database.statementTimeoutMs,
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: config.database.idleTimeoutMs,
     ssl: config.database.ssl ? { rejectUnauthorized: true } : undefined,
     application_name: 'karobakbak',
   };

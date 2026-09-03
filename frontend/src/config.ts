@@ -123,6 +123,18 @@ export interface ClientConfig {
     readonly messageGroupingMs: number;
     /** How long a transient notice stays on screen before dismissing itself. */
     readonly toastVisibleMs: number;
+    /**
+     * How long to wait for the capacity probe before giving up on it (§28.9).
+     *
+     * Short on purpose. It runs while somebody is looking at a screen that says
+     * the connection dropped, and an answer arriving after the next reconnect
+     * has already succeeded would explain a failure that is over.
+     */
+    readonly capacityProbeTimeoutMs: number;
+    /** How long auto-search waits after a rate-limited search before retrying. */
+    readonly autoSearchBackoffMs: number;
+    /** How long to wait for the payment provider's checkout script. */
+    readonly checkoutLoadTimeoutMs: number;
   };
 }
 
@@ -149,12 +161,50 @@ export function loadClientConfig(env: Record<string, unknown>): ClientConfig {
     supportUrl: readString(env.VITE_SUPPORT_URL, ''),
     devAccountCredential: readString(env.VITE_DEV_ACCOUNT_CREDENTIAL, ''),
     timings: {
-      typingIdleMs: 3000,
-      reconnectBackoffMs: [500, 1000, 2000, 5000, 10_000],
-      messageGroupingMs: 60_000,
-      toastVisibleMs: 4000,
+      typingIdleMs: readNumber(env.VITE_TYPING_IDLE_MS, 3000),
+      reconnectBackoffMs: readNumberList(env.VITE_RECONNECT_BACKOFF_MS, [
+        500, 1000, 2000, 5000, 10_000,
+      ]),
+      messageGroupingMs: readNumber(env.VITE_MESSAGE_GROUPING_MS, 60_000),
+      toastVisibleMs: readNumber(env.VITE_TOAST_VISIBLE_MS, 4000),
+      capacityProbeTimeoutMs: readNumber(env.VITE_CAPACITY_PROBE_TIMEOUT_MS, 3000),
+      autoSearchBackoffMs: readNumber(env.VITE_AUTOSEARCH_BACKOFF_MS, 6000),
+      checkoutLoadTimeoutMs: readNumber(env.VITE_CHECKOUT_LOAD_TIMEOUT_MS, 15_000),
     },
   };
+}
+
+/**
+ * A positive number, or the fallback.
+ *
+ * Every one of these is a duration that something waits on, so zero and
+ * negative are refused rather than clamped: a typo that produced `0` would turn
+ * a backoff into a spin and a timeout into an immediate failure, and both look
+ * like a broken server rather than a bad value. `Number('')` is 0 and
+ * `Number('abc')` is NaN — both fall back.
+ */
+function readNumber(value: unknown, fallback: number): number {
+  if (typeof value !== 'string' || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * A comma-separated list of positive numbers, or the fallback.
+ *
+ * The reconnect backoff is a sequence rather than a single value, and its last
+ * entry repeats for every attempt after it — so a one-element list is a fixed
+ * interval and a long one is a curve. An empty or unparseable list falls back
+ * whole rather than partially: half a backoff curve is worse than the default
+ * one, because the shape is the point.
+ */
+function readNumberList(value: unknown, fallback: readonly number[]): readonly number[] {
+  if (typeof value !== 'string' || value.trim() === '') return fallback;
+  const parts = value.split(',').map((part) => Number(part.trim()));
+  if (parts.length === 0 || parts.some((part) => !Number.isFinite(part) || part <= 0)) {
+    return fallback;
+  }
+  return parts;
 }
 
 function readString(value: unknown, fallback: string): string {

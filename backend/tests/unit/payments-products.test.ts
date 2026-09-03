@@ -1,9 +1,22 @@
 import {
+  buildProducts,
   capturedAmountMatches,
   findProduct,
-  PRODUCTS,
   resolveAmountPaise,
 } from '../../src/payments/products';
+import { loadConfig } from '../../src/config';
+
+/**
+ * The catalogue as a default deployment builds it.
+ *
+ * Built from `loadConfig` with an empty environment rather than from literals,
+ * so these assertions are about the prices this project actually ships — the
+ * point of the test is that the shipped defaults are the ones the copy claims,
+ * and a test carrying its own numbers would pass with any configuration.
+ */
+const PRODUCTS = buildProducts(
+  loadConfig({ NODE_ENV: 'test', ALLOWED_ORIGINS: 'http://localhost:5173' }).payments,
+);
 
 describe('the catalogue', () => {
   it('prices premium at ₹99 a month, in paise', () => {
@@ -27,11 +40,11 @@ describe('the catalogue', () => {
   });
 
   it('resolves a known product and refuses anything else', () => {
-    expect(findProduct('premium_1_month')).not.toBeNull();
-    expect(findProduct('premium_1_year')).toBeNull();
-    expect(findProduct('')).toBeNull();
-    expect(findProduct(null)).toBeNull();
-    expect(findProduct(42)).toBeNull();
+    expect(findProduct(PRODUCTS, 'premium_1_month')).not.toBeNull();
+    expect(findProduct(PRODUCTS, 'premium_1_year')).toBeNull();
+    expect(findProduct(PRODUCTS, '')).toBeNull();
+    expect(findProduct(PRODUCTS, null)).toBeNull();
+    expect(findProduct(PRODUCTS, 42)).toBeNull();
   });
 
   /**
@@ -40,9 +53,9 @@ describe('the catalogue', () => {
    * and be treated as a purchasable thing.
    */
   it('does not resolve inherited object properties as products', () => {
-    expect(findProduct('constructor')).toBeNull();
-    expect(findProduct('__proto__')).toBeNull();
-    expect(findProduct('toString')).toBeNull();
+    expect(findProduct(PRODUCTS, 'constructor')).toBeNull();
+    expect(findProduct(PRODUCTS, '__proto__')).toBeNull();
+    expect(findProduct(PRODUCTS, 'toString')).toBeNull();
   });
 });
 

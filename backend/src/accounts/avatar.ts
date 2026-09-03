@@ -76,11 +76,20 @@ import type { Logger } from '../logger';
  */
 const ALLOWED_IMAGE_HOSTS = ['.googleusercontent.com', '.gravatar.com'] as const;
 
-/** Generous for a 96px avatar, and a ceiling on what this origin will relay. */
-const MAX_BYTES = 128 * 1024;
-
-/** A sign-in is a person waiting. A slow CDN must not become a slow sign-in. */
-const TIMEOUT_MS = 4000;
+/**
+ * What the caller decides.
+ *
+ * Passed rather than read from a module constant so a deployment can move them
+ * (`AVATAR_MAX_BYTES`, `AVATAR_FETCH_TIMEOUT_MS`) and so a test can describe a
+ * tiny ceiling without a 128 KB fixture. The defaults live in `config.ts`,
+ * which is the one place a default belongs.
+ */
+export interface AvatarLimits {
+  /** A ceiling on what this origin will relay. Generous for a 96px avatar. */
+  readonly maxBytes: number;
+  /** A sign-in is a person waiting. A slow CDN must not become a slow sign-in. */
+  readonly timeoutMs: number;
+}
 
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 
@@ -105,6 +114,7 @@ export interface FetchedImage {
 export async function fetchAvatar(
   url: string,
   logger: Logger,
+  limits: AvatarLimits,
   fetchImpl: typeof fetch = fetch,
 ): Promise<FetchedImage | null> {
   let parsed: URL;
@@ -125,7 +135,7 @@ export async function fetchAvatar(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), limits.timeoutMs);
 
   try {
     const response = await fetchImpl(parsed.toString(), {
@@ -145,7 +155,7 @@ export async function fetchAvatar(
     const bytes = new Uint8Array(await response.arrayBuffer());
     // Checked on what arrived, not on `Content-Length` — the sender writes that
     // header and a lying one is the whole trick.
-    if (bytes.byteLength === 0 || bytes.byteLength > MAX_BYTES) return null;
+    if (bytes.byteLength === 0 || bytes.byteLength > limits.maxBytes) return null;
 
     return { contentType: type, body: Buffer.from(bytes) };
   } catch {

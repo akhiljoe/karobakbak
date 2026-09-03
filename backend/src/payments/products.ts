@@ -52,16 +52,24 @@ export interface Product {
 }
 
 /**
- * ₹99 a month, which is the price the premium page has said since it was
- * written and the one the copy review signed off. It is expressed in paise
- * because that is the unit Razorpay charges in; a rupees field that gets
- * multiplied somewhere is an extra place for a factor of 100 to go missing.
+ * What is for sale, built from configuration.
+ *
+ * ₹99 a month is the price the premium page has said since it was written and
+ * the one the copy review signed off; it is a default here rather than a
+ * constant so a deployment can move it without a rebuild. Paise because that
+ * is the unit Razorpay charges in — a rupees field that gets multiplied
+ * somewhere is an extra place for a factor of 100 to go missing.
+ *
+ * **The Premium page states the price in prose.** Nothing can check that from
+ * here: moving `PREMIUM_PRICE_PAISE` without changing the copy advertises a
+ * price the checkout does not charge.
  */
-export const PRODUCTS: Readonly<Record<string, Product>> = Object.freeze({
+export function buildProducts(pricing: Pricing): Readonly<Record<string, Product>> {
+  return Object.freeze({
   premium_1_month: Object.freeze({
     kind: 'fixed',
-    pricePaise: 9900,
-    grantDays: 30,
+    pricePaise: pricing.premiumPricePaise,
+    grantDays: pricing.premiumGrantDays,
     requiresAccount: true,
     description: 'Premium — 1 month',
   }),
@@ -72,21 +80,33 @@ export const PRODUCTS: Readonly<Record<string, Product>> = Object.freeze({
    */
   donation: Object.freeze({
     kind: 'variable',
-    minPaise: 5000,
-    maxPaise: 5_000_000,
+    minPaise: pricing.donationMinPaise,
+    maxPaise: pricing.donationMaxPaise,
     grantDays: 0,
     requiresAccount: false,
     description: 'Support karobakbak',
   }),
-});
+  });
+}
 
-export function findProduct(key: unknown): Product | null {
+/** The four numbers `buildProducts` needs, as `config.payments` supplies them. */
+export interface Pricing {
+  readonly premiumPricePaise: number;
+  readonly premiumGrantDays: number;
+  readonly donationMinPaise: number;
+  readonly donationMaxPaise: number;
+}
+
+export function findProduct(
+  catalogue: Readonly<Record<string, Product>>,
+  key: unknown,
+): Product | null {
   if (typeof key !== 'string') return null;
-  // `Object.hasOwn` rather than a truthiness check on the lookup: `PRODUCTS`
+  // `Object.hasOwn` rather than a truthiness check on the lookup: the catalogue
   // is a plain record, and `'constructor'` would otherwise resolve to a
   // function and be treated as a product.
-  if (!Object.hasOwn(PRODUCTS, key)) return null;
-  return PRODUCTS[key] ?? null;
+  if (!Object.hasOwn(catalogue, key)) return null;
+  return catalogue[key] ?? null;
 }
 
 export interface AmountRefusal {

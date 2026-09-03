@@ -555,7 +555,13 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       }
 
       const url = await avatarUrl(resolved.accountId);
-      const image = url === null ? null : await fetchAvatar(url, logger);
+      const image =
+        url === null
+          ? null
+          : await fetchAvatar(url, logger, {
+              maxBytes: config.auth.avatarMaxBytes,
+              timeoutMs: config.auth.avatarFetchTimeoutMs,
+            });
       if (image === null) {
         // `none` and not `error`, deliberately, and it is the same conflation
         // the 404 makes on purpose: no cached URL and a fetch that failed are
@@ -575,7 +581,10 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // so the steady state is one upstream fetch per person per day rather
       // than one per page view. `no-transform` because a proxy that
       // recompresses an avatar is a proxy that has read it.
-      res.setHeader('cache-control', 'private, max-age=86400, no-transform');
+      res.setHeader(
+        'cache-control',
+        `private, max-age=${config.auth.avatarCacheSeconds}, no-transform`,
+      );
       res.end(image.body);
     },
 
