@@ -16,4 +16,15 @@ export interface OracleResult {
   readonly summary: string;
   /** Everything else worth reading. Never message content. */
   readonly details: readonly string[];
+  /**
+   * True when this oracle skipped for want of a flag rather than because the
+   * run deliberately did not ask for it.
+   *
+   * The distinction is the whole point: `--chaos` not being requested is a
+   * choice, and `database agreement` skipping because nobody passed
+   * `--postgres` is an oversight that made the run a weaker claim than it
+   * looked. The verdict line names the second kind and stays quiet about the
+   * first.
+   */
+  readonly needsConfiguration?: boolean;
 }

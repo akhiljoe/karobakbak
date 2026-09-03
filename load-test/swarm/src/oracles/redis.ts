@@ -92,6 +92,7 @@ export async function checkRedisResidue(input: RedisOracleInput): Promise<Oracle
       name: 'redis residue',
       status: 'skipped',
       summary: 'no Redis container given; pass --redis to enable',
+      needsConfiguration: true,
       details: ['example: --redis karobakbak-loadtest-redis-1'],
     };
   }

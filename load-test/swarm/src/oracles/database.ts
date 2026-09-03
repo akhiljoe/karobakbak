@@ -213,6 +213,7 @@ export async function checkDatabaseAgreement(
       name,
       status: 'skipped',
       summary: 'no postgres container configured',
+      needsConfiguration: true,
       details: ['Pass --postgres <container> to check what was actually stored.'],
     };
   }
@@ -221,6 +222,7 @@ export async function checkDatabaseAgreement(
       name,
       status: 'skipped',
       summary: 'no metrics endpoint, so drops cannot be accounted for',
+      needsConfiguration: true,
       details: [
         'The write-behind path is lossy under overflow by design (D16), so a',
         'shortfall is only meaningful next to the drop counter.',

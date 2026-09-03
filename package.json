@@ -44,6 +44,7 @@
     "sentinel:restore": "docker start karobakbak-redis-primary",
     "swarm:install": "npm --prefix load-test/swarm install",
     "swarm": "npm run loadtest:up && npm --prefix load-test/swarm run swarm --",
+    "swarm:full": "npm run loadtest:up && npm --prefix load-test/swarm run swarm -- --redis karobakbak-loadtest-redis-1 --metrics karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2 --containers karobakbak-loadtest-backend-1,karobakbak-loadtest-backend-2 --postgres karobakbak-loadtest-postgres-1",
     "swarm:typecheck": "npm --prefix load-test/swarm run typecheck",
     "security:install": "npm --prefix security-test install",
     "security:probe": "npm --prefix security-test run probe --",
