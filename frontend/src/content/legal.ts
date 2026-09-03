@@ -87,11 +87,13 @@ const TERMS: StaticPage = {
           added to the legal draft first. This says no more than the draft's own
           opening sentence already does.
         */
-        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
-        'Business structure: Sole proprietorship',
+        'Legal name: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
+        'Udyam Registration Number: ***REMOVED***',
+        'Business structure: Sole proprietorship registered in India',
         'Country: India',
         `Email: ${contact}`,
-        'Business address: [business address — not published yet]',
+        'Phone: ***REMOVED***',
+        'Principal place of business: [address — published when required]',
         'If any of these details change, we may update this section without changing the substance of these Terms.',
       ],
     },
@@ -759,9 +761,10 @@ const TERMS: StaticPage = {
         // for an operator's name beside an email address that already reaches
         // them. The enterprise and its registration answer "who is this",
         // which is the question a reader of a contact block is actually asking.
-        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
+        'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
         `Email: ${contact}`,
-        'Address: [business address — not published yet]',
+        'Phone: ***REMOVED***',
+        'Address: [address — published when required]',
         'For privacy-related requests, please see the contact information in the Privacy Policy.',
         'For a specific conversation or user-safety issue, please use the in-product Report function where possible.',
       ],
@@ -800,11 +803,13 @@ const PRIVACY: StaticPage = {
         // not a person. "Legal name: [operator name — not published yet]" was
         // the sharper version of the problem, because it asks by name for
         // exactly the thing that is not going to be published.
-        'Legal entity: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
-        'Business structure: Sole proprietorship',
+        'Legal name: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
+        'Role: Data Fiduciary under the Digital Personal Data Protection Act, 2023',
+        'Business structure: Sole proprietorship registered in India',
         'Country: India',
         `Email: ${contact}`,
-        'Address: [business address — not published yet]',
+        'Phone: ***REMOVED***',
+        'Address: [address — published when required]',
         'In this Privacy Policy, “karobakbak”, “we”, “us” and “our” refer to the operator of the service.',
       ],
     },
@@ -1507,9 +1512,10 @@ const PRIVACY: StaticPage = {
         // The fourth and last. Four blanks for the same fact, in two documents,
         // each of which would have been filled in by hand on launch day — which
         // is how a decision not to publish something gets undone by a chore.
-        'Operator: karobakbak, a sole proprietorship registered in India under Udyam Registration Number [registration number — not published yet]',
+        'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
         `Email: ${contact}`,
-        'Address: [business address — not published yet]',
+        'Phone: ***REMOVED***',
+        'Address: [address — published when required]',
         'For problems involving another user or a particular conversation, use the Report function inside the service where possible.',
       ],
     },

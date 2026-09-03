@@ -618,6 +618,9 @@ export interface Config {
     /**
      * The premium price, in paise, and what it grants.
      *
+     * **The default is a placeholder, not a decision** (operator, 2026-09-04).
+     * Nothing has been priced yet and there may be more than one tier.
+     *
      * Paise because that is the unit Razorpay charges in; a rupees field that
      * gets multiplied somewhere is an extra place for a factor of 100 to go
      * missing.

@@ -54,9 +54,15 @@ export interface Product {
 /**
  * What is for sale, built from configuration.
  *
- * ₹99 a month is the price the premium page has said since it was written and
- * the one the copy review signed off; it is a default here rather than a
- * constant so a deployment can move it without a rebuild. Paise because that
+ * **₹99 is a placeholder, not a decided price** (operator, 2026-09-04). It is
+ * the figure the premium page has carried since it was written, which is a
+ * different thing from a price anybody chose — and the comment here previously
+ * said "the one the copy review signed off", which was not true and is exactly
+ * the plausible-false-detail this project treats as worse than an obvious gap.
+ *
+ * Pricing and whether there are tiers at all are undecided. Adding tiers means
+ * more entries in this catalogue and a grant period for each, which is a small
+ * change now that the shape is configuration rather than a frozen constant. Paise because that
  * is the unit Razorpay charges in — a rupees field that gets multiplied
  * somewhere is an extra place for a factor of 100 to go missing.
  *

@@ -19,9 +19,11 @@ const PRODUCTS = buildProducts(
 );
 
 describe('the catalogue', () => {
-  it('prices premium at ₹99 a month, in paise', () => {
-    // The figure the premium page has shown since it was written. If this
-    // changes, the copy on `PremiumPage.tsx` changes in the same commit.
+  it('ships the placeholder price as its default, in paise', () => {
+    // ₹99 is a placeholder and not a decided price. This asserts what ships by
+    // default, so that changing it is a deliberate act with a red test rather
+    // than a silent drift — and `PremiumPage.tsx` states the figure in prose,
+    // so it changes in the same commit.
     expect(PRODUCTS.premium_1_month?.pricePaise).toBe(9900);
     expect(PRODUCTS.premium_1_month?.grantDays).toBe(30);
   });
