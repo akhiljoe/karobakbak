@@ -35,9 +35,9 @@
  * every other assertion in this file.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
@@ -155,6 +155,66 @@ for (const name of [...backendNames].sort()) {
   if (UNDOCUMENTED_ON_PURPOSE.has(name)) continue;
   if (!documented.has(name)) {
     fail(`${name} is read by config.ts and is not documented in .env.example`);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 2b. Everything declared is read by something                               */
+/* -------------------------------------------------------------------------- */
+
+/*
+  The mirror image of the check above, and it caught a real one.
+
+  `PERSONA_REASONING_HEADROOM_TOKENS` was added to `Config`, documented in
+  `.env.example`, delivered to the container by `env_file:` — and read by
+  nothing, because the value was never threaded into the OpenAI adapter, which
+  went on using its own module constant. Every check up to this point passed.
+  That is F-045's exact shape occurring inside the work that fixed F-045: a
+  setting that is settable, documented, delivered, and inert.
+
+  So a field on `Config` has to be *used* somewhere outside `config.ts`. This is
+  the same argument `metrics-wiring.test.ts` makes about a metric that is
+  declared and never written: a declared-and-dead setting is worse than an
+  absent one, because it is documented, it is believed, and it does nothing.
+
+  Matched by field name rather than by env name, because the env name is the
+  half that already has a checker — what goes missing is the wiring on the other
+  side of `loadConfig`.
+*/
+const backendSources = readdirSync(join(root, 'backend', 'src'), {
+  recursive: true,
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+  .map((entry) => join(entry.parentPath ?? entry.path, entry.name))
+  .filter((file) => !file.endsWith(`${sep}config.ts`));
+
+const sourceText = backendSources.map((file) => readFileSync(file, 'utf8')).join('\n');
+
+/**
+ * Field names on `Config` that nothing outside `config.ts` needs to read.
+ *
+ * Each is here because the *name* is the product, not the value: `configWarnings`
+ * reports them, `assertCoherent` checks them, or another field is derived from
+ * them. Adding to this list is a claim that a setting does nothing on purpose.
+ */
+const DECLARED_UNREAD_ON_PURPOSE = new Set([
+  'nodeEnv', // `isProduction` is what code reads
+]);
+
+const declaredFields = new Set(
+  [...configSource.matchAll(/^\s+readonly ([a-zA-Z][a-zA-Z0-9]*)[?]?:/gm)].map(([, name]) => name),
+);
+
+for (const field of [...declaredFields].sort()) {
+  if (DECLARED_UNREAD_ON_PURPOSE.has(field)) continue;
+  // A property read (`.field`), a destructure (`{ field }`) or a key in an
+  // object literal built from config — any of the three counts as wired.
+  if (!new RegExp(`[.{,\\s]${field}\\b`).test(sourceText)) {
+    fail(
+      `Config declares "${field}" and nothing outside config.ts reads it — ` +
+        'a setting that is documented, delivered and inert is the F-045 shape',
+    );
   }
 }
 
