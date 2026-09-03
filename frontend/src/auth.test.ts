@@ -69,11 +69,11 @@ describe('withoutSigninOutcome', () => {
 
 describe('readSession', () => {
   /** Every failure answers this exact shape. */
-  const OUT = { signedIn: false, avatar: false };
+  const OUT = { signedIn: false, avatar: false, premium: false };
 
   it('is signed in only when the server said exactly true', async () => {
     respondWith({ signedIn: true });
-    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false });
+    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false, premium: false });
   });
 
   it('reports an avatar only when the server said exactly true', async () => {
@@ -83,12 +83,47 @@ describe('readSession', () => {
      * visitor to the vendor on every render.
      */
     respondWith({ signedIn: true, avatar: true });
-    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: true });
+    await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: true, premium: false });
 
     for (const value of ['true', 1, {}, 'yes']) {
       respondWith({ signedIn: true, avatar: value });
-      await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false });
+      await expect(readSession()).resolves.toEqual({ signedIn: true, avatar: false, premium: false });
     }
+  });
+
+  it('reports premium only when the server said exactly true', async () => {
+    /*
+     * The client does not decide who is premium and this is not a gate — the
+     * server's D51 check on the session row is the only one. This exists so the
+     * interface stops offering a control the server will silently refuse, which
+     * would be the client making a promise on the server's behalf.
+     *
+     * False for anything that is not exactly `true`, in the safe direction:
+     * wrongly hiding a paid control costs a click, wrongly showing one costs
+     * the trust of everybody who later finds out it did nothing.
+     */
+    respondWith({ signedIn: true, premium: true });
+    await expect(readSession()).resolves.toEqual({
+      signedIn: true,
+      avatar: false,
+      premium: true,
+    });
+
+    for (const value of ['true', 1, {}, 'yes', null]) {
+      respondWith({ signedIn: true, premium: value });
+      await expect(readSession()).resolves.toEqual({
+        signedIn: true,
+        avatar: false,
+        premium: false,
+      });
+    }
+  });
+
+  it('is never premium while signed out', async () => {
+    // Premium requires an account, so there is no third state to represent —
+    // and a server that answered otherwise must not be believed.
+    respondWith({ signedIn: false, premium: true });
+    await expect(readSession()).resolves.toEqual(OUT);
   });
 
   it('is signed out when the server said so', async () => {

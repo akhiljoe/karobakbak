@@ -51,6 +51,13 @@ export interface Session {
   readonly signedIn: boolean;
   /** Whether `/auth/avatar` has an image to serve. Never a provider URL. */
   readonly avatar: boolean;
+  /**
+   * Whether this account holds premium, as the server last answered.
+   *
+   * False while `checking`, and false for anybody signed out — premium requires
+   * an account, so there is no third state to represent.
+   */
+  readonly premium: boolean;
   /** True until the first answer arrives, so the header can avoid flickering. */
   readonly checking: boolean;
   /** What the callback just reported, once, or null. */
@@ -72,6 +79,7 @@ export interface Session {
 export function useSession(): Session {
   const [signedIn, setSignedIn] = useState(false);
   const [avatar, setAvatar] = useState(false);
+  const [premium, setPremium] = useState(false);
   const [checking, setChecking] = useState(ACCOUNTS_ENABLED);
   const [outcome, setOutcome] = useState<SigninOutcome | null>(null);
 
@@ -92,6 +100,7 @@ export function useSession(): Session {
       if (!live) return;
       setSignedIn(result.signedIn);
       setAvatar(result.avatar);
+      setPremium(result.premium);
       setChecking(false);
     });
     return () => {
@@ -156,6 +165,7 @@ export function useSession(): Session {
       void readSession().then((result) => {
         setSignedIn(result.signedIn);
         setAvatar(result.avatar);
+        setPremium(result.premium);
       });
     };
 
@@ -186,5 +196,5 @@ export function useSession(): Session {
 
   const dismissOutcome = useCallback((): void => setOutcome(null), []);
 
-  return { signedIn, avatar, checking, outcome, signIn, signOut, dismissOutcome };
+  return { signedIn, avatar, premium, checking, outcome, signIn, signOut, dismissOutcome };
 }

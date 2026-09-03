@@ -488,8 +488,13 @@ export function App(): JSX.Element {
       */}
       {!showShell && <SiteFooter width="full" />}
 
-      {/* Unmounted with its button: nothing can open it, so nothing renders it. */}
-      {FILTERS_AVAILABLE && (
+      {/*
+        Unmounted with its button: nothing can open it, so nothing renders it.
+        Gated on the same pair the button is — the deployment flag and this
+        account's entitlement — so a free user cannot reach the modal by any
+        route that outlives a stale `filtersOpen`.
+      */}
+      {FILTERS_AVAILABLE && session.premium && (
         <FiltersModal
           open={filtersOpen}
           onClose={() => setFiltersOpen(false)}

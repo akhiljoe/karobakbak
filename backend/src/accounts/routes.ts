@@ -56,6 +56,7 @@ import { createHash } from 'node:crypto';
 import type { ConnectionRepository } from './connections';
 import type { BlockRepository } from './blocks';
 import type { PresenceService } from './presence';
+import type { EntitlementService } from './entitlement';
 import { createKeys } from '../redis/keys';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
@@ -126,6 +127,15 @@ export interface AuthRoutesDeps {
   readonly blocks?: BlockRepository;
   /** Who is online. Absent means nobody is reported online, ever. */
   readonly presence?: PresenceService;
+  /**
+   * Reads whether an account currently holds premium.
+   *
+   * Optional, and absent means nobody is premium — the same direction
+   * `stampEntitlement` fails in, and for the same reason: a page that wrongly
+   * hides a paid control costs a click, and one that wrongly shows it promises
+   * something the server will not honour.
+   */
+  readonly entitlement?: EntitlementService;
   /**
    * Reconnect plumbing, supplied by the chat process.
    *
@@ -214,7 +224,8 @@ function sameToken(a: string, b: string): boolean {
 }
 
 export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
-  const { config, logger, db, oidc, redis, connections, blocks, presence, reconnect } = deps;
+  const { config, logger, db, oidc, redis, connections, blocks, presence, reconnect, entitlement } =
+    deps;
   const observer = deps.observer;
   const auth = config.auth;
   const keys = createKeys(config.redis.keyPrefix);
@@ -524,10 +535,43 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // has anything to serve, and never where the image came from. The
       // provider's CDN URL is not something a page should carry.
       if (!resolved.ok) {
-        json(res, 200, { signedIn: false, avatar: false });
+        json(res, 200, { signedIn: false, avatar: false, premium: false });
         return;
       }
-      json(res, 200, { signedIn: true, avatar: await hasAvatar(resolved.accountId) });
+      /*
+        Whether this account holds premium, so the interface can stop offering a
+        control the server will not honour.
+
+        The matching preference is enforced on the session row (D51) and a
+        refusal is deliberately invisible — §29.4 requires that, because telling
+        a paying user "you have run out" is worse than quietly matching them
+        with anybody. That is exactly right for somebody who *has* paid and has
+        spent their budget, and exactly wrong for somebody who has not paid at
+        all: they set a preference, watch it be accepted, and never learn it was
+        dropped.
+
+        So this is not a second gate — the server's is the only gate. It is what
+        lets the client avoid making a promise on the server's behalf.
+
+        A read that fails answers false. Hiding a paid control from somebody who
+        paid costs them a click and a support message; showing it to somebody
+        who did not costs the trust of everyone who then finds out it did
+        nothing.
+      */
+      let premium = false;
+      if (entitlement) {
+        try {
+          const until = await entitlement.premiumUntilMs(resolved.accountId);
+          premium = until !== null && until > Date.now();
+        } catch (err) {
+          logger.warn('could not read an entitlement for the session route', errorFields(err));
+        }
+      }
+      json(res, 200, {
+        signedIn: true,
+        avatar: await hasAvatar(resolved.accountId),
+        premium,
+      });
     },
 
     async accountForRequest(req: IncomingMessage): Promise<string | null> {
