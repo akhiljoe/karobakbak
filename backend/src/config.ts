@@ -598,9 +598,21 @@ export interface Config {
      * How long a payment record is kept, in days.
      *
      * Longer than anything else in the schema, because a financial record has a
-     * statutory retention period rather than a chosen one. The default is seven
-     * years, which is the common Indian bookkeeping figure; it is a placeholder
-     * for a number counsel gives, and nothing sweeps these tables yet.
+     * statutory retention period rather than a chosen one — every other period
+     * here argues for keeping as little as possible for as short as possible,
+     * and this one argues the other way.
+     *
+     * Seven years, the common Indian bookkeeping figure, **chosen by the
+     * operator on 2026-09-04** rather than left as a placeholder. It sits above
+     * the periods usually cited for Indian tax and GST records (six years) and
+     * below the Companies Act figure for a company's books (eight), which is
+     * the safe side of a question counsel can still narrow: shortening it later
+     * is one environment variable, and rows deleted early cannot be recovered.
+     *
+     * The deletion worker sweeps this table now. It is guarded on the table
+     * existing, because `011_payments.sql` is staged in `migrations-pending/`
+     * and a missing relation would fail the whole pass — taking six other
+     * tables' deletions with it.
      */
     readonly recordRetentionDays: number;
     /**

@@ -66,6 +66,14 @@ export interface DeletionCounts {
   moderationEvents: number;
   enforcement: number;
   adminAudit: number;
+  /**
+   * Payment orders past their statutory period.
+   *
+   * Always zero on a deployment that has not applied `011_payments.sql`, which
+   * is every deployment until payments are switched on — the table is staged in
+   * `migrations-pending/` on purpose.
+   */
+  paymentOrders: number;
 }
 
 export interface DeletionPassResult {
@@ -98,6 +106,7 @@ const EMPTY: DeletionCounts = {
   moderationEvents: 0,
   enforcement: 0,
   adminAudit: 0,
+  paymentOrders: 0,
 };
 
 export class DeletionWorker {
@@ -384,7 +393,62 @@ export class DeletionWorker {
       batch,
     );
 
-    return { conversations, messages, reports, moderationEvents, enforcement, adminAudit };
+    /*
+      Payment orders, on a period that is statutory rather than chosen.
+
+      Seven years, which is the common Indian bookkeeping figure and is now the
+      operator's decision rather than a placeholder (`PAYMENT_RECORD_RETENTION_DAYS`,
+      row 22 of the decision register). It is longer than everything above by an
+      order of magnitude, and deliberately so: every other retention period here
+      argues for keeping as little as possible for as short as possible, and
+      this one argues the opposite way, because a financial record that is gone
+      when somebody with a statutory right to see it asks for it is not a
+      privacy win.
+
+      The table may not exist. `011_payments.sql` is staged in
+      `migrations-pending/`, so on every deployment that has not turned payments
+      on there is nothing here to sweep — and a `delete from` against a missing
+      table raises 42P01, which would fail the whole pass and take the six
+      deletions above with it. `to_regclass` returns null rather than raising,
+      so the guard costs one cheap lookup and the pass stays correct on both
+      shapes of database.
+    */
+    const paymentOrders = (await this.tableExists('payment_orders'))
+      ? await this.deleteBatch(
+          `delete from payment_orders where order_id in (
+             select order_id from payment_orders
+              where retention_expires_at < now()
+              limit $1)`,
+          batch,
+        )
+      : 0;
+
+    return {
+      conversations,
+      messages,
+      reports,
+      moderationEvents,
+      enforcement,
+      adminAudit,
+      paymentOrders,
+    };
+  }
+
+  /**
+   * Whether a table is present in this database.
+   *
+   * `to_regclass` answers null for a name that does not resolve instead of
+   * raising, which is what makes it usable as a guard — the alternative,
+   * catching 42P01 from the delete itself, would mean an aborted transaction to
+   * recover from on every pass of every deployment that has not applied the
+   * staged payments migration.
+   */
+  private async tableExists(table: string): Promise<boolean> {
+    const result = await this.db.query<{ present: boolean }>(
+      `select to_regclass($1) is not null as present`,
+      [table],
+    );
+    return result.rows[0]?.present === true;
   }
 
   private async deleteBatch(sql: string, batch: number): Promise<number> {

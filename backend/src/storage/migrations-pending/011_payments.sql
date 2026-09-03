@@ -91,9 +91,14 @@ create table if not exists payment_orders (
   -- Stamped at insert, never computed at deletion time (D17). The period for a
   -- financial record is a statutory question and is longer than anything else
   -- in this schema — see row 22 of the decision register in
-  -- `docs/policies/README.md`. Nothing sweeps this table yet, deliberately: a
-  -- deletion worker pointed at financial records before counsel has named the
-  -- period would be the wrong kind of decisive.
+  -- `docs/policies/README.md`.
+  --
+  -- Seven years, chosen by the operator on 2026-09-04, and the deletion worker
+  -- sweeps this table on it. Two years was considered and rejected: it sits
+  -- below the periods usually cited for Indian tax and GST records, and a row
+  -- deleted before somebody with a statutory right to see it asks for it is not
+  -- a privacy win. Counsel can still shorten it — that is one environment
+  -- variable — and nothing can recover rows deleted early.
   retention_expires_at timestamptz not null,
 
   -- An order that grants an entitlement must know who it grants it to.
