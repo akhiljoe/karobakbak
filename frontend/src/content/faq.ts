@@ -4,7 +4,7 @@
  * ---------------------------------------------------------------------------
  * THE COPY IS THE OPERATOR'S
  * ---------------------------------------------------------------------------
- * Written in `docs/rewrite-wording/FAQs` and transcribed here rather than
+ * Held here as data rather than
  * paraphrased. If the two disagree, the draft is the source and this file is
  * the stale one — the same relationship `how-it-works.ts` has with its draft.
  *

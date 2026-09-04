@@ -5,7 +5,7 @@
  * THE WORDS ARE DATA, AND THIS PAGE IS WHY THAT MATTERS MOST
  * ---------------------------------------------------------------------------
  * Every sentence comes from the `rules` entry in `content/pages.ts`, which is
- * transcribed from `docs/rewrite-wording/rules.md` and checked against it by
+ * held as data in `content/pages.ts` and checked by
  * `content/pages.test.ts`. Of all the copy in this product this is the text
  * least safe to paraphrase: it states what is prohibited and what enforcement
  * may follow, and a page that quietly softens a prohibition is a page that

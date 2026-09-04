@@ -7,7 +7,7 @@
  * failure it catches is invisible on the page.
  *
  * The two factual assertions at the bottom are the ones that matter most. Both
- * correct a claim in `docs/rewrite-wording/FAQs`, and a later transcription
+ * correct a claim here, and a later edit
  * pass that "restored" the draft would reintroduce a published statement that
  * contradicts the Terms or the code. They fail loudly instead.
  */
