@@ -118,6 +118,11 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
     drainTimeoutSeconds: input.drainTimeoutSeconds,
     runStartMs: input.runWindow.from,
     chaosRan: input.chaos.scenario !== '' && input.chaos.skipped === null,
+    // First sample to last: the induced outage plus the recovery window, which
+    // together are how long the run deliberately kept records out of the
+    // database. Read from the phases rather than from the flags so it reflects
+    // what happened, not what was asked for.
+    chaosSpanSeconds: chaosSpanSeconds(input.chaos.phases),
     killedProcess: killedProcess(input),
   });
 
@@ -139,4 +144,21 @@ export async function runOracles(input: OracleInput): Promise<OracleRunResult> {
  */
 function killedProcess(input: OracleInput): boolean {
   return input.chaos.scenario === 'c2' && input.chaos.skipped === null;
+}
+
+/**
+ * How long the chaos episode ran, first sample to last, in seconds. Zero when
+ * no chaos ran or when too few phases were sampled to span anything.
+ *
+ * Measured from the phases the scenario actually recorded rather than from
+ * `--chaos-for`, because a scenario that threw half way through leaves fewer
+ * phases and a shorter real span — and a bound derived from the flag would then
+ * allow a latency the run never justified.
+ */
+function chaosSpanSeconds(phases: ChaosResult['phases']): number {
+  if (phases.length < 2) return 0;
+  const first = phases[0];
+  const last = phases[phases.length - 1];
+  if (!first || !last) return 0;
+  return Math.max(0, (last.atMs - first.atMs) / 1000);
 }
