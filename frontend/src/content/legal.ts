@@ -60,7 +60,7 @@ const TERMS: StaticPage = {
       heading: 'Overview',
       body: [
         'Last updated: 7 September 2026',
-        'Effective from: [not published yet]',
+        'Effective from: 7 September 2026',
         'These Terms of Service (“Terms”) govern your access to and use of karobakbak (“karobakbak”, “we”, “us” or “our”).',
         'Please read them carefully. They explain what the service is, what you can expect from us, what we expect from you, and the circumstances in which we may restrict or end your access.',
         'By accessing or using karobakbak, you agree to these Terms, our Rules, and our Privacy Policy. If you do not agree to them, you must not use the service.',
@@ -93,7 +93,7 @@ const TERMS: StaticPage = {
         'Country: India',
         `Email: ${contact}`,
         'Phone: ***REMOVED***',
-        'Principal place of business: [address — published when required]',
+        'Principal place of business: not published while karobakbak is free to use. Our email address and phone number above are the contact details for all purposes.',
         'If any of these details change, we may update this section without changing the substance of these Terms.',
       ],
     },
@@ -441,7 +441,6 @@ const TERMS: StaticPage = {
       body: [
         'karobakbak may rely on third-party service providers to operate parts of the service.',
         'These may include providers for infrastructure, hosting, security, communications, payments, analytics or other technical functions, depending on the services we actually use.',
-        '[not published yet]',
         'Where third parties process personal information on our behalf, the applicable processing arrangements are described in our Privacy Policy where required.',
         'Third-party services may have their own terms and policies. Where applicable, your use of those third-party services may also be subject to their terms.',
       ],
@@ -562,7 +561,6 @@ const TERMS: StaticPage = {
     {
       heading: 'Appeals and enforcement review',
       body: [
-        '[not published yet]',
         'If we provide an appeals process for account or access restrictions, the applicable process will be described on the Support or Contact page.',
         'Where no formal appeals process is available, you may contact us using the published contact information if you believe an enforcement decision was made in error.',
         'We may request information necessary to evaluate an appeal.',
@@ -587,14 +585,12 @@ const TERMS: StaticPage = {
         'What happens when a subscription ends.',
       ],
       tail: [
-        '[not published yet]',
         'Nothing in these Terms should be interpreted as making Premium available before it is actually launched.',
       ],
     },
     {
       heading: 'Payments and refunds',
       body: [
-        '[not published yet]',
         'Where paid services are offered, payments may be processed by a third-party payment provider.',
         'Payment information may therefore be processed directly by that provider according to its applicable policies.',
         'Any mandatory rights you have under applicable consumer or payment law remain unaffected.',
@@ -674,7 +670,6 @@ const TERMS: StaticPage = {
       body: [
         'For problems involving another user or a specific conversation, the in-product Report function is generally the appropriate channel.',
         'For technical problems, account or Premium matters, privacy requests, legal matters or other service complaints, contact us using the published contact details.',
-        '[not published yet]',
         'We will handle complaints in accordance with our applicable policies and legal obligations.',
       ],
     },
@@ -764,7 +759,7 @@ const TERMS: StaticPage = {
         'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
         `Email: ${contact}`,
         'Phone: ***REMOVED***',
-        'Address: [address — published when required]',
+        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
         'For privacy-related requests, please see the contact information in the Privacy Policy.',
         'For a specific conversation or user-safety issue, please use the in-product Report function where possible.',
       ],
@@ -772,7 +767,7 @@ const TERMS: StaticPage = {
     {
       heading: 'Effective date',
       body: [
-        'Effective from: [not published yet]',
+        'Effective from: 7 September 2026',
         'Last updated: 7 September 2026',
       ],
     },
@@ -789,7 +784,7 @@ const PRIVACY: StaticPage = {
       body: [
         'Privacy Policy',
         'Last updated: 7 September 2026',
-        'Effective from: [not published yet]',
+        'Effective from: 7 September 2026',
         'karobakbak is designed to let you talk to strangers without creating a conventional account for the free chat service.',
         'Premium is different. A Premium subscription requires an account, and we need an email address to create and manage that account and associate your subscription with you.',
         'This Privacy Policy explains what information we collect, why we collect it, how long we keep it, who may receive it, and the choices and rights available to you.',
@@ -809,7 +804,7 @@ const PRIVACY: StaticPage = {
         'Country: India',
         `Email: ${contact}`,
         'Phone: ***REMOVED***',
-        'Address: [address — published when required]',
+        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
         'In this Privacy Policy, “karobakbak”, “we”, “us” and “our” refer to the operator of the service.',
       ],
     },
@@ -871,7 +866,7 @@ const PRIVACY: StaticPage = {
         'Other information necessary to provide Premium.',
         'We may also receive information from the payment provider necessary to determine whether your subscription is active, cancelled, expired or otherwise changed.',
         'We do not need to receive or store your full payment-card details if payment processing is handled by a third-party payment provider.',
-        '[payment provider — not published yet]',
+        'There is no payment provider today, because nothing is for sale. This section will name the provider before anything can be bought.',
       ],
     },
     {
@@ -1063,8 +1058,8 @@ const PRIVACY: StaticPage = {
       ],
       tail: [
         'Information about enforcement actions.',
-        'Report retention: [not published yet]',
-        'Moderation-record retention: [not published yet]',
+        'Report retention: 90 days',
+        'Moderation-record retention: 90 days',
         'We use this information to investigate abuse and enforce our Rules.',
       ],
     },
@@ -1084,8 +1079,7 @@ const PRIVACY: StaticPage = {
       tail: [
         'Protect other users.',
         'Where appropriate, technical identifiers may be transformed or protected before being stored for these purposes.',
-        '[not published yet]',
-        'We will not claim that an IP-derived identifier is impossible to reverse unless the actual technical implementation supports that claim.',
+        'Block and ban identifiers are stored as a salted hash of the address rather than as the address itself. A salted hash is not reversible by inspection, but we do not claim it is impossible to reverse: given the address, the same hash can be recomputed and matched.',
       ],
     },
     {
@@ -1107,7 +1101,6 @@ const PRIVACY: StaticPage = {
       ],
       tail: [
         'Other information supplied by the payment provider that we need to administer the subscription.',
-        '[not published yet]',
         'Your payment provider may independently process payment information under its own privacy policy.',
       ],
     },
@@ -1129,7 +1122,6 @@ const PRIVACY: StaticPage = {
       ],
       tail: [
         'Other information necessary to administer your subscription.',
-        '[not published yet]',
         'The payment provider\'s own terms and privacy policy will also apply to its processing of your payment information.',
       ],
     },
@@ -1152,7 +1144,6 @@ const PRIVACY: StaticPage = {
       ],
       tail: [
         'Security information necessary to protect the account.',
-        '[not published yet]',
         'If the provider changes in a way that materially changes how personal information is processed, we will update this Privacy Policy where required.',
       ],
     },
@@ -1242,56 +1233,61 @@ const PRIVACY: StaticPage = {
       tail: [
         'Prevent abuse.',
         'We do not use third-party advertising cookies as part of the ordinary service.',
-        '[not published yet]',
         'When you follow a link to another website, that website may use its own cookies and tracking technologies.',
       ],
     },
     {
       heading: 'Analytics and monitoring',
       body: [
-        '[not published yet]',
-        'If you do not use analytics:',
         'We do not use third-party analytics services to build profiles of your activity for advertising purposes.',
-        'If you use analytics, error monitoring or product telemetry, list those providers here.',
-        'For each provider, explain:',
-      ],
-      bullets: [
-        'What information it receives;',
-        'Why it receives it;',
-        'Whether it receives IP addresses;',
-        'Whether it receives account identifiers;',
-        'Whether it receives conversation content;',
-        'Where the information is processed; and',
-      ],
-      tail: [
-        'How long it is retained.',
-        'Do not describe the service as having “no third-party requests” if Premium authentication, payments, email, CDN, analytics or other third-party services make browser or server requests.',
+        'We use no analytics provider, no error-reporting service and no product telemetry service. Nothing about your use of karobakbak is sent to an outside logging or analytics company.',
+        'Our pages make no requests to any third party from your browser — no analytics, no trackers, no advertising, not even external fonts.',
+        'Signing in is the one exception, and it is a deliberate one: you are taken to the provider’s own page, you can see it in the address bar, and you chose to go there. Your profile picture is relayed by us rather than loaded from them, so browsing this site never tells them you were here.',
+        'Moderation of what users send runs on our own servers, on rules rather than on an outside service.',
+        'If we ever introduce an analytics provider, a content delivery network, an outside moderation service or any other third party that receives information about you, this section becomes false and will be updated before that change ships.',
       ],
     },
     {
       heading: 'Data retention',
       body: [
         'We retain different information for different periods.',
-        'Information	Intended retention',
-        'Ordinary conversations	30 days',
-        'Reported conversations	90 days',
-        'Premium account	While account remains active, subject to deletion/retention requirements',
-        'Premium email address	While account remains active and for any required post-account period',
-        'Subscription records	[not published yet]',
-        'Payment records	[not published yet]',
-        'Reports	[not published yet]',
-        'Moderation records	[not published yet]',
-        'IP addresses	[not published yet]',
-        'Derived block/ban identifiers	[not published yet]',
-        'Security logs	[not published yet]',
-        'Authentication logs	[not published yet]',
-        'Backups	[not published yet]',
+      ],
+      rows: [
+        ['Information', 'Intended retention'],
+        ['Ordinary conversations', '30 days'],
+        ['Reported conversations', '90 days'],
+        ['Premium account', 'While account remains active, subject to deletion/retention requirements'],
+        ['Premium email address', 'While account remains active and for any required post-account period'],
+        ['Subscription records', 'Not applicable while nothing is for sale'],
+        ['Payment records', 'Not applicable while nothing is for sale'],
+        ['Reports', '90 days'],
+        ['Moderation records', '90 days'],
+        ['IP addresses', 'Retained while needed for security and abuse prevention'],
+        ['Derived block/ban identifiers', 'Retained while needed for security and abuse prevention'],
+        ['Security logs', 'Retained while needed for security and abuse prevention'],
+        ['Authentication logs', 'Retained while needed for security and abuse prevention'],
+        ['Backups', 'Retained while needed for security and abuse prevention'],
+      ],
+      tail: [
         'Different information may have different retention requirements.',
         'For example, deleting a Premium account does not necessarily mean that transaction records that we are legally required to retain can be deleted immediately.',
       ],
     },
     {
       heading: 'Deleting your Premium account',
+      /*
+        Two lists, and they were transposed.
+
+        The draft removes four things and withholds seven. Rendered through a
+        section that had only one list, the seven withheld items were appended
+        to the four removed ones — so the page promised to delete the reader's
+        tax, fraud-prevention, security, abuse-enforcement and legal records,
+        and then said in the next sentence that it might not. Both halves were
+        wrong: the promise is one no operator can keep, and the contradiction
+        made the section unreadable as a statement of anything.
+
+        `tailBullets` exists for this. See `PageSection`.
+      */
       body: [
         'You may request deletion of your Premium account.',
         'Account deletion may result in the removal of:',
@@ -1300,18 +1296,19 @@ const PRIVACY: StaticPage = {
         'Your Premium account;',
         'Your email address associated with that account;',
         'Authentication information associated with the account; and',
+        'Other account information that is no longer necessary.',
+      ],
+      tail: [
+        'However, deletion may not immediately remove information that we are required or permitted to retain, including:',
+      ],
+      tailBullets: [
         'Transaction records;',
         'Tax or accounting records;',
         'Fraud-prevention records;',
         'Security records;',
         'Abuse-enforcement records;',
         'Legal records; or',
-      ],
-      tail: [
-        'Other account information that is no longer necessary.',
-        'However, deletion may not immediately remove information that we are required or permitted to retain, including:',
         'Information preserved in backups until their normal deletion cycle.',
-        '[not published yet]',
       ],
     },
     {
@@ -1368,7 +1365,6 @@ const PRIVACY: StaticPage = {
       ],
       tail: [
         'Incident-response procedures.',
-        '[not published yet]',
         'No online service can guarantee absolute security.',
         'If we experience a personal-data breach requiring notification under applicable law, we will follow the applicable notification requirements.',
       ],
@@ -1387,9 +1383,7 @@ const PRIVACY: StaticPage = {
       body: [
         'karobakbak is operated from India.',
         'The actual location of data processing depends on the infrastructure, authentication provider, payment provider, email provider and other service providers we use.',
-        '[not published yet]',
-        'The final version of this section should identify any countries outside India in which personal information is stored or processed and describe applicable safeguards where required.',
-        'Do not state that all information remains in India until the complete production architecture has been checked.',
+        'Where personal information is stored or processed outside India, we will identify the countries concerned and describe the applicable safeguards in this section.',
       ],
     },
     {
@@ -1482,7 +1476,7 @@ const PRIVACY: StaticPage = {
         'We will process personal information in accordance with applicable data-protection and privacy laws.',
         'Because karobakbak is operated from India, Indian data-protection requirements are particularly relevant to the service.',
         'The Digital Personal Data Protection Act, 2023 and the Digital Personal Data Protection Rules, 2025 establish requirements concerning the processing of digital personal data, including notice, consent, security safeguards, retention and data-subject rights. The Rules\' commencement has been phased, so the exact obligations applicable to the service depend on the effective date of the relevant provisions.',
-        'The final version of this Privacy Policy should therefore be checked against the provisions actually in force on the date karobakbak launches and whenever the law changes.',
+        'We check this Privacy Policy against the provisions actually in force, and update it when they change.',
       ],
     },
     {
@@ -1515,19 +1509,29 @@ const PRIVACY: StaticPage = {
         'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
         `Email: ${contact}`,
         'Phone: ***REMOVED***',
-        'Address: [address — published when required]',
+        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
         'For problems involving another user or a particular conversation, use the Report function inside the service where possible.',
       ],
     },
     {
       heading: 'Grievance contact',
+      /*
+        This section named nobody while the Contact section directly above it
+        already named the operator, and closed on an instruction to the drafter.
+
+        The clocks are the ones `docs/policies/terms-of-service.md` commits to
+        and are stated there rather than invented here: acknowledgement within
+        24 hours, resolution aimed at 15 days. The asymmetry is deliberate and
+        recorded in that draft — an acknowledgement can be automated and a
+        resolution cannot, so one is a machine's promise and the other is a
+        person's.
+      */
       body: [
-        'Grievance Officer: [name — not published yet]',
+        'Grievance Officer: ***REMOVED*** C Joe',
         `Email: ${contact}`,
-        'Address: [address — not published yet]',
-        'Acknowledgement: [not published yet]',
-        'Resolution target: [not published yet]',
-        'These details should reflect the actual grievance process in place when the service launches.',
+        'Phone: ***REMOVED***',
+        'We aim to acknowledge a grievance within 24 hours of receiving it.',
+        'We aim to resolve a grievance within 15 days.',
       ],
     },
   ],

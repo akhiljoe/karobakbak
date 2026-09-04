@@ -76,6 +76,10 @@ describe('the static pages', () => {
           ...section.body,
           ...(section.bullets ?? []),
           ...(section.tail ?? []),
+          ...(section.tailBullets ?? []),
+          ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
+        ...(section.tailBullets ?? []),
+        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
         ];
         expect(lines.length).toBeGreaterThan(0);
         for (const line of lines) {
@@ -209,6 +213,8 @@ describe('the static pages', () => {
         ...section.body,
         ...(section.bullets ?? []),
         ...(section.tail ?? []),
+        ...(section.tailBullets ?? []),
+        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
       ])
       // The sentences that carry the address are reworded to drop it, so they
       // cannot match the draft verbatim. Everything else must.
@@ -238,6 +244,8 @@ describe('the static pages', () => {
         ...section.body,
         ...(section.bullets ?? []),
         ...(section.tail ?? []),
+        ...(section.tailBullets ?? []),
+        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
       ])
       // A rendered gap, or the address filled in from configuration.
       .filter((line) => !line.includes('[') && !line.includes('@'))

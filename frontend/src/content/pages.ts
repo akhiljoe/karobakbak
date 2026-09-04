@@ -53,6 +53,40 @@ export interface PageSection {
   readonly bullets?: readonly string[];
   /** Paragraphs that come after the list. */
   readonly tail?: readonly string[];
+  /**
+   * A second list, after `tail`.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY A SECOND LIST EXISTS RATHER THAN "ONE LIST IS ENOUGH"
+   * ---------------------------------------------------------------------------
+   * One section in the Privacy draft has two: what deleting a Premium account
+   * removes, and — after a "however" — what it does not. With only one list
+   * available the transcription concatenated them, so the page told the reader
+   * that deletion removes their tax, fraud-prevention and legal records, and
+   * then said it might not. That is the opposite of what the draft says, and it
+   * is the kind of error a data model produces rather than a writer: nothing was
+   * misread, there was simply nowhere to put the second list.
+   *
+   * Renderers must show it. A template that silently drops it would reintroduce
+   * exactly the failure it was added to fix.
+   */
+  readonly tailBullets?: readonly string[];
+  /**
+   * A two-column table: the first row is the header.
+   *
+   * ---------------------------------------------------------------------------
+   * BECAUSE A TAB IS NOT A TABLE
+   * ---------------------------------------------------------------------------
+   * The retention schedule arrived from the draft as fourteen tab-separated
+   * lines and was transcribed into `body` as fourteen paragraphs. HTML collapses
+   * a tab to a single space, so the published page read "Ordinary conversations
+   * 30 days" — fourteen times, with no columns, no header and no alignment. It
+   * was legible only to somebody who already knew it was meant to be a table.
+   *
+   * Held as pairs so a renderer can put it in columns and a test can still read
+   * the values back.
+   */
+  readonly rows?: readonly (readonly [string, string])[];
 }
 
 export interface StaticPage {
