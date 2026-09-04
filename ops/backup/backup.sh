@@ -96,6 +96,48 @@ report() {
   fi
 }
 
+# Refuse a secret file with a carriage return in it, and say which file.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS REFUSES RATHER THAN STRIPS
+# ---------------------------------------------------------------------------
+# Found by running the restore drill on 2026-09-04. A secret file created on
+# Windows — `openssl rand ... > ops/backup/passphrase` in Git Bash — is written
+# CRLF. `.gitattributes` forces LF across this repository, but these files are
+# gitignored, so nothing normalises them.
+#
+# Both consequences are quiet, and the second is the dangerous one:
+#
+#   * The report token gains a trailing CR, which makes the Authorization
+#     header malformed. The backend answers 400, `report()` logs "could not
+#     reach", and it reads as a network problem. `BackupMonitor` then never
+#     observes a successful backup and `BackupsStale` sits red forever.
+#
+#   * The passphrase gains a trailing CR, and **nothing appears to be wrong at
+#     all**. Backup and restore read the same file, so the drill passes. It
+#     fails on the day somebody re-types the passphrase from a password manager
+#     onto a Linux host and cannot decrypt a single archive — which is the one
+#     day it must not fail.
+#
+# Stripping it silently would be worse than refusing. For the passphrase it
+# would change the key, so archives already written with the CR would stop
+# decrypting with no explanation. A refusal names the file and the fix while
+# there is still nothing at stake.
+check_secret_file() {
+  path="$1"
+  what="$2"
+  if od -c "$path" 2>/dev/null | grep -q '\\r'; then
+    log "FATAL: ${path} contains a carriage return (CRLF line endings)"
+    log "       ${what}"
+    log "       Fix on the host, then restart this container:"
+    log "         tr -d '\\r' < ${path} > ${path}.tmp && mv ${path}.tmp ${path}"
+    log "       Created on Windows? Write it with printf and no trailing newline:"
+    log "         printf %s \"\$SECRET\" > ${path}"
+    return 1
+  fi
+  return 0
+}
+
 run_once() {
   # `-f -s`, not `-r`. Docker creates a *directory* for a bind mount whose host
   # path is missing, and a directory is readable — so `-r` passed, `cat` failed
@@ -105,6 +147,18 @@ run_once() {
     log "FATAL: ${BACKUP_PASSPHRASE_FILE} is missing, empty, or not a file"
     log "       copy ops/backup/passphrase.example and put a real passphrase in it"
     return 1
+  fi
+
+  check_secret_file "$BACKUP_PASSPHRASE_FILE" \
+    "A CR here becomes part of the encryption key, silently. Every archive
+       written with it can only be decrypted by a passphrase carrying the same
+       invisible byte." || return 1
+
+  if [ -n "$BACKUP_REPORT_TOKEN_FILE" ] && [ -f "$BACKUP_REPORT_TOKEN_FILE" ]; then
+    check_secret_file "$BACKUP_REPORT_TOKEN_FILE" \
+      "A CR here malforms the Authorization header, so reporting fails with a
+       message that reads as a network fault and the staleness alert never
+       clears." || return 1
   fi
 
   # Same trap as the passphrase, and worth checking before spending a minute on

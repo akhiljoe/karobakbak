@@ -20,6 +20,15 @@ RUN apk add --no-cache gnupg curl rclone
 COPY backup.sh /usr/local/bin/backup.sh
 RUN chmod +x /usr/local/bin/backup.sh
 
+# The restore tool ships in the same image as the backup tool, and that is the
+# point. A restore happens on the worst day, from whatever is already on the
+# box; an image that can only take backups means improvising the decrypt and
+# `pg_restore` invocation during an incident, against an archive format nobody
+# has looked at in months. It is not the entrypoint — it is run deliberately,
+# with `docker compose run --rm --entrypoint /usr/local/bin/restore.sh backup`.
+COPY restore.sh /usr/local/bin/restore.sh
+RUN chmod +x /usr/local/bin/restore.sh
+
 # Two directories that have to exist, owned by the user that will use them,
 # *before* the volume is mounted — both were found by running this rather than
 # by reading it.
