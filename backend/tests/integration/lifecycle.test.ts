@@ -139,9 +139,37 @@ describe('matching across two instances', () => {
 
     const matched = [ra, rb].filter((r) => r.kind === 'matched');
     expect(matched).toHaveLength(1);
-    // The loser is told a peer matched it, and sends nothing: the matched frame
-    // is already on its way from the instance that won (§10.1).
-    expect([ra, rb].filter((r) => r.kind === 'matched_elsewhere')).toHaveLength(1);
+
+    /*
+     * The loser has TWO legal return shapes, and asserting one of them made
+     * this test flaky in CI.
+     *
+     * Both sides send nothing either way: the `matched` frame is already on its
+     * way from the instance that won (§10.1). What differs is only how far the
+     * loser got before the winner took it.
+     *
+     *   matched_elsewhere  the scans overlapped, so `tryMatch` aborted with
+     *                      `already_matched` mid-scan.
+     *   searching          the loser finished its own scan and joined the queue
+     *                      first, finding nobody; the winner then matched it,
+     *                      and it learns over Pub/Sub.
+     *
+     * The second is what a genuinely simultaneous join looks like when the two
+     * instances do not quite overlap, and there is nothing to fix about it —
+     * `joinQueue` returns `search()` on `ok`, which yields `searching`
+     * (`lifecycle.ts`). It failed once on a docs-only commit and passed on the
+     * next push, which is the signature of an over-specified race rather than a
+     * regression.
+     *
+     * So assert the invariant instead of the schedule: exactly one side won,
+     * the other is not also a winner, and Redis holds exactly one match.
+     */
+    const loser = [ra, rb].find((r) => r.kind !== 'matched');
+    expect(loser).toBeDefined();
+    expect(['matched_elsewhere', 'searching']).toContain(loser?.kind);
+
+    // The assertion that actually protects the invariant: two instances
+    // matching at the same moment must never produce two matches.
     expect(await one.ctx.client.scard(one.ctx.keys.matches())).toBe(1);
   });
 
