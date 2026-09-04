@@ -180,84 +180,29 @@ jobs:
           failed=0
           for pkg in backend frontend; do
             echo "::group::npm audit ($pkg)"
-            # `|| true` because a non-zero exit here means "advisories exist",
-            # which is not the same as "the gate failed" — the severity counts
-            # below decide that, and losing the report to a shell exit would
-            # hide the thing this step is for.
             # Three attempts with a widening pause. The bulk advisory endpoint
             # timed out for five minutes on two consecutive runs while the
-            # other package's audit succeeded in the same job, so this is
-            # intermittent rather than broken — and an intermittent failure is
-            # exactly what a retry is for. npm's own fetch retries are raised
-            # too, because its default gives up sooner than the endpoint
-            # recovers.
+            # other package succeeded in the same job, so this is intermittent
+            # rather than broken, and an intermittent failure is what a retry
+            # is for. npm's own fetch retries are raised too, because its
+            # default gives up sooner than the endpoint recovers.
             for attempt in 1 2 3; do
               npm --prefix "$pkg" audit --omit=dev --json                 --fetch-retries=3                 --fetch-retry-maxtimeout=60000                 --fetch-timeout=120000                 > "/tmp/audit-$pkg.json" 2>/tmp/audit-err.txt && break
-              # A non-zero exit here means either "advisories exist" or "the
-              # call failed", and only the report tells them apart — so decide
-              # on the file rather than on the exit code.
-              if node -e 'process.exit(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).metadata?.vulnerabilities ? 0 : 1)' "/tmp/audit-$pkg.json" 2>/dev/null; then
-                break
-              fi
+              # Decide on the report, never on the exit code: non-zero means
+              # either "advisories exist" or "the call failed".
+              node scripts/ci-audit-report.mjs --usable "/tmp/audit-$pkg.json" && break
               echo "  attempt $attempt could not reach the advisory endpoint; retrying"
               sleep $((attempt * 15))
             done
-            node -e '
-              const fs = require("node:fs");
-              const pkg = process.argv[1];
-              const report = JSON.parse(fs.readFileSync(`/tmp/audit-${pkg}.json`, "utf8"));
-              const totals = report.metadata?.vulnerabilities;
-
-              /*
-                An audit that could not run must not read as an audit that found
-                nothing. When the registry call fails, npm writes an *error*
-                object here — `statusCode`, `error`, no `metadata` — and an
-                earlier version of this script defaulted that to `{}` and passed.
-                That is the failure this repository keeps finding in other
-                places: a check that reports success because it never ran.
-              */
-              if (totals === undefined) {
-                /*
-                  Fails, after the retries above have been spent.
-
-                  This was a warning for one day and the day was instructive:
-                  the frontend audit skipped on two consecutive runs and both
-                  builds went green, which is a control that has stopped
-                  existing while still appearing in the log. That is the shape
-                  this repository keeps finding — F-045's inert settings, the
-                  oracle nobody invoked, the metric with no write site.
-
-                  The objection to failing was that npmjs.com's availability
-                  should not block a merge. That objection is answered by
-                  `.github/dependabot.yml` rather than by tolerance: dependency
-                  monitoring now runs server-side on a schedule and does not
-                  care about CI's network, so a red build here means "go and
-                  look", not "you are flying blind until this clears".
-                */
-                console.log(`::error::${pkg}: npm audit could not run after three attempts, so nothing was checked`);
-                console.log(JSON.stringify(report.error ?? report).slice(0, 400));
-                process.exitCode = 1;
-              } else {
-                console.log(`${pkg}:`, JSON.stringify(totals));
-                for (const [name, via] of Object.entries(report.vulnerabilities ?? {})) {
-                  console.log(`  ${String(via.severity).padEnd(8)} ${name}`);
-                }
-                const gated = (totals.high ?? 0) + (totals.critical ?? 0);
-                if (gated > 0) {
-                  console.log(`::error::${pkg} has ${gated} high or critical advisory(ies)`);
-                  process.exitCode = 1;
-                }
-              }
-            ' "$pkg" || failed=1
+            # The reporting and the gate live in a file rather than in a shell
+            # string. A prose comment inside the previous `node -e` contained an
+            # apostrophe, which closed the shell quote and turned every template
+            # literal after it into command substitution — the backtick trap
+            # this repository already records twice, wearing a third disguise.
+            node scripts/ci-audit-report.mjs "$pkg" "/tmp/audit-$pkg.json" || failed=1
             echo "::endgroup::"
           done
           exit "$failed"
-
-      # The `.env` files are gitignored and `.env.example` is not, which is
-      # exactly the arrangement where a real value gets pasted into the wrong
-      # one. The Razorpay keys, the Cognito client secret, the backup
-      # passphrase, the model provider key and the Grafana admin password are
-      # all things this repository knows the shape of.
       - name: Scan history for committed secrets
         uses: gitleaks/gitleaks-action@v2
         env:

@@ -1,42 +1,65 @@
-# Continuous dependency monitoring, independent of CI.
+# Dependency monitoring — and a note about which mechanism is which.
 #
 # ---------------------------------------------------------------------------
-# WHY THIS EXISTS ALONGSIDE THE CI AUDIT
+# THE TWO THINGS THAT SHARE THIS NAME
 # ---------------------------------------------------------------------------
-# `npm audit` in CI answers "were there known advisories against this tree at
-# the moment somebody pushed". That is a worse question than it sounds, twice
-# over: it depends on a live call to registry.npmjs.org at build time — which
-# timed out for five minutes on two consecutive runs on 2026-09-04, checking
-# nothing and going green — and it never re-evaluates. An advisory published
-# the day after a push is invisible until the next push, which on a
-# pre-launch repository can be weeks.
+# "Dependabot" is two products, and the distinction is the whole of why this
+# file looks the way it does:
 #
-# Dependabot evaluates the committed lockfiles server-side, on a schedule and
-# whenever a new advisory lands, and it does not care whether CI's network is
-# healthy. It is the mechanism that keeps working when the other one cannot.
+#   * **Security updates** open a pull request when an advisory is published
+#     against something the committed lockfiles actually contain. They are
+#     driven by the dependency graph and by GitHub's advisory database, they
+#     are configured in repository settings rather than here, and they do not
+#     care whether CI's network is healthy.
 #
-# The two are deliberately different in kind. The audit blocks a push that
-# *introduces* something known-bad; Dependabot notices what became bad after
-# the fact and opens the pull request that fixes it. Neither replaces the
-# other, and now neither can be silently absent — the audit fails loudly when
-# it cannot run, and this runs whether or not CI does.
+#   * **Version updates** — the `updates:` blocks below — open pull requests
+#     for *newer* versions on a schedule, whether or not anything is wrong.
+#
+# Only the first is a control. The second is housekeeping, and on 2026-09-04 it
+# demonstrated the difference by opening fourteen pull requests within a minute
+# of being switched on — typescript 5 to 7, ioredis 5 to 6, @types/node 22 to
+# 26, actions/checkout v4 to v7. Every one a major version, every one a
+# deliberate migration rather than a fix, each costing two CI runs, three days
+# before launch.
+#
+# Enabling this file was also how it was discovered that **Dependabot alerts
+# were disabled on the repository entirely**. The `updates:` blocks worked
+# immediately and looked like the monitoring was in place; the mechanism that
+# actually watches for advisories was off, and nothing said so. That is this
+# repository's recurring failure — a control that is present, visible and
+# reaching nothing (F-045) — and it had been reached by adding the control.
+#
+# Alerts and automated security fixes were enabled on 2026-09-04 via
+#   gh api -X PUT repos/<owner>/<repo>/vulnerability-alerts
+#   gh api -X PUT repos/<owner>/<repo>/automated-security-fixes
+# They are repository settings, so they are not visible in this file and cannot
+# be asserted by a test here. `gh api repos/<owner>/<repo>/dependabot/alerts`
+# returns 403 when they are off, which is how to check.
+#
+# ---------------------------------------------------------------------------
+# WHY EVERY LIMIT BELOW IS ZERO
+# ---------------------------------------------------------------------------
+# `open-pull-requests-limit: 0` is the documented way to turn version updates
+# off for an ecosystem **while leaving security updates working**. The blocks
+# are kept rather than deleted so that the ecosystems and directories stay
+# written down, and so re-enabling routine upgrades after launch is a change to
+# a number rather than a change somebody has to reconstruct.
+#
+# Blanket-ignoring major versions was considered and rejected: `ignore`
+# conditions here are honoured by security updates too, so an advisory whose
+# only fix is a major bump would be silently suppressed — which is the same
+# class of mistake as the one this file was written to fix.
+#
+# Raise these to 5 after launch, one ecosystem at a time.
 version: 2
 
 updates:
-  # Security-relevant updates only, for the trees that actually ship. The
-  # weekly cadence is about pull-request noise rather than about risk:
-  # `open-pull-requests-limit` and the schedule shape how much lands at once,
-  # while GitHub's security alerts arrive as soon as an advisory does,
-  # regardless of what is written here.
   - package-ecosystem: npm
     directory: /backend
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
-    # Grouped so a week of patch bumps is one review rather than five. A
-    # security fix still arrives on its own, because security updates are not
-    # subject to this grouping.
+    open-pull-requests-limit: 0
     groups:
       backend-minor-and-patch:
         update-types:
@@ -50,7 +73,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       frontend-minor-and-patch:
         update-types:
@@ -60,22 +83,24 @@ updates:
       prefix: "chore(deps)"
 
   # The load harness. Its dependencies never ship and cannot be reached by a
-  # request, so this is monitored rather than gated — the same reasoning the
-  # CI audit applies with `--omit=dev`.
+  # request, so it is monitored rather than gated — the same reasoning the CI
+  # audit applies with `--omit=dev`.
   - package-ecosystem: npm
     directory: /load-test/swarm
     schedule:
       interval: monthly
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(deps)"
 
   # The workflow's own actions pin to major versions and drift the same way a
   # dependency does. `actions/checkout@v4` becoming abandoned is the kind of
-  # thing nobody notices until it stops working.
+  # thing nobody notices until it stops working — but v4 to v7 in one jump is a
+  # migration to schedule, not a Monday morning pull request.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "chore(ci)"
