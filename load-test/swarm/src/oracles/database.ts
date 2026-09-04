@@ -71,6 +71,20 @@ export interface DatabaseOracleInput {
    */
   readonly chaosRan: boolean;
   /**
+   * How long the whole chaos episode lasted, in seconds — first sample to last,
+   * so it covers the induced outage *and* the recovery window the spool drains
+   * in. Zero when no chaos ran.
+   *
+   * The stamping-lag bound below is the write-behind queue's latency, and an
+   * outage is a deliberate instruction to make that latency large: a record
+   * spooled while PostgreSQL is paused cannot be written until it comes back.
+   * On 2026-09-04 a C1 run measured 125s against a bound of 120 and failed,
+   * reporting a D17 violation for the one thing D17 is indifferent to — how
+   * long the row waited. The bound is widened by this span and says so; it is
+   * not removed, because the property it distinguishes still has to hold.
+   */
+  readonly chaosSpanSeconds: number;
+  /**
    * Whether a chaos scenario killed a backend process during this run.
    *
    * Changes what the numbers *mean*, and nothing else. A process that dies to
@@ -156,12 +170,31 @@ async function readLedger(paths: readonly string[]): Promise<LedgerFacts> {
 
       if (event.type === 'sent') {
         facts.sent += 1;
-      } else if (event.type === 'ack') {
-        // An ack is the server saying it accepted and recorded the message —
-        // which is what produces a row. `withheld` counts too: policy stopped
-        // it reaching the partner, and D20 is explicit that it is still stored.
-        facts.accepted += 1;
+        // The body comparison asks "is every stored body something a bot sent",
+        // and the answer has to be built from what was *sent*, not from what was
+        // acked. A message the moderation policy refuses outright is never
+        // acked and is still stored — D20 keeps it as evidence, which is the
+        // whole point of retaining it — so an ack-only set reports every one of
+        // them as a body that appeared from nowhere. On 2026-09-04 that was 219
+        // rows, matching `moderation_action = 'block'` exactly, and it read as
+        // "the text path altered content between the socket and the row".
+        //
+        // `hash` is taken over the trimmed text the bot handed to the socket,
+        // which is what the server stores (the server trims first), so the two
+        // sides still compare like with like.
         if (event.hash) facts.hashes.set(event.hash, (facts.hashes.get(event.hash) ?? 0) + 1);
+      } else if (event.type === 'ack') {
+        // An ack is the server saying it accepted the message, and an accepted
+        // message produces a row — so this is the count, and only the count.
+        //
+        // The hash is deliberately NOT taken here. The comment that used to sit
+        // on this line said withheld messages were covered because D20 stores
+        // them, which is true of the *server* and false of this branch: a
+        // message refused outright never gets an ack, so it never reached this
+        // code. A remark about the server's behaviour was standing in for a
+        // claim about the harness's, and the two had come apart. The hashes are
+        // collected from `sent` above, which sees every message either way.
+        facts.accepted += 1;
       } else if (event.type === 'matched' && event.matchId) {
         facts.matches.add(event.matchId);
         let members = facts.membership.get(event.matchId);
@@ -413,11 +446,28 @@ export async function checkDatabaseAgreement(
   // Generously bounded: this is queue latency, and a run under load can hold a
   // record for a few seconds. A deadline computed later would be out by the
   // length of the run, not by seconds.
-  if (worstJitter > 120) {
+  //
+  // A chaos run widens it by the length of the episode, because that is what
+  // the run instructed the queue to do — the spool holds records for the outage
+  // and then replays them at a paced rate, so the latency is the outage plus
+  // the drain. The bound is still a bound: the property being distinguished is
+  // that offsets *cluster* near whole windows, and a deadline computed at read
+  // or deletion time would spread them across the entire run, which no outage
+  // this short can imitate. Widening it is stated in the output rather than
+  // done quietly, on the same principle as the metric oracle declining to
+  // check arithmetic it cannot do after a process was killed.
+  const jitterAllowance = 120 + Math.max(0, Math.round(input.chaosSpanSeconds));
+  if (input.chaosSpanSeconds > 0) {
+    details.push(
+      `stamping-lag allowance: ${jitterAllowance}s — 120s, plus the ` +
+        `${Math.round(input.chaosSpanSeconds)}s chaos episode the queue was told to wait through`,
+    );
+  }
+  if (worstJitter > jitterAllowance) {
     problems.push(
-      `retention deadlines sit up to ${worstJitter.toFixed(0)}s off a whole window. Stamped ` +
-        'at insert, that offset is queue latency; a deadline computed later drifts with ' +
-        'the clock, which is what D17 forbids.',
+      `retention deadlines sit up to ${worstJitter.toFixed(0)}s off a whole window, past the ` +
+        `${jitterAllowance}s allowed. Stamped at insert, that offset is queue latency; a ` +
+        'deadline computed later drifts with the clock, which is what D17 forbids.',
     );
   }
 

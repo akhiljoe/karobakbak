@@ -53,6 +53,13 @@ export interface EnforcementOracleInput {
 
 interface BotFacts {
   refusedForbidden: number;
+  /**
+   * Refused at the edge with 451 — the geo-block in `frontend/nginx.conf`,
+   * which runs in nginx and answers before the upgrade ever reaches a backend.
+   * A bot stopped here never had its ban tested, so it belongs in neither
+   * column of question 1. See the partition below.
+   */
+  refusedGeo: number;
   refusedOther: number;
   connected: number;
   matched: number;
@@ -61,7 +68,7 @@ interface BotFacts {
 function factsFor(map: Map<string, BotFacts>, bot: string): BotFacts {
   let facts = map.get(bot);
   if (!facts) {
-    facts = { refusedForbidden: 0, refusedOther: 0, connected: 0, matched: 0 };
+    facts = { refusedForbidden: 0, refusedGeo: 0, refusedOther: 0, connected: 0, matched: 0 };
     map.set(bot, facts);
   }
   return facts;
@@ -111,6 +118,7 @@ export async function runEnforcementOracle(
       const bot = factsFor(facts, event.bot);
       if (event.type === 'connect_refused') {
         if (event.code === 403) bot.refusedForbidden += 1;
+        else if (event.code === 451) bot.refusedGeo += 1;
         else bot.refusedOther += 1;
       } else if (event.type === 'connected') {
         bot.connected += 1;
@@ -123,13 +131,37 @@ export async function runEnforcementOracle(
   const details: string[] = [];
 
   // Question 1 — did the ban hold, for everyone it was applied to.
+  //
+  // A banned bot that only ever met the edge is *not* evidence either way. The
+  // geo-block in `frontend/nginx.conf` answers 451 in nginx, before the upgrade
+  // reaches a backend and therefore before `chat:ban:{key}` is read at all: the
+  // bot was refused harder than the ban would have refused it, and the ban was
+  // never asked. Counting it as a miss reports a safety bug that did not
+  // happen, which is what this did on 2026-09-04 — five of eighteen, every one
+  // of them carrying a 451 in the ledger.
+  //
+  // Counting it as a pass would be the worse mistake, and it is the one this
+  // file's own header warns about: a run where the whole A14 cohort drew an
+  // EEA country would then "prove" enforcement while testing nothing. So they
+  // are excluded and named, and an empty tested set fails below.
   const admitted: string[] = [];
   const neverRefused: string[] = [];
+  const untested: string[] = [];
   for (const bot of banned) {
     const bot_ = facts.get(bot);
+    if (bot_ && (bot_.connected > 0 || bot_.matched > 0)) {
+      // Checked first and over the whole cohort: a banned identity that opened
+      // a session is a failure whatever else happened to it.
+      admitted.push(bot);
+      continue;
+    }
+    if (bot_ && bot_.refusedForbidden === 0 && bot_.refusedGeo > 0) {
+      untested.push(bot);
+      continue;
+    }
     if (!bot_ || bot_.refusedForbidden === 0) neverRefused.push(bot);
-    if (bot_ && (bot_.connected > 0 || bot_.matched > 0)) admitted.push(bot);
   }
+  const tested = banned.size - untested.length;
 
   // Question 2 — did it hold only there.
   const collateral: string[] = [];
@@ -140,7 +172,30 @@ export async function runEnforcementOracle(
 
   details.push(`${input.bansApplied} identities banned before the run`);
   details.push(`${banned.size} bots carried a banned identity`);
+  details.push(`${tested} of them reached the door and had the ban tested`);
+  if (untested.length > 0) {
+    details.push(
+      `${untested.length} never reached it: refused 451 by the edge geo-block — ` +
+        `${untested.slice(0, 10).join(', ')}`,
+    );
+  }
   details.push(`${collateral.length} other bots were refused with 403`);
+
+  if (tested === 0) {
+    // The failure this file's header describes, reached by a different road.
+    return {
+      name,
+      status: 'fail',
+      summary: 'no banned identity reached the door, so nothing was tested',
+      details: [
+        ...details,
+        'Every A14 bot was stopped by the edge before the ban could apply. That is',
+        'the geo-block working and the ban question going unasked — a clean-looking',
+        'run that demonstrates nothing. Re-run with a seed whose A14 cohort draws a',
+        'country the edge admits.',
+      ],
+    };
+  }
 
   if (admitted.length > 0) {
     return {
