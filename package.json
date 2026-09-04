@@ -52,6 +52,7 @@
     "security:typecheck": "npm --prefix security-test run typecheck",
     "prod:config": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml config",
     "prod:up": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d",
+    "prod:build": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d --build",
     "prod:down": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml down",
     "prod:logs": "docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs -f backend",
     "unblock:loadtest": "docker compose --env-file .env.loadtest -p karobakbak-loadtest exec -T redis redis-cli EVAL \"local n=0 for _,p in ipairs({'chat:blocks:*','chat:last_partner:*'}) do for _,k in ipairs(redis.call('KEYS',p)) do redis.call('DEL',k) n=n+1 end end return n\" 0",
