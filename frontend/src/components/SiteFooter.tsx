@@ -32,24 +32,27 @@ export function SiteFooter({ width = 'column' }: { width?: 'column' | 'full' }):
   return (
     /*
      * Sticky to the bottom of whatever scrolls it, matching the header at the
-     * top. On `SitePage` that is the document scroller; on the landing screen
-     * the column does not scroll at all, where `sticky` costs nothing and lays
-     * out exactly as it did before.
+     * top. On the landing screen the column does not scroll at all, where
+     * `sticky` costs nothing and lays out exactly as it did before.
      *
      * A background is required now that prose can pass behind it — see the note
      * on `EditorialFooter`, which makes the same trade for the same reason.
      */
     <footer className="safe-pb sticky bottom-0 z-30 shrink-0 border-t border-ink-800/50 bg-ink-950/85 py-3.5 backdrop-blur-md short:py-2.5">
       {/*
-        The footer takes its **own shell's** gutter, because the two shells that
-        render it do not share one.
-        `SitePage` puts its header in a centred `max-w-4xl px-5` column, so the
-        column footer's first link sits directly under the logo. The landing and
-        chat shell puts its header edge to edge at `px-3 sm:px-6`, and the same
-        column there left the links starting a third of the way across from a
-        logo pinned to the left margin — a small clump adrift in a full-width
-        bar, which is the defect this footer already had once before and fixed
-        for the other shell.
+        The footer takes its shell's gutter, so its first link sits under the
+        logo. The landing and chat shell puts its header edge to edge at
+        `px-3 sm:px-6`; a centred column there left the links starting a third
+        of the way across from a logo pinned to the left margin — a small clump
+        adrift in a full-width bar, which is the defect `EditorialFooter` also
+        had once and fixed the same way.
+
+        The `column` width is now unused: `SitePage` moved onto `EditorialShell`
+        and takes `EditorialFooter` with it, so the only caller left is the
+        landing screen, which passes `full`. It is kept rather than deleted
+        because the prop is the thing that makes the alignment rule explicit,
+        and a footer with one hard-coded gutter is how the alignment was lost
+        the first time.
         It used to be a centred `max-w-lg` cluster, which was fine while the
         footer scrolled past at the end of a document rather than being pinned.
         Spreading the links edge to edge with `justify-between` was the other

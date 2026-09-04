@@ -1,19 +1,24 @@
 /**
- * The shell the three editorial pages share: About, How it works, Premium.
+ * The shell every page outside the chat screen shares.
  *
  * ---------------------------------------------------------------------------
  * WHY A SECOND SHELL BESIDE `SitePage`
  * ---------------------------------------------------------------------------
- * `SitePage` renders a page from its data: heading, summary, then a column of
- * paragraphs. Six pages want exactly that, because they are reference material
- * somebody opens with a question — Safety, FAQ, Rules, Terms, Privacy, Contact.
+It began as the shell for the three pages that argue for the product —
+ * About, How it works and Premium — each laid out around its own argument: a
+ * numbered rail for the three steps, a specimen conversation beside the "text
+ * only" claim, a field of unverified dots above the Premium hero. None of that
+ * survives being flattened into a paragraph list, which is why they were given
+ * a shell that supplies chrome and nothing else.
  *
- * These three are not reference material. They are the pages that argue for the
- * product, and each one is laid out around its own argument: a numbered rail
- * for the three steps, a specimen conversation beside the "text only" claim, a
- * field of unverified dots above the Premium hero. None of that survives being
- * flattened into a paragraph list, which is why they get a shell that supplies
- * chrome and nothing else.
+ * Rules, Contact, FAQ and Safety followed for their own reasons, and Terms and
+ * Privacy came last through `SitePage`, which now renders their prose *into*
+ * this shell rather than beside its own copy of it. So this is no longer "the
+ * editorial shell" in contrast to another one: it is the chrome, and the only
+ * screen that does not use it is the chat itself.
+ *
+ * That matters when changing anything here. A header or footer decision made
+ * in this file now applies to every document on the site at once.
  *
  * The prose still comes from `content/`. What lives here is furniture.
  *
@@ -70,7 +75,7 @@ function AmbientField(): JSX.Element {
 }
 
 /**
- * The footer these three pages use, which is not `SiteFooter`.
+ * The footer every document page uses, which is not `SiteFooter`.
  *
  * Same five links, 13px and unadorned — no underlines.
  *
