@@ -1,7 +1,7 @@
 # Prompt for Claude Design — one page at a time
 
 **How to use this:** paste everything below the line, then paste the page's
-content from `docs/rewrite-wording/` underneath it, saying which page it is.
+the page's entry from `frontend/src/content/` underneath it, saying which page it is.
 One page per conversation — the brief is deliberately narrow so the design
 answers *this* page rather than averaging across eight.
 
@@ -167,6 +167,6 @@ Not part of the prompt — do not paste this section.
   (`ContactCard`), About (`SupportCard`) and How it works
   (`SampleConversation`). Cheap extras should go there before anything is
   restructured.
-* Every draft in `docs/rewrite-wording/` still needs checking against the
+* Every page in `frontend/src/content/` still needs checking against the
   product before it ships. Two of them already carried claims that had stopped
   being true.

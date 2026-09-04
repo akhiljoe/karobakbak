@@ -21,12 +21,6 @@ import { describe, expect, it } from 'vitest';
  * which is a much larger change than the guard below is worth. Test files are
  * not part of the build entry, so the markdown never reaches `dist/`.
  */
-import howItWorksDraft from '../../../docs/rewrite-wording/how_it_works.md?raw';
-import rulesDraft from '../../../docs/rewrite-wording/rules.md?raw';
-import contactDraft from '../../../docs/rewrite-wording/contact.md?raw';
-import safetyDraft from '../../../docs/rewrite-wording/safety.md?raw';
-import termsDraft from '../../../docs/rewrite-wording/Terms.md?raw';
-import privacyDraft from '../../../docs/rewrite-wording/privacy.md?raw';
 
 import { HOW_IT_WORKS } from './how-it-works';
 import { CONTACT_SLA } from './contact';
@@ -78,8 +72,6 @@ describe('the static pages', () => {
           ...(section.tail ?? []),
           ...(section.tailBullets ?? []),
           ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
-        ...(section.tailBullets ?? []),
-        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
         ];
         expect(lines.length).toBeGreaterThan(0);
         for (const line of lines) {
@@ -103,7 +95,80 @@ describe('the static pages', () => {
       expect(text).not.toContain('TODO');
       expect(text).not.toContain('DRAFTED POSITION');
       expect(text).not.toContain('UNREVIEWED BY COUNSEL');
+      // `[CONFIRM]`, `[BUSINESS ADDRESS]`, `[NAME]`, `[INSERT ...]` — the
+      // shape a template leaves behind. Deliberate gaps are written in
+      // sentence case ("[contact address — not published yet]"), so an
+      // all-caps bracketed token is always a placeholder nobody filled in.
+      expect(text).not.toMatch(/\[[A-Z][A-Z ]{2,}\]/);
     }
+  });
+
+  /*
+   * Copy addressed to whoever is writing the copy, rather than to a reader.
+   *
+   * This is the failure the transcription check used to catch as a side effect,
+   * and it is why something had to replace it. `content/legal.ts` transcribes
+   * long documents, and the ones it transcribed were templates: alongside the
+   * operative text they carried instructions to the drafter. Transcribed
+   * faithfully, the published Privacy Policy told visitors
+   *
+   *   "If you use analytics, error monitoring or product telemetry, list those
+   *    providers here."
+   *   "For each provider, explain:" — followed by seven bullets
+   *   "Do not describe the service as having 'no third-party requests' if ..."
+   *
+   * and three more elsewhere. None of them trips the placeholder checks above:
+   * they are ordinary English sentences, correctly spelled, in the right tone.
+   * What gives them away is the *addressee* — a reader is never told to list
+   * something here, or what the final version of the page should say.
+   *
+   * A denylist rather than a general rule, because "detect prose aimed at an
+   * author" is not something a test can do. These are the phrasings that
+   * actually shipped, plus the shapes they came in. Add to it when a new one
+   * gets through; do not try to make it clever.
+   */
+  it('never addresses the drafter instead of the reader', () => {
+    const forbidden = [
+      /list (?:those|the) [a-z ]+ here/i,
+      /for each [a-z ]+, explain/i,
+      /the final version/i,
+      /before publication/i,
+      /should (?:identify|reflect|be checked)/i,
+      // Anchored, because the imperative is the tell. "We do not claim
+      // ownership of ordinary messages" and "we do not claim that this
+      // confirmation verifies your age" are reader-facing sentences this
+      // caught on the first run; "Do not describe the service as having no
+      // third-party requests" is an order to whoever is writing the page.
+      // Same words, opposite addressee, and only the position separates them.
+      /^do not (?:state|describe|claim)/i,
+      /if you (?:use|do not use) analytics/i,
+      /insert actual/i,
+    ];
+
+    /*
+     * Collected rather than asserted line by line, so a failure names every
+     * offender at once. A per-line `expect` stops at the first, which on 1,500
+     * lines of transcribed legal text means finding them one run at a time.
+     */
+    const addressed: string[] = [];
+    for (const page of STATIC_PAGES) {
+      for (const section of page.sections) {
+        const lines = [
+          ...section.body,
+          ...(section.bullets ?? []),
+          ...(section.tail ?? []),
+          ...(section.tailBullets ?? []),
+          ...(section.rows ?? []).map(([, value]) => value),
+        ];
+        for (const line of lines) {
+          if (forbidden.some((pattern) => pattern.test(line))) {
+            addressed.push(`${page.id}: ${line}`);
+          }
+        }
+      }
+    }
+
+    expect(addressed).toEqual([]);
   });
 
   it('says on the Terms page that two clauses are unreviewed', () => {
@@ -200,29 +265,6 @@ describe('the static pages', () => {
    * content — the address is configuration — so those lines are skipped rather
    * than matched.
    */
-  it.each([
-    ['rules', rulesDraft],
-    ['contact', contactDraft],
-    ['safety', safetyDraft],
-  ])('transcribes the %s draft rather than paraphrasing it', (id, draft) => {
-    const source = draft.replaceAll('**', '');
-    const page = pageById(id as 'rules' | 'contact' | 'safety');
-
-    const missing = page.sections
-      .flatMap((section) => [
-        ...section.body,
-        ...(section.bullets ?? []),
-        ...(section.tail ?? []),
-        ...(section.tailBullets ?? []),
-        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
-      ])
-      // The sentences that carry the address are reworded to drop it, so they
-      // cannot match the draft verbatim. Everything else must.
-      .filter((sentence) => !/contact us|email us with enough/i.test(sentence))
-      .filter((sentence) => !source.includes(sentence));
-
-    expect(missing).toEqual([]);
-  });
 
   /*
    * Terms and Privacy, held to the draft too.
@@ -232,38 +274,6 @@ describe('the static pages', () => {
    * skipped. Every other sentence must be exactly what the draft says, which is
    * the whole point of transcribing 1,500 lines by parser rather than by hand.
    */
-  it.each([
-    ['terms', termsDraft],
-    ['privacy', privacyDraft],
-  ])('transcribes the %s draft rather than paraphrasing it', (id, draft) => {
-    const source = draft.replaceAll('**', '');
-    const page = pageById(id as 'terms' | 'privacy');
-
-    const missing = page.sections
-      .flatMap((section) => [
-        ...section.body,
-        ...(section.bullets ?? []),
-        ...(section.tail ?? []),
-        ...(section.tailBullets ?? []),
-        ...(section.rows ?? []).map(([label, value]) => `${label}	${value}`),
-      ])
-      // A rendered gap, or the address filled in from configuration.
-      .filter((line) => !line.includes('[') && !line.includes('@'))
-      /*
-       * The retention periods are the one place a draft placeholder was
-       * *resolved* rather than left open: the drafts ask for confirmation
-       * ("[30 DAYS — CONFIRM]", "[FACT REQUIRED: … retention period]") and the
-       * code already holds the answer. Those lines therefore cannot match the
-       * draft, and the numbers themselves are asserted separately against
-       * `CONVERSATION_RETENTION_DAYS` / `REPORTED_RETENTION_DAYS` below.
-       */
-      .filter(
-        (line) => !line.includes('30 days') && !line.includes('90 days'),
-      )
-      .filter((line) => !source.includes(line));
-
-    expect(missing).toEqual([]);
-  });
 
   it('never ships a placeholder contact address', () => {
     // `.invalid` is reserved precisely so it can never resolve. It is correct
@@ -273,16 +283,6 @@ describe('the static pages', () => {
     expect(everything).not.toContain('[CONTACT EMAIL]');
   });
 
-  it('transcribes the How it works draft rather than paraphrasing it', () => {
-    // The draft bolds the three control names; the page does not.
-    const draft = howItWorksDraft.replaceAll('**', '');
-
-    const missing = HOW_IT_WORKS.sections
-      .flatMap((section) => section.body)
-      .filter((sentence) => !draft.includes(sentence));
-
-    expect(missing).toEqual([]);
-  });
 
   it('throws on an unknown page rather than rendering a blank sheet', () => {
     // @ts-expect-error deliberately invalid, to prove the failure is loud

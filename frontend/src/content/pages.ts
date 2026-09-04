@@ -226,7 +226,7 @@ const ABOUT: StaticPage = {
  */
 
 /*
- * Safety, transcribed from `docs/rewrite-wording/safety.md`.
+ * Safety.
  *
  * The draft is the source; this file is the stale one whenever they disagree,
  * and `pages.test.ts` holds it to that.
@@ -330,7 +330,7 @@ const SAFETY: StaticPage = {
 };
 
 /*
- * The Rules, transcribed from `docs/rewrite-wording/rules.md`.
+ * The Rules.
  *
  * This page used to be six paraphrased sections. The draft has fourteen, and
  * `RulesPage.dc.html` lays out all fourteen. The short version was dropping the

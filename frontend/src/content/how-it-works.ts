@@ -4,7 +4,7 @@
  * ---------------------------------------------------------------------------
  * THE COPY IS THE OPERATOR'S
  * ---------------------------------------------------------------------------
- * Written in `docs/rewrite-wording/how_it_works.md` and transcribed here rather
+ * Held here as data rather
  * than paraphrased. If the two ever disagree, the draft is the source and this
  * file is the stale one.
  *
@@ -18,7 +18,7 @@
  * expanded version reads like terms of service.
  *
  * The header above is not decoration: the draft is the source, so a mismatch
- * means this file is stale. Copy edits belong in `docs/rewrite-wording/`.
+ * means this file is stale. Copy edits belong here.
  *
  * ---------------------------------------------------------------------------
  * COUNTRY
