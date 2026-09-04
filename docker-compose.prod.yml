@@ -137,8 +137,31 @@ services:
       REDIS_PASSWORD: "${REDIS_PASSWORD-}"
       REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
       DATABASE_URL: "${DATABASE_URL:?postgres connection string, from secret management}"
-      DATABASE_SSL: "true"
-      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
+      # ---------------------------------------------------------------
+      # FALSE BECAUSE THE DATABASE IS A CONTAINER ON THIS HOST
+      # ---------------------------------------------------------------
+      # This overlay was written assuming a managed database and then also
+      # started its own: `postgres:16-alpine` below, on the compose bridge,
+      # with `ports: !reset []` so nothing outside the host can reach it.
+      # The stock image ships with TLS off and no certificate, so requiring
+      # it meant the migration container could not connect at all --
+      # "The server does not support SSL connections", exit 1, no schema.
+      #
+      # There is nothing for TLS to protect here. The bytes go between two
+      # processes on one machine over a private bridge and never touch a
+      # network. Turning it on would need a self-signed certificate plus a
+      # code change, because `pool.ts` sets `rejectUnauthorized: true` and
+      # would refuse it -- and relaxing *that* is encryption without
+      # authentication, which is worse than the honest plaintext.
+      #
+      # SET BOTH BACK TO TRUE THE DAY THE DATABASE MOVES OFF THIS HOST.
+      # `DATABASE_REQUIRE_SSL_IN_PRODUCTION` exists to stop a production
+      # deployment silently talking plaintext to a database it does not
+      # control. That is still exactly what it does; this deployment simply
+      # is not that case yet. A managed database is also a sub-processor
+      # question before it is a connection-string one -- OPERATIONS.md:2220.
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       # Salts every IP hash. Changing it later invalidates every existing
       # IP-dimension block, so pick it once and keep it secret.
       IP_HASH_SALT: "${IP_HASH_SALT:?a long random value, kept secret}"
@@ -166,8 +189,31 @@ services:
       # may CREATE, and the application's may not (§8.1). Point it at the same
       # database with a migration user.
       DATABASE_URL: "${MIGRATION_DATABASE_URL:?a migration credential, not the application's}"
-      DATABASE_SSL: "true"
-      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "true"
+      # ---------------------------------------------------------------
+      # FALSE BECAUSE THE DATABASE IS A CONTAINER ON THIS HOST
+      # ---------------------------------------------------------------
+      # This overlay was written assuming a managed database and then also
+      # started its own: `postgres:16-alpine` below, on the compose bridge,
+      # with `ports: !reset []` so nothing outside the host can reach it.
+      # The stock image ships with TLS off and no certificate, so requiring
+      # it meant the migration container could not connect at all --
+      # "The server does not support SSL connections", exit 1, no schema.
+      #
+      # There is nothing for TLS to protect here. The bytes go between two
+      # processes on one machine over a private bridge and never touch a
+      # network. Turning it on would need a self-signed certificate plus a
+      # code change, because `pool.ts` sets `rejectUnauthorized: true` and
+      # would refuse it -- and relaxing *that* is encryption without
+      # authentication, which is worse than the honest plaintext.
+      #
+      # SET BOTH BACK TO TRUE THE DAY THE DATABASE MOVES OFF THIS HOST.
+      # `DATABASE_REQUIRE_SSL_IN_PRODUCTION` exists to stop a production
+      # deployment silently talking plaintext to a database it does not
+      # control. That is still exactly what it does; this deployment simply
+      # is not that case yet. A managed database is also a sub-processor
+      # question before it is a connection-string one -- OPERATIONS.md:2220.
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
       # How this process reaches Redis (D13). One of two shapes, never both --
       # the backend refuses to start if REDIS_URL and REDIS_SENTINELS are set
       # together, because the file would then claim one topology while the
