@@ -184,7 +184,24 @@ jobs:
             # which is not the same as "the gate failed" — the severity counts
             # below decide that, and losing the report to a shell exit would
             # hide the thing this step is for.
-            npm --prefix "$pkg" audit --omit=dev --json > "/tmp/audit-$pkg.json" || true
+            # Three attempts with a widening pause. The bulk advisory endpoint
+            # timed out for five minutes on two consecutive runs while the
+            # other package's audit succeeded in the same job, so this is
+            # intermittent rather than broken — and an intermittent failure is
+            # exactly what a retry is for. npm's own fetch retries are raised
+            # too, because its default gives up sooner than the endpoint
+            # recovers.
+            for attempt in 1 2 3; do
+              npm --prefix "$pkg" audit --omit=dev --json                 --fetch-retries=3                 --fetch-retry-maxtimeout=60000                 --fetch-timeout=120000                 > "/tmp/audit-$pkg.json" 2>/tmp/audit-err.txt && break
+              # A non-zero exit here means either "advisories exist" or "the
+              # call failed", and only the report tells them apart — so decide
+              # on the file rather than on the exit code.
+              if node -e 'process.exit(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).metadata?.vulnerabilities ? 0 : 1)' "/tmp/audit-$pkg.json" 2>/dev/null; then
+                break
+              fi
+              echo "  attempt $attempt could not reach the advisory endpoint; retrying"
+              sleep $((attempt * 15))
+            done
             node -e '
               const fs = require("node:fs");
               const pkg = process.argv[1];
@@ -201,16 +218,25 @@ jobs:
               */
               if (totals === undefined) {
                 /*
-                  A warning rather than a failure, and the distinction is the
-                  whole point. This is not "no vulnerabilities" — nothing was
-                  checked — and it says so unmistakably. But blocking every
-                  merge on npmjs.com being reachable is a gate that fires on
-                  something nobody can act on today, which is how a gate ends up
-                  being disabled. The build continues; the log says the audit did
-                  not run.
+                  Fails, after the retries above have been spent.
+
+                  This was a warning for one day and the day was instructive:
+                  the frontend audit skipped on two consecutive runs and both
+                  builds went green, which is a control that has stopped
+                  existing while still appearing in the log. That is the shape
+                  this repository keeps finding — F-045's inert settings, the
+                  oracle nobody invoked, the metric with no write site.
+
+                  The objection to failing was that npmjs.com's availability
+                  should not block a merge. That objection is answered by
+                  `.github/dependabot.yml` rather than by tolerance: dependency
+                  monitoring now runs server-side on a schedule and does not
+                  care about CI's network, so a red build here means "go and
+                  look", not "you are flying blind until this clears".
                 */
-                console.log(`::warning::${pkg}: npm audit could not run, so nothing was checked`);
+                console.log(`::error::${pkg}: npm audit could not run after three attempts, so nothing was checked`);
                 console.log(JSON.stringify(report.error ?? report).slice(0, 400));
+                process.exitCode = 1;
               } else {
                 console.log(`${pkg}:`, JSON.stringify(totals));
                 for (const [name, via] of Object.entries(report.vulnerabilities ?? {})) {

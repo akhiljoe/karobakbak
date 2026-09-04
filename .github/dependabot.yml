@@ -1,0 +1,81 @@
+# Continuous dependency monitoring, independent of CI.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS ALONGSIDE THE CI AUDIT
+# ---------------------------------------------------------------------------
+# `npm audit` in CI answers "were there known advisories against this tree at
+# the moment somebody pushed". That is a worse question than it sounds, twice
+# over: it depends on a live call to registry.npmjs.org at build time — which
+# timed out for five minutes on two consecutive runs on 2026-09-04, checking
+# nothing and going green — and it never re-evaluates. An advisory published
+# the day after a push is invisible until the next push, which on a
+# pre-launch repository can be weeks.
+#
+# Dependabot evaluates the committed lockfiles server-side, on a schedule and
+# whenever a new advisory lands, and it does not care whether CI's network is
+# healthy. It is the mechanism that keeps working when the other one cannot.
+#
+# The two are deliberately different in kind. The audit blocks a push that
+# *introduces* something known-bad; Dependabot notices what became bad after
+# the fact and opens the pull request that fixes it. Neither replaces the
+# other, and now neither can be silently absent — the audit fails loudly when
+# it cannot run, and this runs whether or not CI does.
+version: 2
+
+updates:
+  # Security-relevant updates only, for the trees that actually ship. The
+  # weekly cadence is about pull-request noise rather than about risk:
+  # `open-pull-requests-limit` and the schedule shape how much lands at once,
+  # while GitHub's security alerts arrive as soon as an advisory does,
+  # regardless of what is written here.
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # Grouped so a week of patch bumps is one review rather than five. A
+    # security fix still arrives on its own, because security updates are not
+    # subject to this grouping.
+    groups:
+      backend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+
+  # The load harness. Its dependencies never ship and cannot be reached by a
+  # request, so this is monitored rather than gated — the same reasoning the
+  # CI audit applies with `--omit=dev`.
+  - package-ecosystem: npm
+    directory: /load-test/swarm
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"
+
+  # The workflow's own actions pin to major versions and drift the same way a
+  # dependency does. `actions/checkout@v4` becoming abandoned is the kind of
+  # thing nobody notices until it stops working.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"
