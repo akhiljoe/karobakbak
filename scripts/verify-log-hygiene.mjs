@@ -47,6 +47,15 @@ const LOKI = (flag('--url', process.env.LOKI_URL ?? 'http://localhost:3100')).re
 const SINCE = flag('--since', '1h');
 const LIMIT = Number(flag('--limit', '5000'));
 
+/*
+ * The fewest lines this run may inspect and still be worth reporting on. Not a
+ * statistical threshold — it is the difference between "searched and found
+ * nothing" and "had nothing to search", which are opposite results that used to
+ * print identically. Twenty is low on purpose: any stack that served a handful
+ * of requests clears it, and a stack whose shipper is down does not.
+ */
+const MIN_LINES = Number(flag('--min-lines', '20'));
+
 const SINCE_SECONDS = (() => {
   const m = /^(\d+)([smhd])$/.exec(SINCE);
   if (!m) throw new Error(`--since must look like 30m, 2h, 1d; got ${JSON.stringify(SINCE)}`);
@@ -195,6 +204,42 @@ for (const s of streams) {
 }
 
 console.log(`log hygiene: ${lineCount} line(s) across ${streams.length} stream(s), last ${SINCE}`);
+
+/*
+ * ---------------------------------------------------------------------------
+ * COVERAGE BEFORE VERDICT
+ * ---------------------------------------------------------------------------
+ * Finding nothing in nothing is not evidence, and this script used to print
+ * PASS for it — a stack whose shipper was down, a `--url` pointing at the wrong
+ * port, or a `--since` shorter than the gap since the last request all produce
+ * zero lines and a green exit. The launch checklist cites this run as proof
+ * that logs are clean, so a hollow pass is the failure that matters here.
+ *
+ * It is the swarm's rule in a second place: read POPULATION before VERDICT. The
+ * per-service counts print either way, because "which services were even in
+ * this scan" is the question a zero total makes obvious and a small non-zero
+ * total hides — one nginx line and no backend stream reads as coverage and is
+ * not, since the backend is where message content could leak.
+ */
+const perService = new Map();
+for (const s of streams) {
+  const key = s.stream.service ?? s.stream.container ?? s.stream.job ?? '(unlabelled)';
+  perService.set(key, (perService.get(key) ?? 0) + s.values.length);
+}
+for (const [service, count] of [...perService.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`  ${String(service).padEnd(20)} ${count} line(s)`);
+}
+
+if (lineCount < MIN_LINES) {
+  console.error(
+    `\nNO VERDICT — ${lineCount} line(s) is below the ${MIN_LINES} this run needs to mean ` +
+      'anything.\nNothing was found because there was almost nothing to search. Check that the ' +
+      'shipper\nis running, that --url names the right Loki, and that --since covers a period ' +
+      'the\nservice was actually used in. Lower the bar deliberately with --min-lines if you ' +
+      'mean it.',
+  );
+  process.exit(1);
+}
 
 if (findings.length === 0) {
   console.log('PASS — no address, credential or denied field found in shipped logs.');
