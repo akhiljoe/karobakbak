@@ -114,8 +114,13 @@ const compose = read('docker-compose.yml');
  * Services built from this repository's source. A third-party image
  * (Grafana, Postgres, the exporters) reads its own names and is not in scope:
  * it never sees `config.ts` and has no default to silently fall back to.
+ *
+ * `migrate` was missing from this list for as long as it was missing an
+ * `env_file:`, which is why the guard passed over the defect it exists to
+ * catch. A short list that omits a service is indistinguishable from a
+ * service that is compliant. Anything calling `loadConfig` belongs here.
  */
-const OWN_SERVICES = ['backend', 'personas'];
+const OWN_SERVICES = ['backend', 'personas', 'migrate'];
 
 for (const service of OWN_SERVICES) {
   const start = compose.indexOf(`\n  ${service}:\n`);

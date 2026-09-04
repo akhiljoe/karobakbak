@@ -466,6 +466,27 @@ services:
   migrate:
     build:
       context: ./backend
+    # ---------------------------------------------------------------------
+    # THIS SERVICE RUNS `loadConfig` TOO, SO IT NEEDS THE ENV FILE TOO
+    # ---------------------------------------------------------------------
+    # Phase 38 gave `backend` and `personas` an env file and stopped there.
+    # `migrate` runs the same `loadConfig` over the same `assertCoherent`, so
+    # without this line it saw only the names enumerated below and the
+    # compiled-in default for everything else. In production that is an
+    # immediate refusal on IP_HASH_SALT -- the first coherence check it
+    # reaches -- and the container exits 1 before a single migration runs.
+    #
+    # The symptom is not a configuration error. It is `role "karobakbak_app"
+    # does not exist` several steps later, when a deployment tries to give
+    # that role a password: 002_roles.sql is what creates it, and it never
+    # ran. F-045 again, in the one service the fix for F-045 missed.
+    #
+    # The `environment:` block below still wins over anything in the file,
+    # which is what keeps the migration credential distinct from the
+    # application's.
+    env_file:
+      - path: ${APP_ENV_FILE:-.env}
+        required: false
     command: ["node", "-e", "require('./dist/storage/migrate');const{loadConfig}=require('./dist/config');const{createLoggerFromConfig}=require('./dist/logger');const{createDatabase}=require('./dist/storage/pool');const{migrate}=require('./dist/storage/migrate');const c=loadConfig(process.env);const l=createLoggerFromConfig(c);const db=createDatabase(c,l);migrate(db,l).then(r=>{l.info('migrations complete',{applied:r.applied.length,skipped:r.skipped.length});return db.close();}).then(()=>process.exit(0)).catch(e=>{process.stderr.write(String(e&&e.message)+'\\n');process.exit(1);});"]
     environment:
       NODE_ENV: development
