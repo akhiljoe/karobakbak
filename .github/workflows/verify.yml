@@ -45,6 +45,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          # Without this every job downloaded the whole dependency tree from the
+          # registry on every run, so the duration was whatever the network felt
+          # like. Measured across three runs twenty-five minutes apart, on an
+          # unchanged tree: `npm ci` twice took 7s, then 630s. The tests
+          # themselves did not move — 25s for typecheck and 1,110 unit tests,
+          # 42s for the integration suite against real Redis and PostgreSQL.
+          # Nearly all of a slow run was npm talking to the registry.
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
       - name: Install
         run: npm run install:all
@@ -104,6 +115,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          # Without this every job downloaded the whole dependency tree from the
+          # registry on every run, so the duration was whatever the network felt
+          # like. Measured across three runs twenty-five minutes apart, on an
+          # unchanged tree: `npm ci` twice took 7s, then 630s. The tests
+          # themselves did not move — 25s for typecheck and 1,110 unit tests,
+          # 42s for the integration suite against real Redis and PostgreSQL.
+          # Nearly all of a slow run was npm talking to the registry.
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
       # `--omit=dev` on purpose. A vulnerability in a test runner is worth
       # knowing about and is not worth failing a build over: it does not ship,
@@ -129,25 +151,64 @@ jobs:
       # The rule this restores: a CI step may read the working tree or write to
       # it, and a step that does both while a later step audits the difference
       # will eventually accuse the wrong command.
+      # One audit per package, printed in full and then gated — rather than the
+      # two passes this used to make. The second pass existed to show everything
+      # below the gate, which is worth having, and it re-fetched the whole
+      # advisory set to do it: 8m38s in the slowest run, to produce output
+      # nothing gates on. `--json` once, read twice, costs a single request.
+      #
+      # `--omit=dev` on purpose. A vulnerability in a test runner is worth
+      # knowing about and is not worth failing a build over: it does not ship,
+      # it cannot be reached by a request, and treating it the same as something
+      # in the process holding every WebSocket file descriptor is how an audit
+      # gate gets disabled within a month.
+      #
+      # `high` rather than `moderate`, for the same reason. A gate that fires on
+      # things nobody is going to act on today stops being read.
       - name: Audit production dependencies
         run: |
           set -o pipefail
+          failed=0
           for pkg in backend frontend; do
             echo "::group::npm audit ($pkg)"
-            npm --prefix "$pkg" audit --omit=dev --audit-level=high
-            echo "::endgroup::"
-          done
+            # `|| true` because a non-zero exit here means "advisories exist",
+            # which is not the same as "the gate failed" — the severity counts
+            # below decide that, and losing the report to a shell exit would
+            # hide the thing this step is for.
+            npm --prefix "$pkg" audit --omit=dev --json > "/tmp/audit-$pkg.json" || true
+            node -e '
+              const fs = require("node:fs");
+              const pkg = process.argv[1];
+              const report = JSON.parse(fs.readFileSync(`/tmp/audit-${pkg}.json`, "utf8"));
+              const totals = report.metadata?.vulnerabilities;
 
-      # Informational, and deliberately not a gate. Everything below `high`
-      # belongs in a weekly read rather than in the path of a commit.
-      - name: Report everything below the gate
-        if: always()
-        run: |
-          for pkg in backend frontend; do
-            echo "::group::full audit ($pkg)"
-            npm --prefix "$pkg" audit --omit=dev || true
+              /*
+                An audit that could not run must not read as an audit that found
+                nothing. When the registry call fails, npm writes an *error*
+                object here — `statusCode`, `error`, no `metadata` — and an
+                earlier version of this script defaulted that to `{}` and passed.
+                That is the failure this repository keeps finding in other
+                places: a check that reports success because it never ran.
+              */
+              if (totals === undefined) {
+                console.log(`::error::${pkg}: npm audit did not produce a report`);
+                console.log(JSON.stringify(report.error ?? report).slice(0, 400));
+                process.exitCode = 1;
+              } else {
+                console.log(`${pkg}:`, JSON.stringify(totals));
+                for (const [name, via] of Object.entries(report.vulnerabilities ?? {})) {
+                  console.log(`  ${String(via.severity).padEnd(8)} ${name}`);
+                }
+                const gated = (totals.high ?? 0) + (totals.critical ?? 0);
+                if (gated > 0) {
+                  console.log(`::error::${pkg} has ${gated} high or critical advisory(ies)`);
+                  process.exitCode = 1;
+                }
+              }
+            ' "$pkg" || failed=1
             echo "::endgroup::"
           done
+          exit "$failed"
 
       # The `.env` files are gitignored and `.env.example` is not, which is
       # exactly the arrangement where a real value gets pasted into the wrong
@@ -222,6 +283,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          # Without this every job downloaded the whole dependency tree from the
+          # registry on every run, so the duration was whatever the network felt
+          # like. Measured across three runs twenty-five minutes apart, on an
+          # unchanged tree: `npm ci` twice took 7s, then 630s. The tests
+          # themselves did not move — 25s for typecheck and 1,110 unit tests,
+          # 42s for the integration suite against real Redis and PostgreSQL.
+          # Nearly all of a slow run was npm talking to the registry.
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
       - name: Install
         run: npm --prefix backend install
