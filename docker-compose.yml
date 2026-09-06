@@ -463,6 +463,83 @@ services:
     ulimits:
       core: 0
 
+  # ===========================================================================
+  # THE MODERATION CONSOLE
+  # ===========================================================================
+  # Behind a profile, so `up` does not start it and a deployment that is not
+  # moderating anything has no console, no open port and no operator
+  # credentials in memory anywhere.
+  #
+  #   docker compose --profile admin up -d admin
+  #
+  # It reuses the BACKEND IMAGE rather than building its own. `tsconfig.build`
+  # compiles all of `src`, so `dist/admin/main.js` and the console's three
+  # static files are already inside that image - and the runtime stage ran
+  # `npm ci --omit=dev`, so no toolchain and no test runner comes with them.
+  #
+  # This is why the console must never be started with `npm run console` on the
+  # host: that entry point is `tsx`, a devDependency the box does not have and
+  # should not get. Installing it would put a compiler and the whole dev tree on
+  # the one machine holding the database, the hash salt and the spool - and it
+  # would falsify the reasoning behind the CI audit gate, which omits dev
+  # dependencies precisely because they never reach production.
+  admin:
+    build:
+      context: ./backend
+    command: ["node", "dist/admin/main.js"]
+    profiles: ["admin"]
+    env_file:
+      - path: ${APP_ENV_FILE:-.env}
+        required: false
+    environment:
+      NODE_ENV: "${NODE_ENV:-development}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      ADMIN_CONSOLE_ENABLED: "true"
+      # 0.0.0.0 INSIDE the container, 127.0.0.1 on the host.
+      #
+      # The compiled-in default is 127.0.0.1, which is right for a process on a
+      # host and wrong for one in a container: it binds the container's own
+      # loopback, and the published port then connects to nothing. The loopback
+      # that matters is the one in `ports` below.
+      ADMIN_CONSOLE_HOST: "0.0.0.0"
+      ADMIN_CONSOLE_PORT: "8088"
+      # A SEPARATE ROLE, AND THE WHOLE REASON THIS IS A SEPARATE PROCESS.
+      #
+      # `karobakbak_console` can read a transcript and cannot delete a
+      # conversation; `karobakbak_app` is denied `admin_accounts` outright. Both
+      # are asserted against real PostgreSQL in
+      # `tests/integration/storage.test.ts`. Pointing this at the app role would
+      # collapse that separation while appearing to work perfectly.
+      #
+      # Like `karobakbak_app`, the role ships `nologin` with no password -
+      # credentials live in secret management, never in a migration in git - so
+      # a deployment grants it one out of band. See OPERATIONS section 7e.
+      DATABASE_URL: "${CONSOLE_DATABASE_URL:-postgres://karobakbak_console:karobakbak@postgres:5432/karobakbak}"
+      REDIS_URL: "redis://redis:6379"
+      # `loadConfig` is one function over the whole environment, and
+      # `assertCoherent` checks all of it, so the console needs the settings it
+      # never reads as well as the ones it does.
+      IP_HASH_SALT: "${IP_HASH_SALT:-development-salt-not-for-production}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:${FRONTEND_PORT:-8081}}"
+      ADMIN_ALLOWED_ORIGINS: "${ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:8088}"
+    # Bound to the host loopback and nowhere else. This origin can read every
+    # retained conversation, so it is reached over an SSH tunnel:
+    #   ssh -N -L 8088:127.0.0.1:8088 deploy@<DROPLET_IP>
+    # Never proxied by nginx, never given a public hostname, never a Caddy site.
+    ports:
+      - "127.0.0.1:8088:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # A core dump is a file full of plaintext message bodies, and this process
+    # reads more of them than any other (section 2.1, D28).
+    ulimits:
+      core: 0
+
+
   migrate:
     build:
       context: ./backend
