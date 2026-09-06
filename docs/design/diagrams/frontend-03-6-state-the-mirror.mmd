@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> connecting
+    connecting --> idle: connected frame
+    idle --> searching: queue_status SEARCHING
+    searching --> idle: queue_status IDLE
+    searching --> chatting: matched
+    chatting --> ended: partner_skipped · partner_disconnected · you left
+    ended --> searching: auto-search, or Start
+    ended --> idle: the user stops
+    connecting --> disconnected: socket closed
+    chatting --> disconnected: socket closed
+    disconnected --> connecting: reconnect attempt

@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant NX as nginx
+    participant U as handleUpgrade
+    participant L as lifecycle.open
+    participant R as Redis
+
+    B->>NX: GET /ws  Upgrade: websocket
+    NX->>NX: geo check → 451 if EEA/UK
+    NX->>U: proxied
+    U->>U: path check → 404
+    U->>U: draining? → 503 shutting_down
+    U->>U: accountId := auth.accountForRequest(cookie)   [null if signed out]
+    U->>U: origin allowlist → 403
+    U->>U: presented := resume subprotocol (presence only)
+    U->>U: admission(registry.size, max, reserve)
+    Note over U: full → 503 · reserved && no token → 503<br/>Both return the IDENTICAL 503 (naming the reserve<br/>would tell a client what to claim to be)
+    U->>U: address = clientAddress(req, TRUST_PROXY_HOPS)<br/>country = CF-IPCountry<br/>ipHash, clientHash = salted sha256
+    U->>R: checkBan(ipHash, clientHash)
+    Note over U: Redis error here → 503, NOT admit
+    alt banned
+        U-->>B: 403 forbidden (no detail about which dimension)
+    end
+    U->>L: open(ipHash, clientHash, beforeCreate)
+    L->>R: connRateLimit(ipHash)
+    L->>L: sessionId = newSessionId()  [crypto.randomBytes, base64url]
+    L->>U: beforeCreate → subscriber.subscribe(sid)  ← BEFORE the row exists
+    L->>R: createSession.lua  (state=IDLE, TTL 120s, resumeHash indexed)
+    L->>R: setNickname (drawn ONCE, session-scoped, D50)
+    L->>R: connAcquire(ipHash, sid)
+    alt slot refused
+        L->>R: closeSession  ← rollback, no matchable ghost
+        L-->>U: too_many_connections → 429
+    end
+    U->>B: 101 + Set-Cookie kbb_ct (if a client token was issued)
+    U->>U: attach(ws, ...)  → registry.add
+    U->>R: setAccount + stampEntitlement (fire-and-forget, if signed in)
+    U-->>B: connected {sessionId, limits, features, resumeToken, resumeGraceSeconds}
+    U-->>B: presence {online, conversations, approximate: true}

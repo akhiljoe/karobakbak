@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant A as Peer A
+    participant WS as backend (SIGNALLING PLANE)
+    participant B as Peer B
+    participant T as TURN (MEDIA PLANE)
+
+    Note over WS: NEW protocol events: rtc_offer, rtc_answer,<br/>rtc_ice, rtc_end — routed by the EXISTING<br/>resolvePartner path, no new matchmaking
+    A->>WS: rtc_offer {sdp}
+    WS->>B: rtc_offer (via dispatcher — local or Pub/Sub)
+    B->>WS: rtc_answer {sdp}
+    WS->>A: rtc_answer
+    A->>WS: rtc_ice {candidate}
+    WS->>B: rtc_ice
+    Note over A,B: SIGNALLING ENDS HERE. Backend sees no media.
+    A-->>B: P2P (SRTP/DTLS) when a direct path exists
+    A-->>T: relayed when it does not (~15-20% of pairs, INDUSTRY ESTIMATE)
+    T-->>B: relayed

@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant B as Browser
+    participant CF as Cloudflare
+    participant CY as Caddy :443
+    participant NX as nginx :80
+    participant BE as backend :8080
+
+    B->>CF: TLS
+    CF->>CY: adds CF-IPCountry, X-Forwarded-For
+    CY->>NX: reverse_proxy frontend:80
+    Note over NX: map $http_cf_ipcountry $geo_blocked<br/>EEA + IS/LI/NO + GB → 451
+    NX->>NX: if ($geo_blocked) return 451
+    NX->>BE: proxy_pass http://backend:8080<br/>Upgrade + Connection: upgrade<br/>read/send timeout 3600s<br/>proxy_buffering off
+    BE-->>B: 101 Switching Protocols

@@ -1,0 +1,35 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as server.ts
+    participant L as lifecycle.ts
+    participant R as Redis (Lua)
+
+    C->>S: join_queue {profile, preferences, intent}
+    S->>S: rate limit (join_queue: 12/min)
+    S->>S: moderate declared name — ANY flag refuses (D20/D35)
+    S->>S: country := connection.country (never the client's)
+    S->>L: joinQueue(sid, profile, prefs, intent)
+    L->>R: setProfile — BEFORE queueing
+    L->>R: preferenceAllowance — cooldown + hourly bucket
+    alt granted
+        L->>R: setPreferences
+    else refused
+        Note over L: degrade silently. NO frame. metric only.
+    end
+    L->>R: setIntent
+    L->>R: joinQueue.lua — SADD queue, state=SEARCHING
+    Note over R: caller is IN the SET before it scans (D4)
+    loop up to MATCH_RETRY_ATTEMPTS = 3
+        L->>R: tryMatch.lua
+    end
+    alt matched
+        L->>R: readProfiles, readNicknames (BESIDE tryMatch, never inside)
+        L->>L: retention.enqueue(conversation_started)  [P0]
+        L->>R: saveMatchIdentities
+        L->>R: mint presence tokens
+        L-->>C: matched (this side, built in server.ts)
+        L->>R: PUBLISH matched (other side, built in lifecycle.ts)
+    else waiting
+        S-->>C: queue_status SEARCHING
+    end

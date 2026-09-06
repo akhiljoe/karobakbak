@@ -1,0 +1,45 @@
+graph TB
+    subgraph clients["Clients"]
+        BR["Browser SPA<br/>React 18 + Vite<br/>frontend/src"]
+    end
+
+    subgraph edge["Edge — CONFIRMED"]
+        CF["Cloudflare<br/>(INFERRED from CF-IPCountry)"]
+        CADDY["Caddy 2.8<br/>TLS / ACME<br/>ops/caddy/Caddyfile"]
+        NGINX["nginx<br/>static + geo-block + /ws proxy<br/>frontend/nginx.conf"]
+    end
+
+    subgraph app["Application processes"]
+        BE["chat backend<br/>node http + ws<br/>backend/src/index.ts"]
+        PER["personas<br/>backend/src/personas/main.ts<br/>OFF by default"]
+        ADM["moderation console<br/>backend/src/admin/main.ts<br/>separate port + DB role"]
+    end
+
+    subgraph data["State"]
+        RD[("Redis 7<br/>AUTHORITATIVE matchmaking<br/>persistence OFF")]
+        PG[("PostgreSQL<br/>retention, accounts,<br/>audit, enforcement")]
+        SPOOL[["Outage spool<br/>local disk"]]
+    end
+
+    subgraph obs["Observability"]
+        PROM["Prometheus"]
+        LOKI["Loki + Alloy"]
+        TEMPO["Tempo (OTLP)"]
+        GRAF["Grafana"]
+        AM["Alertmanager"]
+    end
+
+    BR -->|"HTTPS + WSS"| CF --> CADDY --> NGINX
+    NGINX -->|"/ws, /auth/, /api/*"| BE
+    BE <--> RD
+    BE -.->|"write-behind"| PG
+    BE -.->|"breaker open"| SPOOL
+    PER -->|"ordinary WebSocket client"| NGINX
+    PER --> PG
+    ADM --> PG
+    ADM --> RD
+    BE --> PROM
+    BE --> TEMPO
+    NGINX --> LOKI
+    PROM --> GRAF
+    PROM --> AM

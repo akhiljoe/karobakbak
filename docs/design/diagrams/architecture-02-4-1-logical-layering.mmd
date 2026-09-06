@@ -1,0 +1,30 @@
+graph LR
+    subgraph L1["Transport"]
+        A1["ws socket<br/>connection.ts"]
+        A2["frame parse<br/>validate.ts"]
+    end
+    subgraph L2["Orchestration"]
+        B1["lifecycle.ts"]
+        B2["messages.ts"]
+    end
+    subgraph L3["State transitions"]
+        C1["store.ts"]
+        C2["scripts.ts — Lua"]
+    end
+    subgraph L4["State"]
+        D1[("Redis")]
+    end
+    subgraph L5["Side effects"]
+        E1["retention sink"]
+        E2["dispatcher"]
+        E3["metrics"]
+    end
+    A1-->A2-->B1
+    A2-->B2
+    B1-->C1-->C2-->D1
+    B2-->C1
+    B1-->E1
+    B2-->E1
+    B1-->E2
+    B2-->E2
+    B1-->E3

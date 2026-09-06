@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> Attached
+    Attached --> Detached: socket close, holdSeat = !draining
+    note right of Detached
+        closeSession.lua:
+        SREM sessions, SREM conn:{ip}
+        HSET detachedAt, EXPIRE = RESUME_GRACE_SECONDS (20s)
+        instanceId is DELIBERATELY LEFT IN PLACE
+        (an empty one reads as PARTNER_GONE → ends the conversation)
+        user_match is DELIBERATELY LEFT IN PLACE
+        (endMatch clears both sides; clearing ours strands the partner)
+    end note
+    Detached --> Attached: resume token redeemed<br/>→ restoreMatch + announceReturn<br/>→ partner_returned
+    Detached --> Reaped: 20s lapses → row expires<br/>→ janitorMatches ends the match,<br/>returns the survivor to notify
+    Attached --> Torn: draining → holdSeat=false<br/>→ endMatch → partner_disconnected
+    Reaped --> [*]
+    Torn --> [*]

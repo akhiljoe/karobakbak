@@ -1,0 +1,29 @@
+graph TB
+    subgraph edge["Edge — TARGET"]
+        CF["Cloudflare"]
+        LB["L4/L7 LB<br/>TARGET: replaces single Caddy"]
+        NX1["nginx a"]
+        NX2["nginx b"]
+    end
+    subgraph app["App tier — TARGET: N replicas"]
+        BE1["backend 1"]
+        BE2["backend 2"]
+        BE3["backend N"]
+    end
+    subgraph state["State — TARGET"]
+        RP[("Redis primary")]
+        RR[("Redis replica<br/>SEPARATE HOST")]
+        S1["sentinel 1"]:::t
+        S2["sentinel 2"]:::t
+        S3["sentinel 3"]:::t
+        PGP[("Postgres primary")]
+        PGR[("Postgres replica<br/>TARGET")]
+    end
+    CF-->LB-->NX1 & NX2
+    NX1-->BE1 & BE2
+    NX2-->BE2 & BE3
+    BE1 & BE2 & BE3 <--> RP
+    RP-->RR
+    S1 & S2 & S3 -.->|monitor by STATIC ADDRESS| RP
+    BE1 & BE2 & BE3 -.-> PGP --> PGR
+    classDef t stroke-dasharray: 5 5

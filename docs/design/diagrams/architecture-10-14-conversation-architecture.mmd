@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> Created: tryMatch commits<br/>chat:match:{mid} + 2x user_match
+    Created --> Described: saveMatchIdentities<br/>(identA/identB on the hash)
+    Created --> Orphaned: match ended first<br/>→ announceMatch returns idle,<br/>NOBODY is told they matched
+    Described --> Active: both sides hold `matched`
+    Active --> Active: message / typing / react
+    Active --> Detached: one socket drops<br/>seat held, RESUME_GRACE_SECONDS=20
+    Detached --> Active: resume redeemed → partner_returned
+    Detached --> Ended: grace lapses → janitorMatches ends it
+    Active --> Ended: skip / leave_chat / block / disconnect(drain)
+    Ended --> Retained: conversation_ended enqueued ONCE by the D6 winner
+    Retained --> Deleted: retention_expires_at passes<br/>deletion worker, unless legal_hold
+    Deleted --> [*]

@@ -1,0 +1,27 @@
+sequenceDiagram
+    autonumber
+    participant A as Sender
+    participant S as server.ts
+    participant P as MessagePipeline
+    participant R as Redis
+    participant D as dispatcher
+    participant B as Recipient
+
+    A->>S: message {id, type:'text', text}
+    S->>S: parseClientFrame — size, envelope, version, closed lists
+    Note over S: a frame with no `version` is UNSUPPORTED_VERSION,<br/>not BAD_ENVELOPE (F-042, open)
+    S->>P: send(sid, clientId, contentType, text)
+    P->>R: rateLimit('message')  → 5/s burst 10
+    P->>R: resolvePartner.lua  (route + dedupe, ONE script)
+    Note over R: NOT_MATCHED | PARTNER_GONE | DEDUPE_FULL |<br/>DUPLICATE | OK{mid, partner, partnerInstance}
+    P->>P: moderate({type, text})
+    alt action == 'block'
+        P->>P: persist anyway (evidence)
+        P-->>A: error MESSAGE_WITHHELD (vague, on purpose)
+    else deliverable
+        P->>D: toSession(partner, message)
+        D->>B: local frame, or PUBLISH → subscriber → frame
+        Note over D: 'dropped' → status = 'undelivered'
+    end
+    P->>P: retention.enqueue(message + moderation_events)
+    P-->>A: message_ack {clientMsgId, messageId, route, status}

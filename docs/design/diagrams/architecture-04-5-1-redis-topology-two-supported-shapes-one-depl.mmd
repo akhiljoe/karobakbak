@@ -1,0 +1,15 @@
+graph TB
+    subgraph now["SHAPE A — DEPLOYED TODAY (REDIS_SENTINELS empty)"]
+        BE1["backend"] -->|"REDIS_URL<br/>fixed address"| R1[("redis<br/>single node")]
+    end
+
+    subgraph sent["SHAPE B — SUPPORTED AND DRILLED, NOT DEPLOYED"]
+        BE2["backend"] -->|"asks the sentinels<br/>WHERE the primary is"| S1["sentinel 1"]
+        BE2 --> S2["sentinel 2"]
+        BE2 --> S3["sentinel 3"]
+        S1 -.->|"monitor by<br/>STATIC ADDRESS"| P[("redis primary")]
+        S2 -.-> P
+        S3 -.-> P
+        P -->|"replication"| RP[("redis replica")]
+        BE2 ==>|"commands go to<br/>whichever is primary"| P
+    end

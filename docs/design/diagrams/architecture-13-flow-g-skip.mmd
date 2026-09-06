@@ -1,0 +1,26 @@
+sequenceDiagram
+    autonumber
+    participant A as Skipper
+    participant L as lifecycle.skip
+    participant R as Redis
+    participant B as Partner
+
+    A->>L: skip
+    L->>R: heartbeat(sid)  → state + matchId
+    alt no match, SEARCHING
+        L-->>A: queue_status SEARCHING
+    else no match, IDLE
+        L-->>A: queue_status IDLE
+    else matched
+        L->>R: endMatch.lua → endMatchInline
+        Note over R: DEL kMatch — only the caller whose DEL<br/>returns 1 is the winner (D6)
+        Note over R: writes chat:last_partner for BOTH sides<br/>(120s late-block window)
+        Note over R: DEL both user_match · SREM both from queue ·<br/>state=IDLE · DEL dedupe
+        alt this caller won
+            L->>L: retention.enqueue(conversation_ended, reason='skip')
+            L->>B: partner_skipped
+        else lost the race
+            Note over L: silent. The peer is already being told.
+        end
+        L->>L: joinQueue(sid)   ← re-enters immediately
+    end

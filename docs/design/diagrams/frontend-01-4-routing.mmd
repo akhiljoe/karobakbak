@@ -1,0 +1,7 @@
+graph TB
+    URL["a path"] --> R{"Root.tsx"}
+    R -->|"/"| APP["App — OWNS THE SOCKET"]
+    R -->|"/about /how-it-works /rules<br/>/contact /faq /safety"| DOC["editorial pages<br/>no socket"]
+    R -->|"/premium"| PREM["only when PAYMENTS_ENABLED"]
+    R -->|"/support"| SUP["only when configured"]
+    R -->|"anything else"| NF["NotFound — a real 404 page,<br/>not the landing screen"]

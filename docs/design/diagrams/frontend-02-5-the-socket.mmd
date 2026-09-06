@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    participant U as useChat
+    participant S as sessionStorage
+    participant W as WebSocket
+    participant B as backend
+
+    U->>S: loadResumeToken()
+    U->>W: new WebSocket(url, protocols)
+    Note over U,W: kbb.v1 alone, or kbb.v1 plus<br/>kbb.resume.TOKEN when one exists
+    W->>B: handshake
+    B-->>W: connected {limits, features, resumeToken, resumed?}
+    U->>S: saveResumeToken(new one)
+    U->>U: dispatch every frame through toAction
+
+    Note over W: socket closes
+    U->>U: everOpened? if not, suppress the toast
+    U->>B: probeCapacity() — ONCE, on failure only
+    U->>U: wait backoff[attempt] with jitter, then reconnect
