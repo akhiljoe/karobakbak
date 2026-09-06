@@ -1,0 +1,29 @@
+graph TB
+    subgraph internet["Internet"]
+        U["Users"]
+    end
+    subgraph cf["Cloudflare — INFERRED"]
+        CFE["CDN / WAF<br/>sets CF-IPCountry"]
+    end
+    subgraph vps["Single host — DO Bangalore"]
+        subgraph net["docker compose network"]
+            CADDY["caddy:2.8<br/>:80 :443 — ONLY published ports"]
+            NG["frontend / nginx<br/>no host port in prod"]
+            BE["backend<br/>replicas: 1<br/>mem limit 640M"]
+            MIG["migrate (one-shot)"]
+            RD[("redis — persistence off")]
+            PG[("postgres")]
+            PROM["prometheus"]
+            GRAF["grafana"]
+            AM["alertmanager"]
+            BK["backup job"]
+        end
+        DISK[["/var/lib/karobakbak/spool"]]
+    end
+    U-->CFE-->CADDY-->NG
+    NG-->BE
+    BE-->RD
+    BE-->PG
+    BE-->DISK
+    MIG-->PG
+    BK-->PG

@@ -1,0 +1,21 @@
+sequenceDiagram
+    autonumber
+    participant B as Browser (popup)
+    participant BE as backend /auth
+    participant IDP as Cognito → Google
+    participant PG as PostgreSQL
+
+    B->>BE: GET /auth/start
+    BE->>BE: mint state + nonce + PKCE verifier
+    BE-->>B: Set-Cookie __Host-kbb_flow (httpOnly, SameSite=Lax, short TTL)
+    BE-->>B: 302 to authorize_url
+    B->>IDP: authorize
+    IDP-->>B: 302 /auth/callback?code&state
+    B->>BE: GET /auth/callback
+    BE->>BE: verify state == cookie, then CLEAR it (single-use)
+    BE->>IDP: POST token endpoint (code + code_verifier)
+    IDP-->>BE: id_token
+    BE->>BE: alg=RS256 · kid in JWKS · sig over raw bytes ·<br/>iss · aud · exp/iat · nonce
+    BE->>PG: upsert accounts by external_id
+    BE->>PG: insert account_credentials (sha256 of bearer)
+    BE-->>B: Set-Cookie __Host-kbb_session, then 302 home

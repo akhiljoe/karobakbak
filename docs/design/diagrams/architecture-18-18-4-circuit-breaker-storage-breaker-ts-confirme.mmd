@@ -1,0 +1,5 @@
+stateDiagram-v2
+    CLOSED --> OPEN: BREAKER_FAILURE_THRESHOLD consecutive failures
+    OPEN --> HALF_OPEN: BREAKER_COOLDOWN_MS (exponential to _MAX_MS)
+    HALF_OPEN --> CLOSED: probe succeeds → DrainPacer drains the spool
+    HALF_OPEN --> OPEN: probe fails

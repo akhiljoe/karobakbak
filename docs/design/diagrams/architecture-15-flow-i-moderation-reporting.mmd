@@ -1,0 +1,19 @@
+graph LR
+    subgraph U ["WHAT A USER DOES"]
+    direction TB
+    BL["Block"] --> BL2["two hashes onto YOUR<br/>refuse-list, 30 days"]
+    BL2 --> BL3["checked inside every future<br/>search, BOTH directions"]
+    RP["Report"] --> RP2["server resolves WHO<br/>is being reported"]
+    RP2 --> RP3{"could it be<br/>recorded?"}
+    RP3 -- "no" --> RP4["REFUSE to acknowledge it"]
+    RP3 -- "yes" --> RP5["report_ack"]
+    end
+
+    subgraph M ["WHAT A MODERATOR DOES"]
+    direction TB
+    RV["opens the report"] --> AU["audit row written FIRST,<br/>same transaction (D33)"]
+    AU --> TR["only THEN is the<br/>transcript selected"]
+    TR --> BN["issue a ban"]
+    BN --> BN2["PostgreSQL, cached in Redis,<br/>replayed on restart (D31)"]
+    BN2 --> BN3["checked at the handshake,<br/>before a session exists (I11)"]
+    end

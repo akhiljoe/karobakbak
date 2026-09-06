@@ -1,0 +1,19 @@
+stateDiagram-v2
+    [*] --> IDLE: createSession.lua (I1: exactly one initial state)
+    IDLE --> SEARCHING: joinQueue.lua (SADD before scan, D4)
+    SEARCHING --> SEARCHING: joinQueue while SEARCHING<br/>(idempotent AND self-repairing —<br/>re-SADDs a reaped queue entry)
+    SEARCHING --> IDLE: leaveQueue.lua · leave_chat
+    SEARCHING --> MATCHED: tryMatch.lua (both sides in one script)
+    MATCHED --> IDLE: endMatchInline (skip · block · leave_chat · disconnect · janitor)
+    MATCHED --> SEARCHING: skip == endMatch + joinQueue
+    IDLE --> [*]: TTL 120s · closeSession
+    SEARCHING --> [*]: TTL · closeSession
+    MATCHED --> [*]: detached 20s then TTL
+
+    note right of MATCHED
+        INVALID and structurally prevented:
+        · MATCHED while in a queue SET (I3)
+        · user_match without a match hash (I4)
+        · delivery after DEL kMatch (I6)
+        · two matches for one session (SET is atomic in tryMatch)
+    end note

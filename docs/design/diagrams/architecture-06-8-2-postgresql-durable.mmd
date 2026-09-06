@@ -1,0 +1,73 @@
+erDiagram
+    conversations ||--o{ messages : "on delete cascade"
+    conversations ||--o{ reports : "restrict"
+    messages ||--o{ moderation_events : ""
+    accounts ||--o{ account_credentials : "cascade"
+    accounts ||--o{ connections : "cascade (lo, hi)"
+    accounts ||--o{ blocks : "blocker_account_id"
+
+    conversations {
+        uuid conversation_id PK "equals matchId"
+        text session_a
+        text session_b
+        text segment
+        timestamptz started_at
+        timestamptz ended_at
+        text end_reason
+        int message_count
+        timestamptz retention_expires_at "NO column default — deliberate"
+        bool legal_hold
+    }
+    messages {
+        uuid message_id PK
+        uuid conversation_id FK
+        text sender_session_id
+        timestamptz server_timestamp "server authority, never client"
+        text type "check (type in ('text'))"
+        text body "plaintext, D15"
+        int char_length
+        text moderation_action
+        jsonb moderation_flags
+        timestamptz retention_expires_at
+        bool legal_hold
+    }
+    reports {
+        uuid report_id PK
+        uuid conversation_id FK
+        text reporter_session_id
+        text reported_session_id
+        text category
+        text note "user content — same I8 rule as a message"
+        text state "OPEN|TRIAGED|ACTIONED|DISMISSED"
+    }
+    blocks {
+        uuid block_id PK
+        text blocker_key "ipHash or clientHash"
+        text blocked_key
+        text dimension "ip|client"
+        text blocker_account_id FK "nullable"
+    }
+    accounts {
+        text id PK "NEVER the provider sub"
+        text external_id "partial unique index"
+        timestamptz premium_until
+        text status
+        text risk_state
+    }
+    connections {
+        text account_lo PK "check (lo < hi)"
+        text account_hi PK
+        text label_lo "one-sided"
+        text label_hi
+    }
+    enforcement {
+        uuid enforcement_id PK
+        text subject_key
+        timestamptz expires_at
+    }
+    admin_audit {
+        uuid audit_id PK
+        text actor
+        text action
+        text justification
+    }

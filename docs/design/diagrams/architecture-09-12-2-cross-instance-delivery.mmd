@@ -1,0 +1,7 @@
+graph LR
+    A["lifecycle / pipeline"] --> D{"dispatcher.toSession"}
+    D -->|"socket is local"| L["encodeFrame → ws.send<br/>route = 'local'"]
+    D -->|"not local"| P["PUBLISH chat:ev:session:{sid}"]
+    P -->|"receivers > 0"| RM["route = 'remote'"]
+    P -->|"receivers == 0"| DR["route = 'dropped'"]
+    RM --> SUB["subscriber on the owning instance<br/>channel → sid → local socket"]

@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> Upgrading
+    Upgrading --> Refused: bad path 404 · draining 503 · origin 403 ·<br/>banned 403 · capacity 503 · rate 429 · slots 429
+    Upgrading --> Open: 101
+    Open --> Open: pingOrTimeout each HEARTBEAT_INTERVAL_MS
+    Open --> Closing: strikes >= INVALID_MESSAGE_STRIKES → 4003
+    Open --> Closing: bufferedAmount > MAX_BUFFERED_BYTES → 1013
+    Open --> Closing: SESSION_GONE → 4001
+    Open --> Closing: server_shutdown → 1001
+    Open --> Closing: client close / network
+    Closing --> [*]: onClose → tally flush · lifecycle.close · unsubscribe
+    Refused --> [*]
