@@ -87,13 +87,10 @@ const TERMS: StaticPage = {
           added to the legal draft first. This says no more than the draft's own
           opening sentence already does.
         */
-        'Legal name: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
-        'Udyam Registration Number: ***REMOVED***',
-        'Business structure: Sole proprietorship registered in India',
-        'Country: India',
-        `Email: ${contact}`,
-        'Phone: ***REMOVED***',
-        'Principal place of business: not published while karobakbak is free to use. Our email address and phone number above are the contact details for all purposes.',
+        `Service operator: karobakbak`,
+        'Jurisdiction: India',
+        `Contact: ${contact}`,
+        'Additional operator information may be provided where required by applicable law or to a person with a legitimate legal or regulatory need.',
         'If any of these details change, we may update this section without changing the substance of these Terms.',
       ],
     },
@@ -756,10 +753,9 @@ const TERMS: StaticPage = {
         // for an operator's name beside an email address that already reaches
         // them. The enterprise and its registration answer "who is this",
         // which is the question a reader of a contact block is actually asking.
-        'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
+        `Service operator: karobakbak`,
         `Email: ${contact}`,
-        'Phone: ***REMOVED***',
-        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
+        'Additional operator information may be provided where required by applicable law or to a person with a legitimate legal or regulatory need.',
         'For privacy-related requests, please see the contact information in the Privacy Policy.',
         'For a specific conversation or user-safety issue, please use the in-product Report function where possible.',
       ],
@@ -795,16 +791,11 @@ const PRIVACY: StaticPage = {
       body: [
         'karobakbak is operated by:',
         // Same rule as the Terms above: the enterprise and its registration,
-        // not a person. "Legal name: [operator name — not published yet]" was
-        // the sharper version of the problem, because it asks by name for
-        // exactly the thing that is not going to be published.
-        'Legal name: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
+        `Service operator: karobakbak`,
         'Role: Data Fiduciary under the Digital Personal Data Protection Act, 2023',
-        'Business structure: Sole proprietorship registered in India',
-        'Country: India',
-        `Email: ${contact}`,
-        'Phone: ***REMOVED***',
-        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
+        'Jurisdiction: India',
+        `Contact: ${contact}`,
+        'Additional operator information may be provided where required by applicable law or to a person with a legitimate legal or regulatory need.',
         'In this Privacy Policy, “karobakbak”, “we”, “us” and “our” refer to the operator of the service.',
       ],
     },
@@ -1503,13 +1494,9 @@ const PRIVACY: StaticPage = {
       body: [
         'For privacy questions, account-related privacy requests or concerns about this Privacy Policy:',
         'karobakbak',
-        // The fourth and last. Four blanks for the same fact, in two documents,
-        // each of which would have been filled in by hand on launch day — which
-        // is how a decision not to publish something gets undone by a chore.
-        'Operator: ***REMOVED*** C Joe, sole proprietor, trading as karobakbak',
+        `Service operator: karobakbak`,
         `Email: ${contact}`,
-        'Phone: ***REMOVED***',
-        'Address: not published while karobakbak is free to use — please use the email address or phone number above.',
+        'Additional operator information may be provided where required by applicable law or to a person with a legitimate legal or regulatory need.',
         'For problems involving another user or a particular conversation, use the Report function inside the service where possible.',
       ],
     },
@@ -1527,9 +1514,8 @@ const PRIVACY: StaticPage = {
         person's.
       */
       body: [
-        'Grievance Officer: ***REMOVED*** C Joe',
-        `Email: ${contact}`,
-        'Phone: ***REMOVED***',
+        `Grievance contact: ${contact}`,
+        'A designated grievance contact or officer will be identified where required by applicable law.',
         'We aim to acknowledge a grievance within 24 hours of receiving it.',
         'We aim to resolve a grievance within 15 days.',
       ],

@@ -267,13 +267,9 @@ export const FAQ: StaticPage = {
        */
       heading: 'Am I talking to a bot?',
       body: [
-        'Sometimes.',
-        'When nobody is available to match you with, we may match you with an automated account ' +
-          'that we run. It will never claim to be a person, and it will never ask you for your ' +
-          'real name, your photograph, your contact details, or to meet or talk somewhere else.',
-        'Everyone else you meet here is another user. Someone may claim to be a bot or use a ' +
-          'bot of their own, and that is something they are telling you about themselves rather ' +
-          'than something we have done.',
+        'No.',
+        'Someone may claim to be a bot or use a bot of their own.',
+        'That is something they are telling you about themselves rather than something we have done.',
       ],
     },
     {
