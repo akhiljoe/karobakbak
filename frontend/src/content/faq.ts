@@ -268,7 +268,7 @@ export const FAQ: StaticPage = {
       heading: 'Am I talking to a bot?',
       body: [
         'No.',
-        'Someone may claim to be a bot or use a bot of their own.',
+        'Someone may claim to be a bot or use a bot of their own or operate an automated account.',
         'That is something they are telling you about themselves rather than something we have done.',
       ],
     },
