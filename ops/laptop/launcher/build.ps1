@@ -29,6 +29,16 @@ if (Get-Process -Name 'karobakbak-live' -ErrorAction SilentlyContinue) {
     throw 'The karobakbak live window is open. Close it (the site keeps running) and build again.'
 }
 
+# csc v4 reads a file without a byte-order mark in the Windows code page, so a
+# UTF-8 character in the source compiles into mojibake - a middle dot became
+# "Â·" in the persona status line. Write non-ASCII as \uXXXX escapes.
+$srcLines = [System.IO.File]::ReadAllLines((Join-Path $here 'KarobakbakLive.cs'), [System.Text.Encoding]::UTF8)
+for ($i = 0; $i -lt $srcLines.Length; $i++) {
+    if ($srcLines[$i] -match '[^\x00-\x7F]') {
+        throw "KarobakbakLive.cs line $($i + 1) has a non-ASCII character; write it as a \uXXXX escape."
+    }
+}
+
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) {
     throw "The .NET Framework C# compiler was not found at $csc"
