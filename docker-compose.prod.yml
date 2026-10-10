@@ -247,6 +247,37 @@ services:
       REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
     logging: *logging
 
+  personas:
+    # ---------------------------------------------------------------
+    # THE BASE FILE HARDCODES DEVELOPMENT CREDENTIALS HERE
+    # ---------------------------------------------------------------
+    # The personas service in docker-compose.yml sets DATABASE_URL to
+    # `karobakbak:karobakbak@postgres`, REDIS_URL, NODE_ENV=development and a
+    # fallback salt in `environment:`, and `environment:` always beats
+    # `env_file:`. So the production values in the env file never reached the
+    # container: every query failed with 28P01 auth_failed, the budget read as
+    # unreadable and the persona refused to spend. The droplet was fixed by
+    # editing this file on the box, which was never committed — the laptop
+    # deployment would have met the same failure. This is that edit, in git.
+    #
+    # DATABASE_URL is the application role, the same as the backend's: the
+    # chat role can add to the persona spend and cannot raise the ceiling or
+    # enable personas (CLAUDE.md, "The chat role can add to the spend").
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      DATABASE_URL: "${DATABASE_URL:?postgres connection string, from secret management}"
+      DATABASE_SSL: "false"
+      DATABASE_REQUIRE_SSL_IN_PRODUCTION: "false"
+      REDIS_URL: "${REDIS_URL-redis://redis:6379}"
+      REDIS_SENTINELS: "${REDIS_SENTINELS-}"
+      REDIS_SENTINEL_NAME: "${REDIS_SENTINEL_NAME-}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD-}"
+      REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
+      IP_HASH_SALT: "${IP_HASH_SALT:?a long random value, kept secret}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin}"
+    logging: *logging
+
   redis:
     # Nothing published. Reaching Redis means being inside the network.
     ports: !reset []
