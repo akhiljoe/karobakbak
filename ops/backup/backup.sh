@@ -243,13 +243,21 @@ else
 fi
 log "backup loop starting: every ${BACKUP_INTERVAL_SECONDS}s, keeping ${BACKUP_KEEP}, to ${destination}"
 
+# A failed run is retried after BACKUP_RETRY_SECONDS, not after the full
+# interval. Sleeping a day after a failure meant one transient fault - the first
+# start racing the migrations, a network blip during upload - cost a whole day
+# of backups, and the first backup of a new deployment was a day late.
+BACKUP_RETRY_SECONDS="${BACKUP_RETRY_SECONDS:-3600}"
+
 while :; do
   if run_once; then
     report true
+    sleep "$BACKUP_INTERVAL_SECONDS"
   else
     # Reported rather than swallowed, so `chat_backup_failures_total` moves and
     # "running and failing" is distinguishable from "stopped".
     report false
+    log "retrying in ${BACKUP_RETRY_SECONDS}s"
+    sleep "$BACKUP_RETRY_SECONDS"
   fi
-  sleep "$BACKUP_INTERVAL_SECONDS"
 done
