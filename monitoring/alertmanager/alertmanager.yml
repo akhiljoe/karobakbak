@@ -62,9 +62,9 @@ route:
       group_interval: 2m
       repeat_interval: 1h
 
-    # Activity, not a fault (SomeoneIsChatting). Once when it starts; no
-    # repeat while it continues and no "resolved" when it stops, because
-    # neither tells the operator anything a second time.
+    # Activity, not a fault (DailyChatSummary). Sent once when the morning
+    # window opens; no repeat and no "resolved" when it closes, because neither
+    # tells the operator anything.
     - matchers:
         - severity = "info"
       receiver: operator-info
