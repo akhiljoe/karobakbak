@@ -2,6 +2,7 @@
 /**
  * Deploy one commit to the live stack on the laptop.
  *
+ *   node ops/laptop/deploy.mjs                                       # env: LIVE_DIR, DEPLOY_REF
  *   node ops/laptop/deploy.mjs --live-dir <path> --ref main
  *   node ops/laptop/deploy.mjs --live-dir <path> --ref previous      # roll back
  *   node ops/laptop/deploy.mjs --live-dir <path> --ref live-2026-10-11-0930
@@ -150,8 +151,13 @@ function stamp(now = new Date()) {
 
 async function main() {
   const a = args();
-  const liveDir = a['live-dir'] ?? fail('--live-dir is required');
-  const ref = (a.ref ?? 'main').trim();
+  // Flags win; the workflow passes both through the environment instead, so an
+  // input somebody typed is never part of a command line.
+  const liveDir =
+    a['live-dir'] ??
+    (process.env.LIVE_DIR || (process.env.USERPROFILE ? join(process.env.USERPROFILE, 'karobakbak-live') : null)) ??
+    fail('--live-dir is required');
+  const ref = (a.ref ?? (process.env.DEPLOY_REF || 'main')).trim();
   const token = process.env.GITHUB_TOKEN ?? fail('GITHUB_TOKEN is not set');
   const repo = process.env.GITHUB_REPOSITORY ?? fail('GITHUB_REPOSITORY is not set');
   if (!/^[A-Za-z0-9._\/-]+$/.test(ref)) fail('ref may contain only letters, digits and ._/-');
