@@ -31,7 +31,7 @@
 # order.
 #
 # They are **replicas of one service**, not two services. That is what makes
-# them `karobakbak-backend-1` and `karobakbak-backend-2` rather than
+# them `karobakbak-dev-backend-1` and `karobakbak-dev-backend-2` rather than
 # `backend-1` and `backend-2-1` — compose names containers
 # `<project>-<service>-<replica>`, so a service called `backend-2` produced a
 # container ending in two different numbers. Scaling is also the honest model:
@@ -40,6 +40,25 @@
 #
 # Everything is tunable through the environment so a different profile needs an
 # env file, not another compose file. `.env.loadtest` is exactly that.
+
+
+# ---------------------------------------------------------------------------
+# DEVELOPMENT AND PRODUCTION HAVE DIFFERENT PROJECT NAMES
+# ---------------------------------------------------------------------------
+# Compose identifies a stack by its project name, and without one it uses the
+# directory - `karobakbak` - for every stack started from this checkout. Run
+# production and development on one Docker engine (the laptop deployment does,
+# LAPTOP-HOSTING.md) and they are then the *same project*: a development `up`
+# recreates the live containers with development configuration, and a
+# development `down -v` deletes the live database. Nothing asks first.
+#
+# So development is `karobakbak-dev` and `docker-compose.prod.yml` overrides it
+# with `karobakbak-live` (the last file's `name:` wins). The name also prefixes
+# containers and volumes - `karobakbak-dev-backend-1`, `karobakbak-dev_pgdata` -
+# so the two cannot share data either. `-p` on the command line still beats
+# both, which is how the load-test, VPS-rig and Sentinel stacks get theirs.
+# `npm run verify:config` fails if either name goes or they become equal.
+name: karobakbak-dev
 
 services:
   frontend:
@@ -852,6 +871,11 @@ services:
       - "--server.http.listen-addr=0.0.0.0:12345"
       - "--storage.path=/var/lib/alloy/data"
       - "/etc/alloy/config.alloy"
+    # The project whose containers this Alloy ships, and only those. Compose
+    # fills COMPOSE_PROJECT_NAME itself (base name, prod override, or `-p`), so
+    # each stack on a shared engine keeps its own logs. config.alloy explains.
+    environment:
+      ALLOY_COMPOSE_PROJECT: "${COMPOSE_PROJECT_NAME}"
     user: "root"
     volumes:
       - ./monitoring/alloy:/etc/alloy:ro

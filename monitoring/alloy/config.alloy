@@ -33,17 +33,26 @@ logging {
 // ---------------------------------------------------------------------------
 // DISCOVERY
 // ---------------------------------------------------------------------------
-// Every container carrying a compose project label, which is exactly this
-// stack and nothing else the developer happens to be running. Without the
-// filter, Alloy on a laptop ships whatever else Docker is hosting into a store
-// this project pays to keep.
+// Every container in THIS compose project, and nothing else on the engine.
+//
+// This used to match any container carrying a compose project label, on the
+// assumption that the only compose stack on the host was this one. On the
+// laptop deployment it is not: the live site (`karobakbak-live`), development
+// (`karobakbak-dev`) and a load test (`karobakbak-loadtest`) can share one
+// Docker engine, and each stack's Alloy would ship all of them into its own
+// Loki. Live dashboards would then count development traffic, and a load test's
+// noise would sit in the store that holds production's logs.
+//
+// `ALLOY_COMPOSE_PROJECT` is set from compose's own `COMPOSE_PROJECT_NAME`, so
+// it is right for every stack without anybody writing a name down: the base
+// file's name, the prod overlay's, or whatever `-p` said.
 discovery.docker "compose" {
   host             = "unix:///var/run/docker.sock"
   refresh_interval = "5s"
 
   filter {
     name   = "label"
-    values = ["com.docker.compose.project"]
+    values = ["com.docker.compose.project=" + sys.env("ALLOY_COMPOSE_PROJECT")]
   }
 }
 

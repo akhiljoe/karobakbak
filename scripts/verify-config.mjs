@@ -261,6 +261,75 @@ for (const name of [...viteNames].sort()) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 4. Each deployment's env file names itself, and the laptop stays in step   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `APP_ENV_FILE` is how a container finds its own env file. A template copied
+ * from another and not renamed delivers the *other* deployment's values: the
+ * laptop reading `.env.prod`, which does not exist there, falls through to
+ * compiled-in defaults with nothing failing.
+ */
+const ENV_TEMPLATES = {
+  '.env.example': '.env',
+  '.env.prod.example': '.env.prod',
+  '.env.laptop.example': '.env.laptop',
+  '.env.loadtest': '.env.loadtest',
+  '.env.vps': '.env.vps',
+};
+
+const assigned = (text) => new Set([...text.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map(([, n]) => n));
+
+for (const [template, self] of Object.entries(ENV_TEMPLATES)) {
+  const match = read(template).match(/^APP_ENV_FILE=(.*)$/m);
+  if (!match) {
+    fail(`${template} does not set APP_ENV_FILE, so its containers read .env instead`);
+  } else if (match[1].trim() !== self) {
+    fail(`${template} sets APP_ENV_FILE=${match[1].trim()}; it must name itself (${self})`);
+  }
+}
+
+/**
+ * The laptop template is a whole copy of the production one, because compose
+ * takes a single `--env-file` and nothing is inherited. So a setting added to
+ * production and not to the laptop is a setting the laptop silently runs on
+ * its default — `AUTH_AVATARS` was exactly that between `.env.example` and
+ * `.env.prod.example` on the first deployment.
+ */
+const LAPTOP_DIFFERS_ON_PURPOSE = new Set([
+  'FRONTEND_BIND_PORT', // there is no TLS terminator on the host to bind for
+]);
+const prodAssigned = assigned(read('.env.prod.example'));
+const laptopAssigned = assigned(read('.env.laptop.example'));
+for (const name of [...prodAssigned].sort()) {
+  if (LAPTOP_DIFFERS_ON_PURPOSE.has(name)) continue;
+  if (!laptopAssigned.has(name)) {
+    fail(`${name} is set in .env.prod.example and not in .env.laptop.example`);
+  }
+}
+
+/**
+ * Development and production must be different compose projects. Without a
+ * name the project is the directory, `karobakbak`, for both — and on a host that
+ * runs both (the laptop does) a development `up` or `down -v` then acts on the
+ * live site. The base file names development, the prod overlay overrides it,
+ * and the laptop overlay must not set a third value.
+ */
+const topLevelName = (file) => read(file).match(/^name:\s*(\S+)/m)?.[1];
+const devName = topLevelName('docker-compose.yml');
+const liveName = topLevelName('docker-compose.prod.yml');
+const laptopName = topLevelName('docker-compose.laptop.yml');
+if (devName !== 'karobakbak-dev') {
+  fail(`docker-compose.yml must be named karobakbak-dev (found ${devName ?? 'no name'})`);
+}
+if (liveName !== 'karobakbak-live') {
+  fail(`docker-compose.prod.yml must be named karobakbak-live (found ${liveName ?? 'no name'})`);
+}
+if (laptopName !== undefined && laptopName !== liveName) {
+  fail(`docker-compose.laptop.yml names the project ${laptopName}; it must inherit ${liveName}`);
+}
+
+/* -------------------------------------------------------------------------- */
 
 if (problems.length > 0) {
   console.error('config wiring check failed:\n');

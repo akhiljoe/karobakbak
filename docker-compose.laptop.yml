@@ -1,0 +1,237 @@
+# Production on the operator's own laptop, behind a Cloudflare Tunnel.
+#
+#   npm run laptop:up
+#   = docker compose --env-file .env.laptop -f docker-compose.yml
+#       -f docker-compose.prod.yml -f docker-compose.laptop.yml up -d --build
+#
+# Layered on top of the production overlay, never instead of it: every
+# required secret, every `NODE_ENV: production`, every loopback binding there
+# still applies. This file changes three things and inherits a fourth.
+#
+#   1. (Inherited) the project is karobakbak-live, never development's name.
+#   2. Caddy is replaced by cloudflared. TLS terminates at Cloudflare.
+#   3. No host port collides with a development stack on the same Docker.
+#   4. Every service has a CPU and memory ceiling, because this machine is
+#      also somebody's daily computer.
+#
+# The procedure is docs/operations/LAPTOP-HOSTING.md.
+
+# ---------------------------------------------------------------------------
+# 1. THE NAME
+# ---------------------------------------------------------------------------
+# Inherited, not set: `docker-compose.prod.yml` names the project
+# `karobakbak-live` and the base file names development `karobakbak-dev`, so the
+# live site and a development stack on this same Docker engine are two projects
+# with separate containers and separate volumes. Setting a name here would be a
+# second copy of the production one, free to drift from it.
+
+services:
+  # ---------------------------------------------------------------------------
+  # 2. NO CADDY. CLOUDFLARED INSTEAD.
+  # ---------------------------------------------------------------------------
+  # An overlay can add a service and cannot remove one (the VPS rig learned that
+  # the hard way), so Caddy is parked behind a profile nobody activates. It
+  # would otherwise publish 80 and 443 on the laptop and try to obtain a
+  # certificate for a name whose DNS points at the tunnel - failing, retrying,
+  # and spending Let's Encrypt's rate limit doing it.
+  caddy:
+    profiles: ["never-on-laptop"]
+
+  # The tunnel. It dials *out* to Cloudflare, so the laptop publishes no port,
+  # needs no router forwarding and never puts the home address in DNS.
+  #
+  # Remote-managed: the hostname-to-service mapping (`karobakbak.com` ->
+  # `http://frontend:80`) lives in the Cloudflare dashboard, and the only thing
+  # on this machine is the token. Anybody holding that token can serve this
+  # domain, so it is a secret like any other in `.env.laptop`.
+  #
+  # It runs on the compose network, which is how `frontend` resolves. Running it
+  # as a Windows service instead would need a published frontend port, and then
+  # anything on the same Wi-Fi could reach the origin without passing
+  # Cloudflare - which is what makes `CF-IPCountry`, and therefore the geo-block,
+  # trustworthy.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?the tunnel token from the Cloudflare dashboard (Zero Trust > Networks > Tunnels)}"
+    depends_on:
+      - frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # 3 + 4. PORTS AND CEILINGS
+  # ---------------------------------------------------------------------------
+  # The production overlay already removes the ports that matter (frontend,
+  # redis, postgres, prometheus). What it leaves are loopback bindings that are
+  # harmless on a dedicated VPS and collide with development here: Grafana and
+  # the console are moved, everything else nobody opens by hand is removed.
+  #
+  # Ceilings, not reservations: nothing is held back from the laptop while idle.
+  # The serving path (cloudflared, nginx, backend, redis, postgres) is capped at
+  # 4 cores and ~1.6 GB; everything with the console and personas running is
+  # ~6.7 cores and ~4 GB. Real use at launch traffic is a fraction of a core and
+  # ~400 MB. The ceilings are what the site may never exceed however busy it
+  # gets, so it degrades into "busy, try again" rather than into a laptop that
+  # will not respond.
+  #
+  # A memory ceiling that is too low shows up as `OOMKilled` / exit 137 in
+  # `npm run laptop:ps`, followed by a restart. Raise that one service's limit;
+  # do not remove the limits.
+  #
+  # A CPU ceiling is a CFS quota, and Node does not see it:
+  # `os.availableParallelism()` still reports every core Docker has. The derived
+  # connection ceiling would be 1400 x 8 = 11,200 on a backend capped at 1.5
+  # cores, so `.env.laptop` sets MAX_CONNECTIONS explicitly. Without it, overload
+  # arrives as latency for everybody instead of a clean refusal for the newest.
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  backend:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          # Node runs JavaScript on one thread, so ~1 core is the real ceiling;
+          # the half above it is for GC and libuv's thread pool.
+          cpus: "1.5"
+          # The production value: the image pins a 384 MB heap.
+          memory: 640M
+
+  migrate:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  redis:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  personas:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  admin:
+    # 8098, not 8088, so a development console can run beside it. The browser
+    # origin changes with it: ADMIN_ALLOWED_ORIGINS in `.env.laptop` must say
+    # http://127.0.0.1:8098 or every login is refused as cross-origin.
+    ports: !override
+      - "127.0.0.1:${ADMIN_HOST_PORT:-8098}:8088"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  backup:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+
+  alertmanager:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
+
+  grafana:
+    # 3010, not 3000, so development Grafana can run beside it.
+    # GRAFANA_ROOT_URL in `.env.laptop` must match, or logins loop.
+    ports: !override
+      - "127.0.0.1:${GRAFANA_PORT:-3010}:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  # The rest of the observability stack. Nobody opens these by hand, so they
+  # publish nothing; Grafana and Prometheus reach them over the network.
+  cadvisor:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+
+  redis-exporter:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
+
+  postgres-exporter:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
+
+  loki:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+
+  tempo:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 192M
+
+  alloy:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M

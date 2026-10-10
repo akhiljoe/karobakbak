@@ -36,6 +36,17 @@
 # Lua script precisely so that works, and Prometheus discovers replicas by DNS
 # rather than a hand-written target list.
 
+
+# ---------------------------------------------------------------------------
+# THE LIVE PROJECT NAME
+# ---------------------------------------------------------------------------
+# Overrides the base file's `karobakbak-dev`. Production containers are
+# `karobakbak-live-<service>-1` and its volumes `karobakbak-live_<name>`, on
+# every host - the VPS and the laptop alike - so a command written for one is
+# right for the other, and nothing development does can reach them. Why the two
+# must differ is in the header of `docker-compose.yml`.
+name: karobakbak-live
+
 services:
   # ---------------------------------------------------------------------------
   # TLS
