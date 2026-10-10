@@ -409,6 +409,25 @@ export interface Config {
     /** How often a generated surface declines to give a name, or a whole field. */
     readonly noNameChance: number;
     readonly declineChance: number;
+    /**
+     * TypeSafe's Jev, the decision model beside the voice (`personas/jev.ts`).
+     *
+     * Off when no host has a key, and every judgement then comes from rules —
+     * the same readings the personas made before Jev existed. Hosts are tried
+     * in order; `JEV_FALLBACK_API_URL` is a second host speaking the same API
+     * (a gateway or proxy), tried when the first fails or its breaker is open.
+     */
+    readonly jev: {
+      readonly hosts: readonly { readonly url: string; readonly apiKey: string }[];
+      readonly model: string;
+      readonly timeoutMs: number;
+      readonly breakerThreshold: number;
+      readonly breakerCooldownMs: number;
+      /** A Jev flag counts only at or above this probability. */
+      readonly minConfidence: number;
+      /** Micro-cents of US dollars per million input tokens. Output is free. */
+      readonly inputMicroCentsPerMTok: number;
+    };
   };
 
   /**
@@ -949,6 +968,31 @@ function costModel(env: Env): Config['cost'] {
   };
 }
 
+/**
+ * The Jev hosts, in the order they are tried.
+ *
+ * The fallback host may reuse the primary key — a gateway in front of the same
+ * account — and may not exist without one: a URL with no key anywhere is a
+ * host that answers 401 to every call, which would read as Jev being down.
+ */
+function jevHosts(env: Env): { url: string; apiKey: string }[] {
+  const primaryKey = str(env, 'JEV_API_KEY', '');
+  const hosts: { url: string; apiKey: string }[] = [];
+  if (primaryKey !== '') {
+    hosts.push({ url: str(env, 'JEV_API_URL', 'https://api.typesafe.ai'), apiKey: primaryKey });
+  }
+
+  const fallbackUrl = str(env, 'JEV_FALLBACK_API_URL', '');
+  if (fallbackUrl !== '') {
+    const fallbackKey = str(env, 'JEV_FALLBACK_API_KEY', primaryKey);
+    if (fallbackKey === '') {
+      throw new ConfigError('JEV_FALLBACK_API_URL is set but neither JEV_FALLBACK_API_KEY nor JEV_API_KEY is');
+    }
+    hosts.push({ url: fallbackUrl, apiKey: fallbackKey });
+  }
+  return hosts;
+}
+
 function int(env: Env, key: string, fallback: number, min: number, max: number): number {
   const raw = env[key];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -1467,6 +1511,7 @@ export function loadConfig(
         thinkSpreadMs: int(env, 'PERSONA_THINK_SPREAD_MS', DEFAULT_CADENCE.thinkSpreadMs, 0, 60_000),
         openingTurns: int(env, 'PERSONA_OPENING_TURNS', DEFAULT_CADENCE.openingTurns, 0, 100),
         openingMaxWords: int(env, 'PERSONA_OPENING_MAX_WORDS', DEFAULT_CADENCE.openingMaxWords, 1, 500),
+        coalesceMs: int(env, 'PERSONA_COALESCE_MS', DEFAULT_CADENCE.coalesceMs, 0, 30_000),
       },
       repeatsBeforeLeaving: int(env, 'PERSONA_REPEATS_BEFORE_LEAVING', 3, 1, 100),
       contextTurns: int(env, 'PERSONA_CONTEXT_TURNS', 10, 1, 200),
@@ -1485,6 +1530,17 @@ export function loadConfig(
       provider: str(env, 'PERSONA_PROVIDER', 'anthropic'),
       model: str(env, 'PERSONA_MODEL', 'claude-haiku-4-5'),
       apiKey: str(env, 'PERSONA_API_KEY', ''),
+      jev: {
+        hosts: jevHosts(env),
+        model: str(env, 'JEV_MODEL', 'jev-latest'),
+        timeoutMs: int(env, 'JEV_TIMEOUT_MS', 2500, 100, 30_000),
+        breakerThreshold: int(env, 'JEV_BREAKER_THRESHOLD', 3, 1, 100),
+        breakerCooldownMs: int(env, 'JEV_BREAKER_COOLDOWN_MS', 60_000, 1000, 3_600_000),
+        minConfidence: num(env, 'JEV_MIN_CONFIDENCE', 0.8, 0.5, 1),
+        // $0.06 per million input tokens: the higher of the two published
+        // listings, so the ceiling binds early rather than late if they differ.
+        inputMicroCentsPerMTok: int(env, 'JEV_INPUT_MICRO_CENTS_PER_MTOK', 6_000_000, 0, 1_000_000_000),
+      },
     },
 
     auth: {

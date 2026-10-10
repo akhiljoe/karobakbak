@@ -770,3 +770,121 @@ describe('the typing indicator', () => {
     expect(h.socket.typesSent()).toContain('message');
   });
 });
+
+describe('the transcript and bursts', () => {
+  const message = (text: string, id: string): Record<string, unknown> => ({
+    matchId: 'm_1',
+    messageId: id,
+    type: 'text',
+    text,
+    sentAt: '',
+    from: 'partner',
+  });
+
+  /** A voice that records every turn it is shown and answers from a list. */
+  function recording(replies: Array<string | Promise<string>>): { voice: PersonaVoice; turns: VoiceTurn[] } {
+    const turns: VoiceTurn[] = [];
+    let index = 0;
+    return {
+      turns,
+      voice: {
+        reply(turn: VoiceTurn): Promise<string | null> | string | null {
+          turns.push(turn);
+          const next = replies[index];
+          index += 1;
+          return next ?? null;
+        },
+      },
+    };
+  }
+
+  it('answers a burst once, with every message in it', async () => {
+    // "hi" then "kaha se ho" two seconds apart is one turn to a person. Answering
+    // them separately produced a reply to the first that landed after the second.
+    const { voice, turns } = recording(['hey', 'delhi, tum?']);
+    const h = build(voice);
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    h.feed('message', message('hi', 'a'));
+    h.feed('message', message('kaha se ho', 'b'));
+    await h.clock.run();
+
+    const texts = h.socket.frames().filter((f) => f.type === 'message').map((f) => f.payload['text']);
+    expect(texts).toEqual(['hey', 'delhi, tum?']);
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.incoming).toBe('hi' + String.fromCharCode(10) + 'kaha se ho');
+    expect(turns[1]?.transcript.map((l) => l.text)).toEqual(['hey', 'hi', 'kaha se ho']);
+  });
+
+  it('never shows the voice a reply that was abandoned before it was sent', async () => {
+    // This is the bug that made personas answer things at the wrong moment: the
+    // model voice recorded a reply it generated even when the client threw it
+    // away because the stranger typed again.
+    let release: (text: string) => void = () => undefined;
+    const slow = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const { voice, turns } = recording(['hey', slow, 'second answer']);
+    const h = build(voice);
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+
+    h.feed('message', message('hi', 'a'));
+    await h.clock.run();
+    // The voice is mid-generation on "hi" when the next message lands.
+    h.feed('message', message('where are you from', 'b'));
+    release('THE ABANDONED REPLY');
+    await h.clock.run();
+
+    const texts = h.socket.frames().filter((f) => f.type === 'message').map((f) => f.payload['text']);
+    expect(texts).not.toContain('THE ABANDONED REPLY');
+    expect(texts).toEqual(['hey', 'second answer']);
+
+    const last = turns[turns.length - 1];
+    expect(last?.incoming).toBe('hi' + String.fromCharCode(10) + 'where are you from');
+    expect(last?.transcript.map((l) => l.text)).not.toContain('THE ABANDONED REPLY');
+  });
+
+  it('records the bubbles that were sent, not the reply the voice wrote', async () => {
+    // A long reply is cut to its first sentence early in a conversation. The
+    // transcript must hold what the partner saw, or the model continues from a
+    // sentence that was never delivered.
+    const { voice, turns } = recording([
+      'hey',
+      'ha same. also i once found a pigeon in a stairwell and named it before security came',
+      'ok',
+    ]);
+    const h = build(voice);
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+    h.feed('message', message('long night', 'a'));
+    await h.clock.run();
+    h.feed('message', message('lol', 'b'));
+    await h.clock.run();
+
+    const sent = h.socket.frames().filter((f) => f.type === 'message').map((f) => String(f.payload['text']));
+    const personaLines = (turns[2]?.transcript ?? []).filter((l) => l.role === 'persona').map((l) => l.text);
+    expect(personaLines).toEqual(sent.slice(0, personaLines.length));
+    expect(personaLines.join(' ')).not.toContain('pigeon');
+  });
+
+  it('starts every conversation with an empty transcript', async () => {
+    const { voice, turns } = recording(['hey', 'reply', 'hey again']);
+    const h = build(voice);
+    h.feed('connected', CONNECTED);
+    h.feed('matched', MATCHED);
+    await h.clock.run();
+    h.feed('message', message('hi', 'a'));
+    await h.clock.run();
+
+    h.feed('partner_skipped', {});
+    h.feed('matched', { ...MATCHED, matchId: 'm_2' });
+    await h.clock.run();
+
+    expect(turns[2]?.transcript).toEqual([]);
+  });
+});

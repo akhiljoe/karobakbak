@@ -26,6 +26,7 @@ import type { LimitTrip } from './guard';
 import type { SpendEvent } from './voice-model';
 import type { SkipReason, TickOutcome } from './supervisor';
 import type { BudgetCheck } from './budget';
+import type { JevOutcome } from './jev';
 
 /** How a persona conversation ended. A closed set, so the label stays bounded. */
 export type ConversationOutcome = 'partner_left' | 'we_left' | 'blocked' | 'dropped';
@@ -52,6 +53,9 @@ export interface PersonaMetrics {
   sessionFlagged(reason: string): void;
 
   providerCall(provider: string, model: string, outcome: string, seconds: number): void;
+
+  judgeCall(host: number, outcome: JevOutcome, seconds: number): void;
+  regenerated(): void;
 }
 
 /** Records nothing. For tests and for a deployment with metrics disabled. */
@@ -67,6 +71,8 @@ export const NO_PERSONA_METRICS: PersonaMetrics = {
   limitTripped: () => undefined,
   sessionFlagged: () => undefined,
   providerCall: () => undefined,
+  judgeCall: () => undefined,
+  regenerated: () => undefined,
 };
 
 export function personaMetrics(metrics: Metrics): PersonaMetrics {
@@ -143,6 +149,20 @@ export function personaMetrics(metrics: Metrics): PersonaMetrics {
     providerCall(provider, model, outcome, seconds): void {
       metrics.personaProviderRequests.labels(provider, model, outcome).inc();
       metrics.personaProviderLatency.labels(provider).observe(seconds);
+    },
+
+    /**
+     * One Jev attempt at one host. A breaker-open skip took no time and made no
+     * request, so it is counted and not observed — a latency histogram full of
+     * zeros would make a host that is down look fast.
+     */
+    judgeCall(host, outcome, seconds): void {
+      metrics.personaJudgeCalls.labels(String(host), outcome).inc();
+      if (outcome !== 'breaker_open') metrics.personaJudgeLatency.observe(seconds);
+    },
+
+    regenerated(): void {
+      metrics.personaRegenerated.inc();
     },
   };
 }

@@ -26,6 +26,8 @@ import { PersonaClient } from './client';
 import type { PersonaVoice } from './client';
 import { guardVoice } from './guard';
 import type { LimitId } from './guard';
+import type { JevClient } from './jev';
+import { personaJudge } from './judge';
 import type { PersonaMetrics } from './metrics';
 import type { ModelProvider } from './provider';
 import { generateSurface } from './surface';
@@ -43,6 +45,8 @@ export interface RunnerDeps {
   readonly db: Database;
   readonly budget: PersonaBudget;
   readonly provider: ModelProvider | null;
+  /** Shared by every persona, so its breakers see the whole population's calls. */
+  readonly jev: JevClient;
   readonly metrics: PersonaMetrics;
   readonly url: string;
   readonly origin: string;
@@ -100,10 +104,26 @@ export async function startPersona(
     written: false,
   };
 
+  // One judge per conversation over one shared client: the spend callback is
+  // per conversation, the breakers are per process.
+  const judge = personaJudge({
+    jev: deps.jev,
+    logger: deps.logger,
+    minConfidence: deps.config.personas.jev.minConfidence,
+    inputMicroCentsPerMTok: deps.config.personas.jev.inputMicroCentsPerMTok,
+    budget: deps.budget,
+    onSpend: (event) => {
+      deps.metrics.spend(event);
+      state.cost += event.costMicroCents;
+    },
+  });
+
   const voice = guardVoice({
     inner,
+    judge,
     logger: deps.logger,
     events: {
+      onRegenerate: () => deps.metrics.regenerated(),
       onTrip: (trip) => {
         state.limits.add(trip.limit);
         deps.metrics.limitTripped(trip);

@@ -80,6 +80,15 @@ export interface CadenceTuning {
   readonly openingTurns: number;
   /** The most words an opening reply may carry, however many it was given. */
   readonly openingMaxWords: number;
+  /**
+   * How long after the partner's last message a reply starts being written.
+   *
+   * People here send in bursts, and a reply started on the first line of one is
+   * abandoned the moment the second lands. This waits for the burst to finish,
+   * then answers all of it at once. It counts toward the reading pause rather
+   * than adding to it.
+   */
+  readonly coalesceMs: number;
 }
 
 /** What this project ships. The defaults in `config.ts` are these numbers. */
@@ -99,6 +108,7 @@ export const DEFAULT_CADENCE: CadenceTuning = Object.freeze({
   thinkSpreadMs: 1200,
   openingTurns: 3,
   openingMaxWords: 12,
+  coalesceMs: 1800,
 });
 
 export interface Cadence {

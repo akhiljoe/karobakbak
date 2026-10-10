@@ -23,6 +23,7 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom
 
 import type { Config, RetentionPriority } from '../config';
 import { CLIENT_EVENTS, INTENTS } from '../protocol/types';
+import { JEV_OUTCOMES } from '../personas/jev';
 
 /** Fixed label sets. Anything not listed here is a bug, not a new value. */
 export const DELIVERY_ROUTES = ['local', 'remote', 'dropped'] as const;
@@ -593,6 +594,11 @@ export interface Metrics {
   /** Provider health, needed the moment there is more than one vendor. */
   readonly personaProviderRequests: Counter<'provider' | 'model' | 'outcome'>;
   readonly personaProviderLatency: Histogram<'provider'>;
+  /** Jev calls by host index and outcome. Host is an index, never a URL. */
+  readonly personaJudgeCalls: Counter<'host' | 'outcome'>;
+  readonly personaJudgeLatency: Histogram<string>;
+  /** Drafts regenerated because the judge was confident they did not answer the stranger. */
+  readonly personaRegenerated: Counter<string>;
 
   /* spool and breaker */
   readonly spoolRecords: Gauge<string>;
@@ -933,6 +939,20 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
       [0.25, 0.5, 1, 2, 4, 8, 16],
       ['provider'],
     ),
+    personaJudgeCalls: counter(
+      'chat_persona_judge_calls_total',
+      'Jev decision calls, by host index and outcome; anything but ok fell back to rules',
+      ['host', 'outcome'],
+    ),
+    personaJudgeLatency: histogram(
+      'chat_persona_judge_latency_seconds',
+      'Jev decision call latency',
+      [0.1, 0.25, 0.5, 1, 2, 4],
+    ),
+    personaRegenerated: counter(
+      'chat_persona_regenerated_total',
+      'Persona drafts regenerated because the judge found they did not answer the stranger',
+    ),
 
     spoolRecords: gauge('chat_spool_records', 'Records currently in the outage spool'),
     spoolBytes: gauge('chat_spool_bytes', 'Bytes currently in the outage spool'),
@@ -1041,6 +1061,9 @@ export function createMetrics(config: Config, options: MetricsOptions = {}): Met
   for (const reason of PERSONA_SKIP_REASONS) metrics.personaFillSuppressed.labels(reason).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaLimitTrips.labels(limit).inc(0);
   for (const limit of PERSONA_LIMITS) metrics.personaSessionsFlagged.labels(limit).inc(0);
+  // Host 0 only: a fallback host is optional, and a zeroed series for one that
+  // is not configured would chart as a host that exists and is never used.
+  for (const outcome of JEV_OUTCOMES) metrics.personaJudgeCalls.labels('0', outcome).inc(0);
 
   return metrics;
 }

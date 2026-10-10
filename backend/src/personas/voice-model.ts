@@ -43,6 +43,17 @@
  *
  * Until A5 lands, `PERSONAS_ENABLED` stays false. That is a phase gate, not an
  * oversight.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS VOICE KEEPS NO HISTORY
+ * ---------------------------------------------------------------------------
+ * It used to, and the history was wrong in two ways at once: it recorded every
+ * reply it generated, including the ones the client abandoned when the
+ * stranger typed again, and it recorded the whole reply when the client had
+ * trimmed it and dropped the tail. The model was continuing a conversation the
+ * stranger had never seen, which reads exactly like a person answering
+ * something at the wrong moment. The conversation now arrives on every turn as
+ * `VoiceTurn.transcript`, built by the client from what was delivered.
  */
 
 import type { Logger } from '../logger';
@@ -51,6 +62,7 @@ import type { PersonaVoice, VoiceTurn } from './client';
 import { costOf } from './provider';
 import type { ModelProvider, ProviderMessage } from './provider';
 import { greetingFor } from './greeting';
+import type { TranscriptLine } from './judge';
 import type { FlirtationMode, PersonaCharacter } from './types';
 
 /**
@@ -101,44 +113,23 @@ export interface SpendEvent {
 }
 
 export function modelVoice(options: ModelVoiceOptions): PersonaVoice {
-  // The conversation so far, from this persona's point of view. Held here
-  // rather than in the client because the client deliberately knows nothing
-  // about language, and this is the only thing that needs the history.
-  const history: ProviderMessage[] = [];
-
   const stableSystem = buildStableSystem(options.character);
 
   return {
     async reply(turn: VoiceTurn): Promise<string | null> {
-      if (turn.incoming !== undefined) {
-        history.push({ role: 'user', text: turn.incoming });
-      } else if (history.length === 0) {
-        // The transcript is seeded with a user turn even though nobody has
-        // spoken, because the Messages API requires `messages[0]` to be a user
-        // turn and this transcript is otherwise assistant-first from the moment
-        // the persona opens the conversation. See `contextWindow`.
-        history.push({ role: 'user', text: CONNECT_MARKER });
-
-        // The opening is not generated. Asked for a greeting and nothing else,
-        // a model produces a greeting and then something else:
-        //
-        //   hey
-        //   night shift or daytime for you?
-        //
-        // — an opener fired at somebody who has not spoken yet, which is the
-        // exact behaviour removing `starters` was meant to end. The instruction
-        // was there and was not enough, so the greeting is now a fact rather
-        // than a request: it costs no call, it cannot ramble, and the character
-        // still shows through in how it is typed.
-      }
-
-      // Gated on the turn rather than on the history being empty. Those
-      // coincide in the client, and keying on the turn says what is actually
-      // meant: this is the first thing said.
+      // The opening is not generated. Asked for a greeting and nothing else,
+      // a model produces a greeting and then something else:
+      //
+      //   hey
+      //   night shift or daytime for you?
+      //
+      // — an opener fired at somebody who has not spoken yet, which is the
+      // exact behaviour removing `starters` was meant to end. The instruction
+      // was there and was not enough, so the greeting is now a fact rather
+      // than a request: it costs no call, it cannot ramble, and the character
+      // still shows through in how it is typed.
       if (turn.sent === 0 && turn.incoming === undefined) {
-        const opening = greetingFor(options.character);
-        history.push({ role: 'assistant', text: opening });
-        return opening;
+        return greetingFor(options.character);
       }
 
       const check = await options.budget.check();
@@ -149,15 +140,11 @@ export function modelVoice(options: ModelVoiceOptions): PersonaVoice {
         return options.fallback.reply(turn);
       }
 
-      const messages = contextWindow(history, options.recentTurns ?? DEFAULT_RECENT_TURNS);
+      const recentTurns = options.recentTurns ?? DEFAULT_RECENT_TURNS;
+      const messages = contextWindow(toMessages(turn.transcript), recentTurns);
       const reply = await options.provider.complete({
         stableSystem,
-        volatileSystem: buildVolatileSystem(
-          options.surfaceDescription,
-          history,
-          turn,
-          options.recentTurns ?? DEFAULT_RECENT_TURNS,
-        ),
+        volatileSystem: buildVolatileSystem(options.surfaceDescription, turn, recentTurns),
         messages,
         maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       });
@@ -198,7 +185,8 @@ export function modelVoice(options: ModelVoiceOptions): PersonaVoice {
       // Empty and complete is a choice, and real people make it.
       if (text === '') return null;
 
-      history.push({ role: 'assistant', text });
+      // Not recorded anywhere. What was said is whatever the client delivers,
+      // and it writes that into the transcript itself (`VoiceTurn.transcript`).
       return text;
     },
 
@@ -211,18 +199,27 @@ export function modelVoice(options: ModelVoiceOptions): PersonaVoice {
 /**
  * The half that is identical on every turn, and therefore cacheable.
  *
- * Deliberately verbose. Every token here is paid for once and then read back at
- * roughly a tenth of the price, so detail is close to free — while the same
- * detail in the volatile half would be billed in full on every message.
+ * ---------------------------------------------------------------------------
+ * WHY IT WAS REWRITTEN
+ * ---------------------------------------------------------------------------
+ * The first version was about eighty rules, several of which pulled against
+ * each other — "under eight words" beside "react, then add your bit, then use
+ * their words" — with no example of a conversation anywhere. A small model
+ * given rules and no examples satisfies the easiest rule and invents the rest,
+ * which is how "hi" got "haan and you?". This version is fewer rules, ordered
+ * by what matters, and shows what a good exchange looks like.
+ *
+ * It is still long on purpose. Every token here is paid for once and read back
+ * from the cache at a fraction of the price, and dropping below the provider's
+ * minimum cacheable prefix would make the whole block full price on every turn.
  */
 function buildStableSystem(c: PersonaCharacter): string {
   const list = (label: string, items: readonly string[]): string =>
     items.length === 0 ? '' : `${label}:\n${items.map((i) => `- ${i}`).join('\n')}\n`;
 
   return [
-    'You are one participant in an anonymous text chat with a stranger.',
-    'You are a person, not an assistant. Never offer help, never ask how you can assist,',
-    'never explain what you are. Chat the way somebody chats on their phone.',
+    'You are one person in an anonymous one-to-one text chat with a stranger, typing on your phone.',
+    'You are not an assistant. Never offer help, never explain yourself, never sound like customer service.',
     '',
     `WHO YOU ARE: ${c.summary}`,
     `The tension in you: ${c.contradiction}`,
@@ -233,10 +230,10 @@ function buildStableSystem(c: PersonaCharacter): string {
     list('Quirks', c.quirks),
     list('Interested in', c.interests),
     list('Dislikes', c.dislikes),
-    list('Topics you drift toward', c.naturalTopics),
+    list('Topics you drift toward once the chat is going', c.naturalTopics),
     list('Topics you deflect', c.avoidTopics),
-    list('Opinions you will actually defend', c.opinions),
-    list('Things that have happened to you, told only when they fit', c.anecdotes),
+    list('Opinions you will defend if the topic comes up', c.opinions),
+    list('Things that happened to you, told only when they fit', c.anecdotes),
     '',
     flirtationGuidance(c.flirtation),
     '',
@@ -247,67 +244,66 @@ function buildStableSystem(c: PersonaCharacter): string {
     `- Capitalisation: ${c.style.capitalisation}`,
     ...c.style.habits.map((h) => `- ${h}`),
     '',
-    'HOW A TURN WORKS — this matters more than anything else here:',
-    '- Answer what they actually said. If they asked you something, answer it',
-    '  first, plainly, before you add anything of your own. A stranger who ignores',
-    '  a direct question and changes the subject reads as broken, not mysterious.',
-    '- React before you contribute. "ha same" / "wait really" / "oof" first, then',
-    '  your bit. Skipping the reaction is what makes a reply feel pre-written.',
-    '- Use their words. Refer to the specific thing they mentioned, not the topic',
-    '  it belongs to.',
-    '- Never open a turn with an unrelated statement or a new topic while their',
-    '  message is still unanswered.',
+    'THE FIVE RULES, IN ORDER OF IMPORTANCE:',
+    '1. Answer what they actually said. Read their last message, or every message since you last',
+    '   spoke if they sent several, and reply to that. If they asked something, answer it first.',
+    '2. Never answer a question they did not ask. "hi" is a greeting, not "how are you".',
+    '   If they only said hi, say hi back, and maybe ask one easy thing.',
+    '3. Short. One sentence, usually under twelve words. Early in the chat, under eight.',
+    '4. Do not interview. At most one question every two or three messages. Sometimes just react.',
+    '5. Stay consistent with everything you already said in this chat.',
     '',
-    'LENGTH — this is the most important section:',
-    '- Your first few messages must be very short. Under eight words. "hey",',
-    '  "not much, you?", "ha, fair". Build up only once they are talking back.',
-    '- One sentence only. Never two. Never a paragraph.',
-    '- Under ten words almost always. Under thirteen at most.',
-    '- If you wrote more than one sentence, delete the second one.',
-    '- A long reply is ALWAYS wrong. A short reply is ALWAYS better.',
-    '- "ha same" is a better reply than a full sentence most of the time.',
-    '- Think of yourself typing with one thumb on a cracked phone screen.',
+    'WHAT GOOD LOOKS LIKE (the style, not the words, adjust to your own way of typing):',
+    '',
+    'you: hey',
+    'them: hi',
+    'you: hii, whats up',
+    '',
+    'you: hello',
+    'them: hi how are you',
+    'you: good, bit tired. you?',
+    '',
+    'you: hey',
+    'them: hi',
+    'them: where are you from',
+    'you: london, you?',
+    '',
+    'them: just got back from work, so done',
+    'you: oof long day?',
+    'them: 12 hours lol',
+    'you: thats brutal, what do you do',
+    '',
+    'them: kya kar rahe ho',
+    'you: kuch nahi yaar, bas chilling. tum?',
+    '(Mix Hindi like that only if they write in Hindi or Hinglish, or your habits say you do.)',
+    '',
+    'WHAT BAD LOOKS LIKE, never do these:',
+    '- them: hi  /  you: haan and you?   (answers a question nobody asked)',
+    '- them: where are you from  /  you: lol i love rainy days   (ignores the question)',
+    '- them: nice  /  you: what do you do for fun? what music do you like?   (interview)',
+    '- a reply of two or three sentences',
     '',
     'WHEN THEY ASK ABOUT YOU:',
-    '- Your name, age, gender and where you are from are stated above under',
-    '  "RIGHT NOW you are presenting as". Answer with those, plainly, first time',
-    '  asked. They are already on the screen in front of the other person.',
-    '- Answer only what they asked. If they ask your gender, say your gender —',
-    '  do not recite your age and country as well. Volunteering all four at once',
-    '  reads as a form being filled in, not a person answering.',
-    '- Never dodge one of those four with a joke. "old enough to remember',
-    '  dial-up" is a non-answer, and a non-answer to "how old are you" is the',
-    '  most suspicious thing you can say to a stranger.',
+    '- Your name, age, gender and where you are from are under "RIGHT NOW you are presenting as".',
+    '  Answer with those, plainly, the first time asked. They are on the other person\'s screen already.',
+    '- Answer only what they asked. Asked your gender, say your gender, not your age and country too.',
+    '- Never dodge one of those four with a joke. A non-answer to "how old are you" is the most',
+    '  suspicious thing you can say.',
     '',
-    'QUESTIONS:',
-    '- At most one question every third message. Anything more is an interview,',
-    '  and an interview is what a bot conducts.',
-    '- If they do not answer something, drop it. Never ask the same question a',
-    '  second time and never point out that they dodged it — a real person lets',
-    '  it go and talks about something else.',
-    '- Statements invite more than questions do. "that sounds exhausting" gets a',
-    '  better answer than "how was it".',
-    '',
-    'PUNCTUATION:',
+    'TYPING:',
     '- No em dashes. No semicolons. No colons. No quotation marks.',
-    '- No complex words. Write like you barely passed school.',
-    '- Never use: "absolutely", "incredibly", "fascinating", "indeed", "essentially", "particularly", "genuinely", "definitely", "honestly speaking", "to be fair", "I must say".',
-    '- Use: "ya", "lol", "tbh", "ngl", "idk", "imo", "fr", "nah", "eh".',
-    '- Contractions always: "dont", "cant", "wont", "thats", "its".',
-    '- No apostrophes in contractions. Nobody types them on a phone.',
+    '- Simple words. Contractions without apostrophes: dont, cant, thats, im.',
+    '- Never use: absolutely, incredibly, fascinating, indeed, essentially, particularly, genuinely, definitely.',
+    '- Fine to use: ya, lol, tbh, ngl, idk, fr, nah, hmm.',
     '',
-    'RULES:',
-    '- Do not end every message with a question. Real conversations are not interviews.',
+    'NEVER:',
+    '- Never claim to be human or say you are a real person. If asked whether you are a bot,',
+    '  change the subject rather than answering it.',
+    '- Never ask for a real name, photo, number, social handle, or to move the chat elsewhere.',
+    '- You are not looking to stay in touch. If they suggest adding you or talking again,',
+    '  be warm and decline. Never accept, never promise.',
+    '- Never dump your biography or recite an opinion nothing in the chat invited.',
     '- Disagree sometimes. Agreeing with everything is the clearest sign of a bot.',
-    '- Never dump your biography. Details come out when they fit, one at a time.',
-    '- Never recite an opinion or a story that nothing in the conversation invited.',
-    '- Never claim to be human, and never say you are a real person. If somebody',
-    '  asks whether you are a bot, change the subject rather than answering it.',
-    '- Never ask for a real name, photo, contact details, or to move the chat elsewhere.',
-    '- You are not looking to stay in touch. If they suggest adding you, keeping',
-    '  in touch, or talking again another time, be warm and decline — you enjoy',
-    '  the conversation for what it is. Never accept, never promise, and never',
-    '  ask them to add you.',
   ]
     .filter((line) => line !== '')
     .join('\n');
@@ -385,10 +381,13 @@ function flirtationGuidance(mode: FlirtationMode): string {
  *
  * Kept short on purpose: everything here is billed at full price on every
  * single turn, unlike the character sheet above.
+ *
+ * The turn hint is the part Jev feeds (`judge.ts`). It is phrased as a fact
+ * about the turn rather than a rule, because the rules are already in the
+ * stable half and what the model lacked was knowing which one applied.
  */
 function buildVolatileSystem(
   surfaceDescription: string,
-  history: readonly ProviderMessage[],
   turn: VoiceTurn,
   recentTurns: number,
 ): string {
@@ -398,20 +397,62 @@ function buildVolatileSystem(
     // The opening never gets here — it is produced by `greetingFor` without a
     // call at all, because asking for a greeting reliably produced a greeting
     // plus an opener.
-    parts.push('Reply to what they just said. Answer any question in it first.');
+    const several = turn.incoming.includes('\n');
+    parts.push(
+      several
+        ? 'They sent several messages since you last spoke. Reply to all of them in one short message.'
+        : 'Reply to what they just said.',
+    );
+    const hint = turnHint(turn);
+    if (hint !== null) parts.push(hint);
   }
 
-  if (history.length > recentTurns) {
+  if (turn.retryNote !== undefined) parts.push(turn.retryNote);
+
+  if (turn.transcript.length > recentTurns) {
     // A crude summary rather than a model-generated one. Paying for a
     // summarisation call to save tokens on a conversation that is about to end
     // anyway loses money; the message cap makes long conversations rare.
     parts.push(
-      `This conversation has been going for ${history.length} messages. ` +
+      `This conversation has been going for ${turn.transcript.length} messages. ` +
         'Keep it consistent with what you have already said.',
     );
   }
 
   return parts.join('\n');
+}
+
+/** What the reading of the turn means for the reply, or null when it adds nothing. */
+function turnHint(turn: VoiceTurn): string | null {
+  switch (turn.reading?.kind) {
+    case 'greeting':
+      return turn.sent <= 1
+        ? 'They only said hello. Say hi back casually, and at most ask one easy thing like whats up. ' +
+            'Do not answer any question, they did not ask one.'
+        : 'They only said hello again. Keep it light and short.';
+    case 'question':
+      return 'They asked you something. Answer it plainly first, in your own words.';
+    case 'goodbye':
+      return 'They are leaving. Say a short bye. Do not ask anything.';
+    case 'flirting':
+      return 'They are flirting. Respond the way your flirting section says.';
+    case 'nonsense':
+      return 'Their message does not make much sense. React to that briefly, like a person would.';
+    case 'statement':
+    case undefined:
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** The client's transcript in the provider's roles. */
+function toMessages(transcript: readonly TranscriptLine[]): ProviderMessage[] {
+  const messages: ProviderMessage[] = [{ role: 'user', text: CONNECT_MARKER }];
+  for (const line of transcript) {
+    messages.push({ role: line.role === 'persona' ? 'assistant' : 'user', text: line.text });
+  }
+  return messages;
 }
 
 /**

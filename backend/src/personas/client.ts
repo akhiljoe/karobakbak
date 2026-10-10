@@ -64,6 +64,7 @@ import {
 } from '../protocol/types';
 import { DEFAULT_CADENCE, humanCadence, openingBrevity, splitIntoBubbles } from './cadence';
 import type { Cadence, CadenceTuning } from './cadence';
+import type { IncomingReading, TranscriptLine } from './judge';
 import type { PersonaCharacter } from './types';
 
 /* -------------------------------------------------------------------------- */
@@ -71,11 +72,34 @@ import type { PersonaCharacter } from './types';
 /* -------------------------------------------------------------------------- */
 
 export interface VoiceTurn {
-  /** What the partner just said. Absent when opening the conversation. */
+  /**
+   * What the partner has said since this persona last spoke, one message per
+   * line. Absent when opening the conversation.
+   *
+   * Every unanswered message, not only the newest: people here type in bursts
+   * ("hi" / "kaha se ho?"), and answering only the last line of a burst is
+   * exactly the reply that reads as not having listened.
+   */
   readonly incoming?: string;
   readonly character: PersonaCharacter;
   /** How many messages this persona has already sent in this conversation. */
   readonly sent: number;
+  /**
+   * The conversation as the partner saw it: their messages as they arrived and
+   * this persona's as they were **delivered** — after shaping, after the
+   * bubble split, and never a reply that was abandoned before it was sent.
+   *
+   * Owned by the client because only the client knows what was delivered. The
+   * model voice used to keep its own history and recorded every reply it
+   * generated, including ones cancelled when the partner typed again and the
+   * tails `splitIntoBubbles` dropped — so the model was continuing a
+   * conversation the stranger had never seen.
+   */
+  readonly transcript: readonly TranscriptLine[];
+  /** What kind of turn this is, read before the voice is asked (`judge.ts`). */
+  readonly reading?: IncomingReading;
+  /** Set on a second attempt, saying what was wrong with the first draft. */
+  readonly retryNote?: string;
 }
 
 /**
@@ -247,6 +271,10 @@ export class PersonaClient {
   private features: ServerFeatures | null = null;
   private buckets = new Map<string, Bucket>();
   private sentThisConversation = 0;
+  /** What was actually said in this conversation, by both sides. See `VoiceTurn.transcript`. */
+  private transcript: TranscriptLine[] = [];
+  /** Partner messages that arrived since this persona last spoke. */
+  private unanswered: string[] = [];
   private pendingReply: (() => void) | null = null;
   private closedReason: number | null = null;
   private messageCounter = 0;
@@ -334,7 +362,7 @@ export class PersonaClient {
    */
   joinQueue(): boolean {
     if (!this.allow('join_queue')) return false;
-    this.sentThisConversation = 0;
+    this.resetConversation();
     this.clearSilenceTimer();
     this.resetRepetition();
     this.send('join_queue', { profile: this.options.profile, intent: this.options.intent });
@@ -353,7 +381,7 @@ export class PersonaClient {
   skip(): boolean {
     if (!this.allow('skip')) return false;
     this.send('skip', {});
-    this.sentThisConversation = 0;
+    this.resetConversation();
     this.clearSilenceTimer();
     this.resetRepetition();
     this.state = 'searching';
@@ -397,12 +425,12 @@ export class PersonaClient {
       case 'matched': {
         const payload = envelope.payload as MatchedPayload;
         this.state = 'matched';
-        this.sentThisConversation = 0;
+        this.resetConversation();
         this.resetRepetition();
         this.emit({ kind: 'matched', matchId: payload.matchId });
         // Opening line. A persona that waits for the stranger to speak first is
         // realistic but produces a lot of dead matches, so it opens.
-        await this.speak(undefined);
+        await this.speak(false);
         return;
       }
 
@@ -424,7 +452,9 @@ export class PersonaClient {
           return;
         }
 
-        await this.speak(text);
+        this.transcript.push({ role: 'stranger', text });
+        this.unanswered.push(text);
+        await this.speak(true);
         return;
       }
 
@@ -494,13 +524,30 @@ export class PersonaClient {
    * frame would either be refused or land in whatever conversation holds that
    * session id now.
    */
-  private async speak(incoming: string | undefined): Promise<void> {
+  private async speak(answering: boolean): Promise<void> {
     const generation = this.speakGeneration + 1;
     this.speakGeneration = generation;
 
+    /** Still the current run, and still in a conversation to send into. */
+    const live = (): boolean =>
+      this.speakGeneration === generation && this.state === 'matched';
+
+    // A beat for the rest of a burst. Somebody who types "hi" and then
+    // "kaha se ho" two seconds later wants one answer to both; starting the
+    // model on the first line only to abandon it when the second lands pays
+    // for a reply nobody sees. A newer message restarts this run, so the wait
+    // is measured from the *last* message, which is the point.
+    const coalesceMs = answering ? this.tuning.coalesceMs : 0;
+    if (coalesceMs > 0) {
+      await this.sleep(coalesceMs);
+      if (!live()) return;
+    }
+
+    const incoming = answering && this.unanswered.length > 0 ? this.unanswered.join('\n') : undefined;
     const turn: VoiceTurn = {
       character: this.options.character,
       sent: this.sentThisConversation,
+      transcript: [...this.transcript],
       ...(incoming === undefined ? {} : { incoming }),
     };
 
@@ -509,18 +556,20 @@ export class PersonaClient {
       return;
     }
 
-    /** Still the current run, and still in a conversation to send into. */
-    const live = (): boolean =>
-      this.speakGeneration === generation && this.state === 'matched';
-
     // Reading and thinking happen while the reply is being produced, not after.
+    // The coalescing beat already counted as reading.
     const [, text] = await Promise.all([
-      this.sleep(this.cadence.readingPauseMs(incoming)),
+      this.sleep(Math.max(0, this.cadence.readingPauseMs(incoming) - coalesceMs)),
       Promise.resolve(this.options.voice.reply(turn)),
     ]);
 
     if (!live()) return;
-    if (text === null || text.trim() === '') return;
+    if (text === null || text.trim() === '') {
+      // Choosing silence is still having read them. Leaving the messages
+      // unanswered would make the next turn answer them again, late.
+      this.unanswered = [];
+      return;
+    }
 
     // Short at the start, whatever the voice produced. A stranger who opens
     // with a paragraph is one you stop reading.
@@ -544,6 +593,10 @@ export class PersonaClient {
       // is the same tell in the other direction.
       this.setTyping(false);
       this.send('message', { text: bubble, type: 'text' });
+      // Recorded as sent, bubble by bubble: if the partner types mid-reply and
+      // the rest is abandoned, the transcript holds exactly what they saw.
+      this.transcript.push({ role: 'persona', text: bubble });
+      if (delivered === 0) this.unanswered = [];
       delivered += 1;
       this.emit({ kind: 'sent', length: bubble.length });
 
@@ -629,6 +682,13 @@ export class PersonaClient {
     }
 
     return this.repeatCount >= this.repeatsBeforeLeaving;
+  }
+
+  /** A new conversation starts from nothing said and nothing owed. */
+  private resetConversation(): void {
+    this.sentThisConversation = 0;
+    this.transcript = [];
+    this.unanswered = [];
   }
 
   private resetRepetition(): void {

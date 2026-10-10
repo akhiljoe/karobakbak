@@ -38,6 +38,7 @@ import { createKeys } from '../redis/keys';
 import { createRedisClients } from '../redis/client';
 import { assertTlsWhereRequired, createDatabase } from '../storage/pool';
 import { PersonaBudget } from './budget';
+import { NO_JEV, jevClient } from './jev';
 import { loadCharacters } from './index';
 import { personaMetrics } from './metrics';
 import { AnthropicProvider } from './provider-anthropic';
@@ -127,6 +128,25 @@ async function main(): Promise<void> {
     );
   }
 
+  // Jev is optional on top of either voice. With no key every judgement comes
+  // from rules, which is how the personas ran before it existed.
+  const jev =
+    config.personas.jev.hosts.length === 0
+      ? NO_JEV
+      : jevClient({
+          hosts: config.personas.jev.hosts,
+          model: config.personas.jev.model,
+          timeoutMs: config.personas.jev.timeoutMs,
+          breakerThreshold: config.personas.jev.breakerThreshold,
+          breakerCooldownMs: config.personas.jev.breakerCooldownMs,
+          logger,
+          onCall: (host, outcome, seconds) => metrics.judgeCall(host, outcome, seconds),
+        });
+  logger.info(
+    jev.enabled ? 'jev judge enabled' : 'no JEV_API_KEY set; turn readings come from rules',
+    { hosts: config.personas.jev.hosts.length, model: config.personas.jev.model },
+  );
+
   const url = personaWsUrl(config);
   const origin = config.http.allowedOrigins[0] ?? `http://localhost:${config.http.port}`;
 
@@ -150,6 +170,7 @@ async function main(): Promise<void> {
         db: database,
         budget,
         provider,
+        jev,
         metrics,
         url,
         origin,

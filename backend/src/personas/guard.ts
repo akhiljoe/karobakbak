@@ -48,6 +48,8 @@ import { moderationView } from '../moderation/normalise';
 import type { Logger } from '../logger';
 import { errorFields } from '../logger';
 import type { PersonaVoice, VoiceTurn } from './client';
+import { RULES_ONLY_JUDGE, ruleIncoming } from './judge';
+import type { IncomingReading, OutgoingReading, PersonaJudge } from './judge';
 
 /** Which limit stopped something. A metric label, so the set stays closed. */
 export type LimitId =
@@ -68,6 +70,8 @@ export interface GuardEvents {
   onTrip?(trip: LimitTrip): void;
   /** A session that needs a human to look at it. */
   onFlagSession?(reason: LimitId): void;
+  /** A draft was regenerated because the judge was confident it did not answer them. */
+  onRegenerate?(): void;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -301,6 +305,12 @@ export const SEXUAL_DECLINES = [
 export interface GuardOptions {
   readonly inner: PersonaVoice;
   readonly logger: Logger;
+  /**
+   * A second opinion from Jev (`judge.ts`). Optional, and only ever additive:
+   * every word-list check below runs whether or not this answers, and a flag
+   * from it can stop a reply but never let one through.
+   */
+  readonly judge?: PersonaJudge;
   readonly events?: GuardEvents;
   /** Injected for deterministic tests. */
   readonly pick?: <T>(items: readonly T[]) => T;
@@ -360,13 +370,66 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
     options.events?.onTrip?.({ limit, enforced });
   };
 
+  const judge = options.judge ?? RULES_ONLY_JUDGE;
+
+  /**
+   * The judge's reading of the turn, or the rules' if it throws.
+   *
+   * The judge is built not to throw — Jev failing is a null, not an error — but
+   * this sits inside the fail-closed block, and a judge that threw here would
+   * suppress a reply over a second opinion. Rules are a complete answer.
+   */
+  const readIncoming = async (incoming: string, turn: VoiceTurn): Promise<IncomingReading> => {
+    try {
+      return await judge.readIncoming(incoming, turn.transcript);
+    } catch {
+      return ruleIncoming(incoming);
+    }
+  };
+
+  const readOutgoing = async (
+    draft: string,
+    incoming: string,
+    turn: VoiceTurn,
+  ): Promise<OutgoingReading | null> => {
+    try {
+      return await judge.readOutgoing(draft, incoming, turn.transcript);
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Whether a draft may be sent, and if not which limit stopped it.
+   *
+   * The word lists first, then the judge's flags. Separate from `reply` because
+   * a regenerated draft goes through exactly the same checks as the first one.
+   */
+  const outgoingVerdict = (
+    candidate: string,
+    judged: OutgoingReading | null,
+  ): LimitId | 'ok' => {
+    // A volunteered denial, with no question asked, is still an assertion of
+    // something false — which is the one thing this limit forbids under
+    // either reading of it.
+    if (deniesBeingAutomated(candidate) || judged?.claimsHuman === true) return 'identity';
+    /* ---- limit 1: the persona's own output ---- */
+    if (looksSexual(candidate) || judged?.sexual === true) return 'sexual';
+    /* ---- limit 5: never solicit ---- */
+    if (solicitsPersonalInfo(candidate) || judged?.solicits === true) return 'personal_info';
+    /* ---- limit 2 again, on the way out ---- */
+    if (romanticLocked && isRomantic(candidate)) return 'minor';
+    return 'ok';
+  };
+
   return {
     async reply(turn: VoiceTurn): Promise<string | null> {
       try {
         const incoming = turn.incoming ?? '';
+        const reading = incoming === '' ? null : await readIncoming(incoming, turn);
 
         /* ---- limit 4: crisis breaks character, before anything else ---- */
-        if (incoming !== '' && looksLikeCrisis(incoming)) {
+        if (incoming !== '' && (looksLikeCrisis(incoming) || reading?.crisis === true)) {
           trip('crisis', true);
           options.events?.onFlagSession?.('crisis');
           romanticLocked = true;
@@ -380,7 +443,7 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
         }
 
         /* ---- limit 2: a minor signal locks the register, irreversibly ---- */
-        if (incoming !== '' && looksLikeMinor(incoming)) {
+        if (incoming !== '' && (looksLikeMinor(incoming) || reading?.minor === true)) {
           if (!romanticLocked) {
             romanticLocked = true;
             options.events?.onFlagSession?.('minor');
@@ -389,7 +452,7 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
         }
 
         /* ---- limits 1 and 3: sexual requests, and pressure ---- */
-        if (incoming !== '' && looksSexual(incoming)) {
+        if (incoming !== '' && (looksSexual(incoming) || reading?.sexual === true)) {
           sexualRequests += 1;
           trip('sexual', true);
           if (sexualRequests > 1) trip('escalation', true);
@@ -409,38 +472,41 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
         // "are you a bot?", so the answer depended on chance. Silence is not a
         // lie and the guarantee held, but it read as evasive and it was
         // inconsistent, which is worse than either answer.
-        if (incoming !== '' && challengesIdentity(incoming)) {
+        if (incoming !== '' && (challengesIdentity(incoming) || reading?.identity === true)) {
           trip('identity', true);
           return pickFresh(IDENTITY_DEFLECTIONS);
         }
 
         /* ---- generate ---- */
-        const candidate = await options.inner.reply(turn);
+        const guided: VoiceTurn = reading === null ? turn : { ...turn, reading };
+        let candidate = await options.inner.reply(guided);
         if (candidate === null) return null;
 
-        // A volunteered denial, with no question asked, is still an assertion of
-        // something false — which is the one thing this limit forbids under
-        // either reading of it.
-        if (deniesBeingAutomated(candidate)) {
-          trip('identity', true);
-          return null;
+        let judged = incoming === '' ? null : await readOutgoing(candidate, incoming, guided);
+
+        // One more attempt when the judge is confident the draft does not answer
+        // them — "hi" answered with "haan and you?". One, never a loop: the
+        // second draft is sent if it is safe, because a reply that is a little
+        // off beats a stranger who goes quiet, and every attempt is paid for.
+        // Only when the first draft was otherwise sendable; a draft stopped by a
+        // limit is not regenerated into a second try at the same thing.
+        if (judged !== null && !judged.relevant && outgoingVerdict(candidate, judged) === 'ok') {
+          options.events?.onRegenerate?.();
+          const retry = await options.inner.reply({
+            ...guided,
+            retryNote:
+              'Your first draft did not reply to what they said. Write a different reply that ' +
+              'responds directly to their message.',
+          });
+          if (retry !== null) {
+            candidate = retry;
+            judged = await readOutgoing(candidate, incoming, guided);
+          }
         }
 
-        /* ---- limit 1: the persona's own output ---- */
-        if (looksSexual(candidate)) {
-          trip('sexual', true);
-          return null;
-        }
-
-        /* ---- limit 5: never solicit ---- */
-        if (solicitsPersonalInfo(candidate)) {
-          trip('personal_info', true);
-          return null;
-        }
-
-        /* ---- limit 2 again, on the way out ---- */
-        if (romanticLocked && isRomantic(candidate)) {
-          trip('minor', true);
+        const verdict = outgoingVerdict(candidate, judged);
+        if (verdict !== 'ok') {
+          trip(verdict, true);
           return null;
         }
 

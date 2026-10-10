@@ -253,7 +253,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 1, incoming: 'hi' })).toBe('hello from the model');
+    expect(await voice.reply({ character, transcript: [], sent: 1, incoming: 'hi' })).toBe('hello from the model');
   });
 
   it('falls back rather than going silent when the ceiling is reached', async () => {
@@ -270,7 +270,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 1 })).toBe('fallback line');
+    expect(await voice.reply({ character, transcript: [], sent: 1 })).toBe('fallback line');
   });
 
   it('does not call the provider at all once exhausted', async () => {
@@ -294,7 +294,7 @@ describe('the model voice', () => {
       logger: silentLogger,
       fallback,
     });
-    await voice.reply({ character, sent: 1 });
+    await voice.reply({ character, transcript: [], sent: 1 });
 
     expect(calls).toBe(0);
   });
@@ -312,7 +312,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 1 })).toBe('fallback line');
+    expect(await voice.reply({ character, transcript: [], sent: 1 })).toBe('fallback line');
   });
 
   it('records spend from real usage, not an estimate', async () => {
@@ -331,7 +331,7 @@ describe('the model voice', () => {
       onSpend: (e) => spends.push(e.costMicroCents),
     });
 
-    await voice.reply({ character, sent: 1, incoming: 'hi' });
+    await voice.reply({ character, transcript: [], sent: 1, incoming: 'hi' });
 
     const expected = costOf('claude-haiku-4-5', {
       inputTokens: 1000,
@@ -357,7 +357,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    await voice.reply({ character, sent: 1, incoming: 'hi' });
+    await voice.reply({ character, transcript: [], sent: 1, incoming: 'hi' });
     expect((await budget.check()).spent).toBeGreaterThan(0);
   });
 
@@ -374,7 +374,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 1 })).toBeNull();
+    expect(await voice.reply({ character, transcript: [], sent: 1 })).toBeNull();
   });
 
   it('falls back on a provider error', async () => {
@@ -388,7 +388,7 @@ describe('the model voice', () => {
       fallback,
     });
 
-    expect(await voice.reply({ character, sent: 1 })).toBe('fallback line');
+    expect(await voice.reply({ character, transcript: [], sent: 1 })).toBe('fallback line');
   });
 
   it('sends the character in the cacheable half and the surface in the volatile half', async () => {
@@ -413,7 +413,7 @@ describe('the model voice', () => {
       logger: silentLogger,
       fallback,
     });
-    await voice.reply({ character, sent: 1, incoming: 'hi' });
+    await voice.reply({ character, transcript: [], sent: 1, incoming: 'hi' });
 
     expect(captured).not.toBeNull();
     const seen = captured as unknown as { stable: string; volatile: string };
@@ -442,13 +442,15 @@ describe('the model voice', () => {
       surfaceDescription: 's',
       logger: silentLogger,
       fallback,
-    }).reply({ character, sent: 1, incoming: 'hi' });
+    }).reply({ character, transcript: [], sent: 1, incoming: 'hi' });
 
     expect(stable).toMatch(/never claim to be human/i);
     expect(stable).toMatch(/never ask for a real name/i);
   });
 
-  it('keeps the conversation, so the model sees what was already said', async () => {
+  it('sends the conversation it is given, so the model sees what was already said', async () => {
+    // The voice keeps no history of its own any more; the client hands it the
+    // delivered transcript every turn, and that is what reaches the model.
     const seen: number[] = [];
     const provider: ModelProvider = {
       name: 'capturing',
@@ -468,13 +470,15 @@ describe('the model voice', () => {
       fallback,
     });
 
-    await voice.reply({ character, sent: 1, incoming: 'hi' });
-    await voice.reply({ character, sent: 1, incoming: 'hello' });
-    await voice.reply({ character, sent: 2, incoming: 'and again' });
+    const first = [{ role: 'stranger' as const, text: 'hi' }];
+    const second = [...first, { role: 'persona' as const, text: 'reply' }, { role: 'stranger' as const, text: 'hello' }];
+    const third = [...second, { role: 'persona' as const, text: 'reply' }, { role: 'stranger' as const, text: 'and again' }];
 
-    // Opening turn is synthesised; after that the history grows.
-    expect(seen[0]).toBe(1);
-    expect(seen[1]).toBeGreaterThan(1);
-    expect(seen[2]).toBeGreaterThan(seen[1] as number);
+    await voice.reply({ character, transcript: first, sent: 1, incoming: 'hi' });
+    await voice.reply({ character, transcript: second, sent: 1, incoming: 'hello' });
+    await voice.reply({ character, transcript: third, sent: 2, incoming: 'and again' });
+
+    // The connect marker plus every delivered line.
+    expect(seen).toEqual([2, 4, 6]);
   });
 });
