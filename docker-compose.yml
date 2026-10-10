@@ -852,6 +852,11 @@ services:
       - "--server.http.listen-addr=0.0.0.0:12345"
       - "--storage.path=/var/lib/alloy/data"
       - "/etc/alloy/config.alloy"
+    # The project whose containers this Alloy ships, and only those. Compose
+    # fills COMPOSE_PROJECT_NAME itself (base name, prod override, or `-p`), so
+    # each stack on a shared engine keeps its own logs. config.alloy explains.
+    environment:
+      ALLOY_COMPOSE_PROJECT: "${COMPOSE_PROJECT_NAME}"
     user: "root"
     volumes:
       - ./monitoring/alloy:/etc/alloy:ro
