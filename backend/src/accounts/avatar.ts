@@ -25,16 +25,18 @@
  * Not Redis either. Ten kilobytes per signed-in account is a different class of
  * value from everything else on that instance, which holds ids and counters,
  * and it is the same Redis every matchmaking transition runs a Lua script
- * against. What is cached there is the **URL** — 120 bytes, the same size as
- * the tokens already beside it — under the session's own TTL.
+ * against.
+ *
+ * What is kept is the **URL**, on the browser's own credential row
+ * (`020_credential_picture.sql`). It used to be cached in Redis, and Redis has
+ * persistence off (D12): on a host that restarts routinely, every restart left
+ * everybody signed in and faceless until they signed in again. On the
+ * credential it lives exactly as long as that sign-in, is cleared on sign-out,
+ * and never touches `accounts`, which still holds nothing describing a person.
  *
  * The bytes are streamed through this origin on demand and cached by the
  * browser for a day, so the steady state is one request per person per day,
  * made by this server rather than by them.
- *
- * Redis has persistence off (D12), so a restart drops the URL and the next
- * sign-in refills it. Acceptable precisely because the absence is already an
- * ordinary state, handled everywhere.
  *
  * It is account-scoped and never part of the declared `Profile`, so no chat
  * partner and no matchmaking path can reach it. Putting a face in front of

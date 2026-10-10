@@ -120,22 +120,6 @@ export interface RedisKeys {
   /** STRING — resume-token hash to session id, so a returning socket can find its seat. */
   resume(tokenHash: string): string;
   /**
-   * Where a signed-in account's avatar lives on the provider's CDN.
-   *
-   * **The URL, never the image.** A data URI would be about ten kilobytes on an
-   * instance whose other values are ids and counters — `resume` is 44 bytes —
-   * and this is the same Redis every matchmaking transition runs a Lua script
-   * against. Image bytes do not belong beside the hot path; the URL is the same
-   * class of value as everything else here.
-   *
-   * A **cache and not a record**: never written to PostgreSQL, and Redis has
-   * persistence off (D12), so a restart drops it and the next sign-in refills
-   * it. Every reader already treats an absent avatar as ordinary, because a
-   * provider that returns none, an image too large to accept and a fetch that
-   * failed are all the same to the interface.
-   */
-  avatar(accountId: string): string;
-  /**
    * Whether an account is online *right now*.
    *
    * A key with a short TTL, refreshed while a session carrying that account is
@@ -209,7 +193,6 @@ export function createKeys(prefix: string): RedisKeys {
     blocks: (blockKey) => `${prefix}:blocks:${assertComponent(blockKey, 'block key')}`,
     ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,
     resume: (tokenHash) => `${prefix}:resume:${assertComponent(tokenHash, 'resume hash')}`,
-    avatar: (accountId) => `${prefix}:avatar:${assertComponent(accountId, 'account id')}`,
     presence: (accountId) => `${prefix}:online:${assertComponent(accountId, 'account id')}`,
     presenceToken: (token) => `${prefix}:ptok:${assertComponent(token, 'presence token')}`,
     accountSession: (accountId) => `${prefix}:sess:${assertComponent(accountId, 'account id')}`,

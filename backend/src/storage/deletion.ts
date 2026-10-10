@@ -157,6 +157,7 @@ export class DeletionWorker {
       if (!holdsLock) return { ran: false, deleted: { ...EMPTY }, more: false, failed: false };
 
       const deleted = await this.deleteExpired();
+      const pictures = await this.clearDeadPictures();
       this.lastSuccessMs = Date.now();
       for (const key of Object.keys(deleted) as Array<keyof DeletionCounts>) {
         this.totals[key] += deleted[key];
@@ -166,9 +167,10 @@ export class DeletionWorker {
       if (total > 0) {
         this.logger.info('deleted expired rows', { ...deleted, total });
       }
+      if (pictures > 0) this.logger.info('cleared expired picture urls', { count: pictures });
 
       const batch = this.config.deletion.batch;
-      const more = Object.values(deleted).some((count) => count >= batch);
+      const more = Object.values(deleted).some((count) => count >= batch) || pictures >= batch;
       return { ran: true, deleted, more, failed: false };
     } catch (err) {
       this.failures += 1;
@@ -426,6 +428,31 @@ export class DeletionWorker {
       adminAudit,
       paymentOrders,
     };
+  }
+
+  /**
+   * Clear the picture URL from credentials that no longer work.
+   *
+   * Credential rows outlive their usefulness on purpose (010_accounts.sql keeps
+   * a revoked one so a replayed token is recognisable), but the picture they
+   * carry has no such reason (020_credential_picture.sql). Sign-out clears it
+   * on the spot; this catches expiry, and anything revoked some other way.
+   *
+   * An update of one column, not a delete: that column is all the chat role is
+   * granted on the table. Not a `DeletionCounts` entry, because nothing is
+   * deleted and `chat_retention_deleted_total{table}` would say otherwise.
+   */
+  private async clearDeadPictures(): Promise<number> {
+    const result = await this.db.query(
+      `update account_credentials set picture_url = null
+        where token_hash in (
+          select token_hash from account_credentials
+           where picture_url is not null
+             and (expires_at <= now() or revoked_at is not null)
+           limit $1)`,
+      [this.config.deletion.batch],
+    );
+    return result.rowCount;
   }
 
   /**

@@ -57,7 +57,6 @@ import type { ConnectionRepository } from './connections';
 import type { BlockRepository } from './blocks';
 import type { PresenceService } from './presence';
 import type { EntitlementService } from './entitlement';
-import { createKeys } from '../redis/keys';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
 
@@ -114,11 +113,11 @@ export interface AuthRoutesDeps {
   /** Metrics, or absent in a test that does not care what was counted. */
   readonly observer?: AccountsObserver;
   /**
-   * The command connection, for the avatar URL cache only.
+   * The command connection, for reconnect offers only.
    *
-   * Sign-in itself touches no Redis — it is a PostgreSQL flow — so this is
-   * optional and every path treats its absence as "no avatar", the same as a
-   * provider that returned no picture.
+   * Sign-in itself touches no Redis — it is a PostgreSQL flow, and so is the
+   * picture URL since `020_credential_picture.sql` — so this is optional and
+   * the offer routes treat its absence as "nothing to offer".
    */
   readonly redis?: Redis;
   /** Saved connections. Absent means the routes answer as if there are none. */
@@ -228,16 +227,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
     deps;
   const observer = deps.observer;
   const auth = config.auth;
-  const keys = createKeys(config.redis.keyPrefix);
 
-  /**
-   * Remember where this account's picture lives, for as long as the session.
-   *
-   * Best effort in both directions. Redis being unavailable costs an avatar and
-   * must never cost a sign-in, which is the same rule `/ready` encodes about
-   * PostgreSQL in reverse: a subsystem that is not on the critical path may not
-   * be allowed onto it by an error handler.
-   */
   /**
    * A stable, per-viewer handle for the other side of a connection.
    *
@@ -314,28 +304,15 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
     return createHash('sha256').update(`${viewer}:${other}`).digest('hex').slice(0, 32);
   }
 
-  /** Whether there is a cached URL to serve. Any failure answers false. */
-  async function avatarUrl(accountId: string): Promise<string | null> {
-    if (redis === undefined || !auth.avatars) return null;
-    try {
-      return await redis.get(keys.avatar(accountId));
-    } catch (err) {
-      logger.warn('could not read an avatar url', errorFields(err));
-      return null;
-    }
-  }
-
-  async function hasAvatar(accountId: string): Promise<boolean> {
-    return (await avatarUrl(accountId)) !== null;
-  }
-
-  async function rememberAvatar(accountId: string, url: string | null): Promise<void> {
-    if (redis === undefined || !auth.avatars || url === null) return;
-    try {
-      await redis.set(keys.avatar(accountId), url, 'EX', auth.sessionTtlSeconds);
-    } catch (err) {
-      logger.warn('could not cache an avatar url', errorFields(err));
-    }
+  /**
+   * Where this browser's picture lives, from the credential it signed in with.
+   *
+   * On the credential row rather than in Redis since `020_credential_picture.sql`:
+   * Redis has persistence off (D12), so every restart used to leave everybody
+   * signed in and faceless until they signed in again.
+   */
+  function pictureOf(resolved: { readonly pictureUrl: string | null }): string | null {
+    return auth.avatars ? resolved.pictureUrl : null;
   }
 
   /**
@@ -511,9 +488,13 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       // mint is still counted as the account creation it was — the row exists.
       if (account.created) observer?.accountCreated();
 
-      await rememberAvatar(account.accountId, identity.picture);
-
-    const token = await mintCredential(db, logger, account.accountId, auth.sessionTtlSeconds);
+      const token = await mintCredential(
+        db,
+        logger,
+        account.accountId,
+        auth.sessionTtlSeconds,
+        auth.avatars ? identity.picture : null,
+      );
       if (token === null) {
         observer?.authCallback('no_credential');
         home(res, 'failed', mode);
@@ -569,7 +550,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
       }
       json(res, 200, {
         signedIn: true,
-        avatar: await hasAvatar(resolved.accountId),
+        avatar: pictureOf(resolved) !== null,
         premium,
       });
     },
@@ -598,7 +579,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         return;
       }
 
-      const url = await avatarUrl(resolved.accountId);
+      const url = pictureOf(resolved);
       const image =
         url === null
           ? null
@@ -1123,18 +1104,9 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
     },
 
     async signout(req: IncomingMessage, res: ServerResponse): Promise<void> {
-      // Read before the credential dies, or there is no account to forget for.
-      const resolved = await resolveAccount(db, logger, credentialOf(req));
+      // Revoking clears the picture URL too, so signing out leaves no pointer
+      // to somebody's face behind on a machine they have finished using.
       await revokeCredential(db, logger, credentialOf(req));
-      if (resolved.ok && redis !== undefined) {
-        // Signing out should not leave a picture of somebody behind on a
-        // machine they have just finished using.
-        try {
-          await redis.del(keys.avatar(resolved.accountId));
-        } catch (err) {
-          logger.warn('could not clear a cached avatar url', errorFields(err));
-        }
-      }
       clearCookie(res, SESSION_COOKIE);
       // Always 200. Signing out when not signed in is success — the caller's
       // goal is that this browser holds no working credential, and it does not.

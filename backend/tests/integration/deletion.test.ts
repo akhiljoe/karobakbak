@@ -466,6 +466,55 @@ describe('as the role production runs it (karobakbak_app)', () => {
   });
 });
 
+describe('picture URLs on dead credentials (020_credential_picture.sql)', () => {
+  const PICTURE = 'https://lh3.googleusercontent.com/a/abc=s96-c';
+
+  async function credential(state: 'live' | 'expired' | 'revoked'): Promise<string> {
+    const id = `acc_${newMatchId().slice(2)}`;
+    await ctx.db.query(
+      `insert into accounts (id, retention_expires_at) values ($1, now() + interval '1 year')`,
+      [id],
+    );
+    const hash = `h_${newMatchId()}`;
+    await ctx.db.query(
+      `insert into account_credentials (token_hash, account_id, expires_at, revoked_at, picture_url)
+       values (convert_to($1, 'utf8'), $2, now() + ($3 || ' hours')::interval,
+               case when $4 then now() else null end, $5)`,
+      [hash, id, state === 'expired' ? '-1' : '1', state === 'revoked', PICTURE],
+    );
+    return hash;
+  }
+
+  async function picture(hash: string): Promise<string | null | undefined> {
+    const rows = await ctx.rows<{ picture_url: string | null }>(
+      `select picture_url from account_credentials where token_hash = convert_to($1, 'utf8')`,
+      [hash],
+    );
+    return rows[0]?.picture_url;
+  }
+
+  afterEach(async () => {
+    await ctx.db.query('delete from accounts');
+  });
+
+  it('clears them as the chat role, and leaves a live one alone', async () => {
+    const live = await credential('live');
+    const expired = await credential('expired');
+    const revoked = await credential('revoked');
+
+    const result = await asChatRole((db) =>
+      new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass(),
+    );
+
+    expect(result.failed).toBe(false);
+    expect(await picture(live)).toBe(PICTURE);
+    expect(await picture(expired)).toBeNull();
+    expect(await picture(revoked)).toBeNull();
+    // Cleared, not deleted: the credential row is kept for its own reasons.
+    expect(await ctx.count('account_credentials')).toBe(3);
+  });
+});
+
 describe('legal holds protect data (§15)', () => {
   it('suspends deletion of a held conversation, and of everything in it', async () => {
     // This test used to assert one thing — that the conversation row survived —
