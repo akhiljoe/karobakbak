@@ -53,6 +53,12 @@ export type JevQuestion =
       readonly type: 'choice';
       readonly instructions: string;
       readonly criteria: Readonly<Record<string, string>>;
+    }
+  | {
+      readonly type: 'score';
+      readonly instructions: string;
+      /** Level descriptions, lowest first. Two to ten of them. */
+      readonly criteria: readonly string[];
     };
 
 export type JevAnswer =
@@ -60,6 +66,13 @@ export type JevAnswer =
   | {
       readonly type: 'choice';
       readonly choice: string;
+      readonly confidence: number;
+      readonly probabilities: Readonly<Record<string, number>>;
+    }
+  | {
+      readonly type: 'score';
+      /** Probability-weighted level, so it can fall between two levels. */
+      readonly score: number;
       readonly confidence: number;
       readonly probabilities: Readonly<Record<string, number>>;
     };
@@ -272,6 +285,14 @@ function parseAnswer(raw: unknown): JevAnswer | null {
     return { type: 'noul', noul: p };
   }
 
+  if (a['type'] === 'score') {
+    const score = a['score'];
+    const confidence = a['confidence'];
+    if (typeof score !== 'number' || !Number.isFinite(score)) return null;
+    if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return null;
+    return { type: 'score', score, confidence, probabilities: numbers(a['probabilities']) };
+  }
+
   if (a['type'] === 'choice') {
     const choice = a['choice'];
     const confidence = a['confidence'];
@@ -279,14 +300,19 @@ function parseAnswer(raw: unknown): JevAnswer | null {
     if (typeof choice !== 'string') return null;
     if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return null;
     if (typeof probabilities !== 'object' || probabilities === null) return null;
-    const probs: Record<string, number> = {};
-    for (const [key, value] of Object.entries(probabilities)) {
-      if (typeof value === 'number' && Number.isFinite(value)) probs[key] = value;
-    }
-    return { type: 'choice', choice, confidence, probabilities: probs };
+    return { type: 'choice', choice, confidence, probabilities: numbers(probabilities) };
   }
 
   return null;
+}
+
+function numbers(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (typeof raw !== 'object' || raw === null) return out;
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
 }
 
 function nonNegative(value: unknown): number {

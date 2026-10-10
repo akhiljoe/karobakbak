@@ -109,8 +109,8 @@ export async function startPersona(
   const judge = personaJudge({
     jev: deps.jev,
     logger: deps.logger,
-    minConfidence: deps.config.personas.jev.minConfidence,
-    inputMicroCentsPerMTok: deps.config.personas.jev.inputMicroCentsPerMTok,
+    minConfidence: deps.config.jev.minConfidence,
+    inputMicroCentsPerMTok: deps.config.jev.inputMicroCentsPerMTok,
     budget: deps.budget,
     onSpend: (event) => {
       deps.metrics.spend(event);

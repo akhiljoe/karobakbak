@@ -206,6 +206,26 @@ describe('parsing an answer', () => {
     expect(parseResult({ answers: { kind: { type: 'noul', noul: 1.5 } } }, ['kind'])).toBeNull();
   });
 
+  it('reads a score, which can fall between two levels', () => {
+    const parsed = parseResult(
+      {
+        model: 'jev-1.13.0',
+        answers: { urgency: { type: 'score', score: 2.4, confidence: 0.7, legend: {}, probabilities: { '2': 0.6, '3': 0.4 } } },
+      },
+      ['urgency'],
+    );
+    expect(parsed?.answers['urgency']).toEqual({
+      type: 'score',
+      score: 2.4,
+      confidence: 0.7,
+      probabilities: { '2': 0.6, '3': 0.4 },
+    });
+  });
+
+  it('refuses a score without a number', () => {
+    expect(parseResult({ answers: { urgency: { type: 'score', confidence: 0.7 } } }, ['urgency'])).toBeNull();
+  });
+
   it('reads a choice with its confidence', () => {
     const parsed = parseResult(
       {

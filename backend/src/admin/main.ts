@@ -34,6 +34,9 @@ import { EnforcementService } from './enforce';
 import { PersonaConsoleService } from './personas';
 import { ReviewService } from './review';
 import { createConsoleRoutes } from './routes';
+import { ReportTriage } from './triage';
+import type { TriageOutcome } from './triage';
+import { jevClient } from '../personas/jev';
 import { createAdminServer } from './server';
 
 async function main(): Promise<void> {
@@ -109,11 +112,62 @@ async function main(): Promise<void> {
   const server = createAdminServer({ config, logger, auth, routes });
   await server.listen();
 
+  /**
+   * Report triage (D-AI-14), in this process because this is the process that
+   * is allowed to read a reported conversation (D32), as the role that is.
+   * Shadow mode by default: verdicts are written and shown, nothing acts on
+   * them. With no Jev key, or triage switched off, the console is unchanged and
+   * shows the rules estimate for every report.
+   */
+  let triageTimer: NodeJS.Timeout | null = null;
+  if (config.jev.triage.enabled && config.jev.hosts.length > 0) {
+    const tally = new Map<TriageOutcome, number>();
+    const triage = new ReportTriage({
+      db: database,
+      jev: jevClient({
+        hosts: config.jev.hosts,
+        model: config.jev.model,
+        // Nobody is waiting on a triage the way a stranger waits on a reply,
+        // so a cold start is allowed to finish rather than falling back.
+        timeoutMs: Math.max(config.jev.timeoutMs, 15_000),
+        breakerThreshold: config.jev.breakerThreshold,
+        breakerCooldownMs: config.jev.breakerCooldownMs,
+        logger,
+      }),
+      logger,
+      contextMessages: config.jev.triage.contextMessages,
+      maxAttempts: config.jev.triage.maxAttempts,
+      auditRetentionDays: config.retention.days.adminAudit,
+      onOutcome: (outcome) => tally.set(outcome, (tally.get(outcome) ?? 0) + 1),
+    });
+
+    const pass = async (): Promise<void> => {
+      tally.clear();
+      await triage.runOnce();
+      // Counts only. The verdicts themselves are on the report rows, read in
+      // the console; a log line has no business carrying them.
+      if (tally.size > 0) logger.info('report triage pass', Object.fromEntries(tally));
+    };
+
+    void pass();
+    triageTimer = setInterval(() => void pass(), config.jev.triage.intervalMs);
+    logger.info('report triage enabled', {
+      sort: config.jev.triage.sort,
+      intervalMs: config.jev.triage.intervalMs,
+    });
+  } else {
+    logger.info('report triage off; the queue shows rules estimates only', {
+      enabled: config.jev.triage.enabled,
+      hosts: config.jev.hosts.length,
+    });
+  }
+
   let stopping = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (stopping) return;
     stopping = true;
     logger.info('console shutting down', { signal });
+    if (triageTimer !== null) clearInterval(triageTimer);
     await server.close();
     await database.close();
     await clients.close();

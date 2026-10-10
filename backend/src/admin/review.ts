@@ -36,6 +36,21 @@ import type { Logger } from '../logger';
 import { dbErrorFields } from '../logger';
 import type { Database } from '../storage/pool';
 import { newAuditId } from '../util/ids';
+import { rulesUrgency } from './triage';
+
+/**
+ * Urgency first, oldest first within a level — only when `JEV_TRIAGE_SORT` is on.
+ *
+ * The rules estimate stands in for a report Jev has not read, so an untriaged
+ * grooming report is never pushed below a triaged spam one. Within a level the
+ * old order holds, for the reason given on `listOpenReports`.
+ */
+export const URGENCY_ORDER = `coalesce(r.triage_urgency,
+           case r.category when 'grooming' then 3
+                           when 'threats' then 2 when 'sexual_content' then 2
+                           when 'harassment' then 2 when 'hate' then 2
+                           else 1 end) desc,
+         r.created_at asc`;
 import type { Profile } from '../protocol/types';
 import type { AdminIdentity } from './auth';
 
@@ -59,6 +74,22 @@ export interface QueueEntry {
   readonly flags: readonly string[];
   /** Whether any message in it was withheld from delivery. */
   readonly hasWithheldMessage: boolean;
+  /**
+   * How urgent this looks (D-AI-14): Jev's verdict when it has made one,
+   * otherwise the estimate the reporter's own category implies. `source` says
+   * which, so a rules estimate is never presented as a machine verdict.
+   */
+  readonly triage: TriageView;
+}
+
+export interface TriageView {
+  /** 0 none, 1 low, 2 high, 3 critical. A Jev score can fall between levels. */
+  readonly urgency: number;
+  readonly source: 'jev' | 'rules';
+  readonly category: string | null;
+  readonly confidence: number | null;
+  /** Probability a participant is under 18. Jev only. */
+  readonly minor: number | null;
 }
 
 /** One message in a replayed conversation. */
@@ -158,6 +189,10 @@ export class ReviewService {
       message_count: number;
       flags: string[] | null;
       withheld: string;
+      triage_urgency: number | null;
+      triage_category: string | null;
+      triage_confidence: number | null;
+      triage_minor: number | null;
     }>(
       `select r.report_id, r.conversation_id, r.category, r.state, r.created_at,
               c.message_count,
@@ -169,11 +204,12 @@ export class ReviewService {
               ) as flags,
               (select count(*) from messages m
                 where m.conversation_id = r.conversation_id
-                  and m.moderation_action in ('withhold', 'block')) as withheld
+                  and m.moderation_action in ('withhold', 'block')) as withheld,
+              r.triage_urgency, r.triage_category, r.triage_confidence, r.triage_minor
          from reports r
          join conversations c on c.conversation_id = r.conversation_id
         where r.state = 'OPEN'
-        order by r.created_at asc
+        order by ${this.config.jev.triage.sort ? URGENCY_ORDER : 'r.created_at asc'}
         limit $1`,
       [capped],
     );
@@ -187,6 +223,22 @@ export class ReviewService {
       messageCount: row.message_count,
       flags: row.flags ?? [],
       hasWithheldMessage: Number(row.withheld) > 0,
+      triage:
+        row.triage_urgency === null
+          ? {
+              urgency: rulesUrgency(row.category),
+              source: 'rules' as const,
+              category: null,
+              confidence: null,
+              minor: null,
+            }
+          : {
+              urgency: row.triage_urgency,
+              source: 'jev' as const,
+              category: row.triage_category,
+              confidence: row.triage_confidence,
+              minor: row.triage_minor,
+            },
     }));
   }
 

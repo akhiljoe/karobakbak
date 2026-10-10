@@ -117,6 +117,33 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  /**
+   * Urgency, and where it came from (D-AI-14).
+   *
+   * A Jev verdict and a rules estimate share the column and never the label:
+   * "jev" means a model read the conversation, "rules" means only the
+   * reporter's chosen category was used. Text only, through `el`, like
+   * everything else in this file.
+   */
+  var URGENCY_NAMES = ['none', 'low', 'high', 'critical'];
+  function triageChips(triage) {
+    if (!triage) return [];
+    var level = Math.max(0, Math.min(3, Math.round(triage.urgency)));
+    var chips = [];
+    var label = URGENCY_NAMES[level] + ' · ' + triage.source;
+    if (triage.source === 'jev' && typeof triage.confidence === 'number') {
+      label += ' ' + Math.round(triage.confidence * 100) + '%';
+    }
+    chips.push(el('span', 'chip urgency urgency-' + level, label));
+    if (triage.source === 'jev' && triage.category) {
+      chips.push(el('span', 'chip', 'jev: ' + triage.category));
+    }
+    if (typeof triage.minor === 'number' && triage.minor >= 0.5) {
+      chips.push(el('span', 'chip withheld', 'minor? ' + Math.round(triage.minor * 100) + '%'));
+    }
+    return chips;
+  }
+
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
@@ -242,6 +269,9 @@
         chips.appendChild(el('span', 'chip', flag));
       });
       if (report.hasWithheldMessage) chips.appendChild(el('span', 'chip withheld', 'withheld'));
+      triageChips(report.triage).forEach(function (chip) {
+        chips.appendChild(chip);
+      });
       button.appendChild(chips);
 
       button.addEventListener('click', function () {
