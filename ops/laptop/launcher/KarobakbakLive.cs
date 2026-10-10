@@ -357,6 +357,20 @@ namespace Karobakbak.Live
                         "AUTH_ENABLED=true but empty: " + string.Join(", ", missingAuth) +
                         ". The backend refuses to start half-configured (step 5.3, SIGNIN-SETUP.md).");
                 else add("Sign-in settings", Level.Pass, "complete");
+
+                // The provider sends people back to AUTH_REDIRECT_URI, so it must
+                // be this site's own origin. The auth block is naturally copied
+                // from the development .env, and on the first live start that
+                // carried ***REMOVED*** along: sign-in completed at Google
+                // and landed on a tunnel that was not running (error 1033).
+                // Nothing else fails, so nothing else catches it.
+                string redirect = d.Get("AUTH_REDIRECT_URI") ?? "";
+                string expected = d.PublicOrigin() + "/auth/callback";
+                if (redirect.Length > 0 && redirect != expected)
+                    add("Sign-in return address", Level.Fail,
+                        "AUTH_REDIRECT_URI is " + redirect + " but this site is " + d.PublicOrigin() +
+                        ". Sign-in would finish somewhere else. Set it to " + expected + " (step 5.3).");
+                else if (redirect.Length > 0) add("Sign-in return address", Level.Pass, redirect);
             }
             else add("Sign-in settings", Level.Warn,
                 "AUTH_ENABLED is not true, but the site's sign-in button is compiled in - it will lead to a 404.");
