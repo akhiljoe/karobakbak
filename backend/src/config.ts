@@ -409,25 +409,6 @@ export interface Config {
     /** How often a generated surface declines to give a name, or a whole field. */
     readonly noNameChance: number;
     readonly declineChance: number;
-    /**
-     * TypeSafe's Jev, the decision model beside the voice (`personas/jev.ts`).
-     *
-     * Off when no host has a key, and every judgement then comes from rules —
-     * the same readings the personas made before Jev existed. Hosts are tried
-     * in order; `JEV_FALLBACK_API_URL` is a second host speaking the same API
-     * (a gateway or proxy), tried when the first fails or its breaker is open.
-     */
-    readonly jev: {
-      readonly hosts: readonly { readonly url: string; readonly apiKey: string }[];
-      readonly model: string;
-      readonly timeoutMs: number;
-      readonly breakerThreshold: number;
-      readonly breakerCooldownMs: number;
-      /** A Jev flag counts only at or above this probability. */
-      readonly minConfidence: number;
-      /** Micro-cents of US dollars per million input tokens. Output is free. */
-      readonly inputMicroCentsPerMTok: number;
-    };
   };
 
   /**
@@ -443,6 +424,41 @@ export interface Config {
    * This flag is the server half. Both must say yes, the same shape as
    * `PERSONAS_ENABLED` and the `persona_control` row.
    */
+  /**
+   * TypeSafe's Jev, a decision model (`personas/jev.ts`, D-AI-13, D-AI-14).
+   *
+   * Used by two processes: the persona service, to read each turn and check a
+   * draft, and the console, to triage reported conversations. Off when no host
+   * has a key; every caller then falls back to rules. Hosts are tried in order;
+   * `JEV_FALLBACK_API_URL` is a second host speaking the same API (a gateway or
+   * proxy), tried when the first fails or its breaker is open.
+   */
+  readonly jev: {
+    readonly hosts: readonly { readonly url: string; readonly apiKey: string }[];
+    readonly model: string;
+    readonly timeoutMs: number;
+    readonly breakerThreshold: number;
+    readonly breakerCooldownMs: number;
+    /** A Jev flag counts only at or above this probability. */
+    readonly minConfidence: number;
+    /** Micro-cents of US dollars per million input tokens. Output is free. */
+    readonly inputMicroCentsPerMTok: number;
+    /**
+     * Report triage in the console (D-AI-14). Only conversations somebody
+     * reported are ever sent; ordinary chats never leave the server.
+     */
+    readonly triage: {
+      readonly enabled: boolean;
+      /** Order the queue by urgency. False is shadow mode: shown, not acted on. */
+      readonly sort: boolean;
+      readonly intervalMs: number;
+      /** How many of the conversation's last messages Jev reads. */
+      readonly contextMessages: number;
+      /** Failed Jev attempts before a report is left to the rules estimate. */
+      readonly maxAttempts: number;
+    };
+  };
+
   /**
    * Sign-in, through one OIDC provider (§32, D48).
    *
@@ -1530,19 +1546,26 @@ export function loadConfig(
       provider: str(env, 'PERSONA_PROVIDER', 'anthropic'),
       model: str(env, 'PERSONA_MODEL', 'claude-haiku-4-5'),
       apiKey: str(env, 'PERSONA_API_KEY', ''),
-      jev: {
-        hosts: jevHosts(env),
-        model: str(env, 'JEV_MODEL', 'jev-latest'),
-        timeoutMs: int(env, 'JEV_TIMEOUT_MS', 2500, 100, 30_000),
-        breakerThreshold: int(env, 'JEV_BREAKER_THRESHOLD', 3, 1, 100),
-        breakerCooldownMs: int(env, 'JEV_BREAKER_COOLDOWN_MS', 60_000, 1000, 3_600_000),
-        minConfidence: num(env, 'JEV_MIN_CONFIDENCE', 0.8, 0.5, 1),
-        // $0.06 per million input tokens: the higher of the two published
-        // listings, so the ceiling binds early rather than late if they differ.
-        inputMicroCentsPerMTok: int(env, 'JEV_INPUT_MICRO_CENTS_PER_MTOK', 6_000_000, 0, 1_000_000_000),
-      },
     },
 
+    jev: {
+      hosts: jevHosts(env),
+      model: str(env, 'JEV_MODEL', 'jev-latest'),
+      timeoutMs: int(env, 'JEV_TIMEOUT_MS', 2500, 100, 30_000),
+      breakerThreshold: int(env, 'JEV_BREAKER_THRESHOLD', 3, 1, 100),
+      breakerCooldownMs: int(env, 'JEV_BREAKER_COOLDOWN_MS', 60_000, 1000, 3_600_000),
+      minConfidence: num(env, 'JEV_MIN_CONFIDENCE', 0.8, 0.5, 1),
+      // $0.06 per million input tokens: the higher of the two published
+      // listings, so the ceiling binds early rather than late if they differ.
+      inputMicroCentsPerMTok: int(env, 'JEV_INPUT_MICRO_CENTS_PER_MTOK', 6_000_000, 0, 1_000_000_000),
+      triage: {
+        enabled: bool(env, 'JEV_TRIAGE_ENABLED', true),
+        sort: bool(env, 'JEV_TRIAGE_SORT', false),
+        intervalMs: int(env, 'JEV_TRIAGE_INTERVAL_MS', 60_000, 5_000, 3_600_000),
+        contextMessages: int(env, 'JEV_TRIAGE_CONTEXT_MESSAGES', 40, 2, 200),
+        maxAttempts: int(env, 'JEV_TRIAGE_MAX_ATTEMPTS', 3, 1, 20),
+      },
+    },
     auth: {
       enabled: bool(env, 'AUTH_ENABLED', false),
       issuer: str(env, 'AUTH_ISSUER', ''),

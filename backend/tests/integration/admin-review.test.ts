@@ -168,6 +168,9 @@ describe('the queue', () => {
       'messageCount',
       'reportId',
       'state',
+      // Numbers and closed labels from Jev or the rules estimate (D-AI-14);
+      // Jev returns probabilities over options the code defined, never text.
+      'triage',
     ]);
   });
 

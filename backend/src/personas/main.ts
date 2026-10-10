@@ -131,20 +131,20 @@ async function main(): Promise<void> {
   // Jev is optional on top of either voice. With no key every judgement comes
   // from rules, which is how the personas ran before it existed.
   const jev =
-    config.personas.jev.hosts.length === 0
+    config.jev.hosts.length === 0
       ? NO_JEV
       : jevClient({
-          hosts: config.personas.jev.hosts,
-          model: config.personas.jev.model,
-          timeoutMs: config.personas.jev.timeoutMs,
-          breakerThreshold: config.personas.jev.breakerThreshold,
-          breakerCooldownMs: config.personas.jev.breakerCooldownMs,
+          hosts: config.jev.hosts,
+          model: config.jev.model,
+          timeoutMs: config.jev.timeoutMs,
+          breakerThreshold: config.jev.breakerThreshold,
+          breakerCooldownMs: config.jev.breakerCooldownMs,
           logger,
           onCall: (host, outcome, seconds) => metrics.judgeCall(host, outcome, seconds),
         });
   logger.info(
     jev.enabled ? 'jev judge enabled' : 'no JEV_API_KEY set; turn readings come from rules',
-    { hosts: config.personas.jev.hosts.length, model: config.personas.jev.model },
+    { hosts: config.jev.hosts.length, model: config.jev.model },
   );
 
   const url = personaWsUrl(config);

@@ -340,6 +340,22 @@ button:disabled {
   color: #f0a288;
 }
 
+/* Urgency (D-AI-14). The level carries the colour; the text says the source. */
+.chip.urgency-1 {
+  border-color: var(--ink-500);
+}
+
+.chip.urgency-2 {
+  border-color: var(--amber-500);
+  color: var(--amber-400);
+}
+
+.chip.urgency-3 {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--ink-950);
+}
+
 /* --- case pane ----------------------------------------------------------- */
 
 .case {
