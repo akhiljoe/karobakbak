@@ -75,6 +75,7 @@
     "laptop:logs": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml logs -f --tail 200 backend cloudflared",
     "laptop:stats": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml stats --no-stream",
     "laptop:console": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml --profile admin up -d --build admin",
-    "laptop:personas": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml --profile personas up -d --build personas"
+    "laptop:personas": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml --profile personas up -d --build personas",
+    "alerts:ntfy": "node scripts/ntfy-alert-url.mjs"
   }
 }
