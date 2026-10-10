@@ -60,8 +60,8 @@ jobs:
           # Passed through the environment, never interpolated into the
           # script: an input is text somebody typed.
           DEPLOY_REF: ${{ inputs.ref }}
+          # Empty means %USERPROFILE%\karobakbak-live; see deploy.mjs.
           LIVE_DIR: ${{ vars.LIVE_DIR }}
-        run: |
-          if (-not $env:LIVE_DIR) { $env:LIVE_DIR = Join-Path $env:USERPROFILE 'karobakbak-live' }
-          node ops/laptop/deploy.mjs --live-dir $env:LIVE_DIR --ref $env:DEPLOY_REF
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        # One line with no shell syntax, so it reads the same to PowerShell
+        # here and to the bash parser in scripts/verify-workflows.
+        run: node ops/laptop/deploy.mjs
