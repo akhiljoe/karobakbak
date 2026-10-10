@@ -161,6 +161,48 @@ grant select, insert on payment_events to karobakbak_app;
 
 grant update (premium_until) on accounts to karobakbak_app;
 
+-- Expiry without a delete grant. The deletion worker runs as the chat role and
+-- sweeps orders past their statutory retention; with no delete grant that
+-- statement would fail with 42501 on every pass from the day this migration is
+-- applied — exactly what happened to the audit log (018_audit_expiry.sql
+-- explains the defect and the shape). So the role gets a function that removes
+-- only orders whose own `retention_expires_at` has passed, events cascading
+-- with them, and nothing else. Same two rules: the search path is pinned to
+-- this schema then pg_temp, and EXECUTE belongs to the chat role alone.
+do $migration$
+declare
+  target_schema text := current_schema();
+begin
+  execute format($fn$
+    create or replace function expire_payment_orders(batch_size integer)
+    returns integer
+    language plpgsql
+    security definer
+    set search_path = %I, pg_temp
+    as $body$
+    declare
+      removed integer;
+    begin
+      if batch_size is null or batch_size < 1 then
+        return 0;
+      end if;
+      delete from payment_orders
+       where order_id in (
+         select order_id
+           from payment_orders
+          where retention_expires_at < now()
+          limit least(batch_size, 10000));
+      get diagnostics removed = row_count;
+      return removed;
+    end
+    $body$
+  $fn$, target_schema);
+end
+$migration$;
+
+revoke all on function expire_payment_orders(integer) from public;
+grant execute on function expire_payment_orders(integer) to karobakbak_app;
+
 -- The console reads payments to answer "did this person pay" during a support
 -- or refund conversation. It may not write them: a moderator who can mint a
 -- payment row can mint evidence that money moved.

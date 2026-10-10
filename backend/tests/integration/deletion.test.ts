@@ -21,6 +21,7 @@ import { LegalHolds } from '../../src/storage/holds';
 import { BackupMonitor } from '../../src/storage/backup';
 import { createNullLogger } from '../../src/logger';
 import type { QueuedRecord } from '../../src/storage/records';
+import type { Database } from '../../src/storage/pool';
 
 let ctx: PostgresContext;
 let holds: LegalHolds;
@@ -42,6 +43,53 @@ function worker(lock: DeletionLock, overrides: Record<string, string> = {}): Del
       ? ctx.config
       : { ...ctx.config, deletion: { ...ctx.config.deletion, ...toDeletion(overrides) } };
   return new DeletionWorker(config, createNullLogger(), ctx.db, lock);
+}
+
+/**
+ * The database as production's deletion worker sees it: connected as
+ * `karobakbak_app`, not as the superuser this suite otherwise uses.
+ *
+ * Every other test here runs as the superuser, which can delete from anything —
+ * and that is how a worker issuing `delete from admin_audit`, a table the chat
+ * role was never granted delete on, passed this suite for two months while
+ * failing every pass in production (018_audit_expiry.sql). The grants are the
+ * system under test; a test that bypasses them is testing a different system.
+ *
+ * One dedicated client with `set role`, released after the test. Production
+ * grants usage on `public`; the suite migrates into a schema of its own, so
+ * that schema gets the same grant.
+ */
+async function asChatRole<T>(work: (db: Database) => Promise<T>): Promise<T> {
+  await ctx.db.query(`grant usage on schema ${ctx.schema} to karobakbak_app`);
+  const client = await ctx.db.pool.connect();
+  try {
+    await client.query('set role karobakbak_app');
+    const db: Database = {
+      pool: ctx.db.pool,
+      query: async <R extends Record<string, unknown>>(text: string, values?: unknown[]) => {
+        const result = await client.query<R>(text, values);
+        return { rows: result.rows, rowCount: result.rowCount ?? 0 };
+      },
+      transaction: () => {
+        throw new Error('the deletion worker does not use transactions');
+      },
+      close: async () => undefined,
+    };
+    return await work(db);
+  } finally {
+    await client.query('reset role');
+    client.release();
+  }
+}
+
+async function seedAudit(expired: boolean): Promise<void> {
+  await ctx.db.query(
+    `insert into admin_audit (audit_id, actor, role, action, subject_type, subject_id,
+                              justification, created_at, retention_expires_at)
+     values ($1, 'op', 'operator', 'viewed', 'conversation', $2, 'case work', now(),
+             now() + ($3 || ' days')::interval)`,
+    [newMessageId(), newMatchId(), expired ? '-1' : '300'],
+  );
 }
 
 function toDeletion(overrides: Record<string, string>): {
@@ -367,6 +415,54 @@ describe('expiry is enforced (I10)', () => {
     // is otherwise serving chat.
     await expect(failing.runPass()).resolves.toMatchObject({ ran: true });
     expect(failing.failures).toBe(1);
+  });
+});
+
+describe('as the role production runs it (karobakbak_app)', () => {
+  it('cannot delete from the audit log directly, which is the point of the grant', async () => {
+    // The defect, stated as a fact about the grants rather than the worker: a
+    // plain delete is refused before any row is examined, expired or not.
+    await seedAudit(true);
+    await asChatRole(async (db) => {
+      await expect(db.query('delete from admin_audit where retention_expires_at < now()')).rejects.toMatchObject({
+        code: '42501',
+      });
+    });
+    expect(await ctx.count('admin_audit')).toBe(1);
+  });
+
+  it('completes a whole pass, expiring audit rows through the function', async () => {
+    await seed({ expired: true, messages: 2 });
+    await seedAudit(true);
+
+    const result = await asChatRole((db) =>
+      new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass(),
+    );
+
+    expect(result.failed).toBe(false);
+    expect(result.deleted).toMatchObject({ conversations: 1, messages: 2, adminAudit: 1 });
+    expect(await ctx.count('admin_audit')).toBe(0);
+  });
+
+  it('leaves audit rows that are still inside retention', async () => {
+    await seedAudit(false);
+    const removed = await asChatRole(async (db) => {
+      const { rows } = await db.query<{ removed: number }>('select expire_admin_audit(1000) as removed');
+      return rows[0]?.removed;
+    });
+    expect(removed).toBe(0);
+    expect(await ctx.count('admin_audit')).toBe(1);
+  });
+
+  it('removes nothing for a batch size that is zero, negative or null', async () => {
+    await seedAudit(true);
+    for (const size of ['0', '-5', 'null']) {
+      const { rows } = await ctx.db.query<{ removed: number }>(
+        `select expire_admin_audit(${size}::integer) as removed`,
+      );
+      expect(rows[0]?.removed).toBe(0);
+    }
+    expect(await ctx.count('admin_audit')).toBe(1);
   });
 });
 
@@ -877,6 +973,26 @@ describe('payment orders (statutory retention)', () => {
       // also quietly drop anything else that grew a dependency later.
       await ctx.db.query(`drop table if exists payment_events`);
       await ctx.db.query(`drop table if exists payment_orders`);
+      await ctx.db.query(`drop function if exists expire_payment_orders(integer)`);
+    });
+
+    it('sweeps an expired order as the chat role, which may not delete from the table', async () => {
+      // 011 grants the chat role no delete on payment_orders, deliberately. A
+      // plain delete in the worker would have failed every pass from the day
+      // payments were applied, as the audit log's did.
+      await ctx.db.query(
+        `insert into payment_orders
+           (order_id, account_id, product, amount_paise, currency, status, retention_expires_at)
+         values ('order_old', null, 'donation', 5000, 'INR', 'paid', now() - interval '1 day')`,
+      );
+      const result = await asChatRole((db) =>
+        new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass(),
+      );
+      expect(result.failed).toBe(false);
+      expect(result.deleted.paymentOrders).toBe(1);
+      await asChatRole(async (db) => {
+        await expect(db.query('delete from payment_orders')).rejects.toMatchObject({ code: '42501' });
+      });
     });
 
     it('deletes an order past its deadline and keeps one inside it', async () => {

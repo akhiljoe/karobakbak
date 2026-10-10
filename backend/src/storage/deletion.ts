@@ -385,13 +385,13 @@ export class DeletionWorker {
 
     // The audit log expires too — on its own, much longer period. An
     // append-only log that is never trimmed is just an unbounded one.
-    const adminAudit = await this.deleteBatch(
-      `delete from admin_audit where audit_id in (
-         select audit_id from admin_audit
-          where retention_expires_at < now()
-          limit $1)`,
-      batch,
-    );
+    //
+    // Through a function, not a delete: this process runs as the chat role,
+    // which holds no delete on `admin_audit` and must not (I11). The function
+    // removes only rows past their own deadline. A plain `delete` here failed
+    // with 42501 on every pass in production, from the first deployment until
+    // 018_audit_expiry.sql — and took the payment sweep below down with it.
+    const adminAudit = await this.expireBatch('expire_admin_audit', batch);
 
     /*
       Payment orders, on a period that is statutory rather than chosen.
@@ -414,13 +414,7 @@ export class DeletionWorker {
       shapes of database.
     */
     const paymentOrders = (await this.tableExists('payment_orders'))
-      ? await this.deleteBatch(
-          `delete from payment_orders where order_id in (
-             select order_id from payment_orders
-              where retention_expires_at < now()
-              limit $1)`,
-          batch,
-        )
+      ? await this.expireBatch('expire_payment_orders', batch)
       : 0;
 
     return {
@@ -454,5 +448,20 @@ export class DeletionWorker {
   private async deleteBatch(sql: string, batch: number): Promise<number> {
     const result = await this.db.query(sql, [batch]);
     return result.rowCount;
+  }
+
+  /**
+   * Call one of the expiry functions for tables this role may not delete from.
+   *
+   * The name is one of two literals, never a parameter that came from anywhere
+   * else, so interpolating it is not an injection path; a function name cannot
+   * be a bind parameter.
+   */
+  private async expireBatch(
+    fn: 'expire_admin_audit' | 'expire_payment_orders',
+    batch: number,
+  ): Promise<number> {
+    const result = await this.db.query<{ removed: number }>(`select ${fn}($1::integer) as removed`, [batch]);
+    return Number(result.rows[0]?.removed ?? 0);
   }
 }
