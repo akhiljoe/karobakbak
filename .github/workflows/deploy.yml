@@ -1,0 +1,67 @@
+# Deploy to the live stack on the operator's laptop. docs/operations/DEPLOY.md.
+#
+# Manual on purpose: Actions → deploy → Run workflow. Merging to main deploys
+# nothing. The laptop is also somebody's daily machine, and a restart nobody
+# chose, in the middle of a conversation, costs more than a deploy that waited.
+#
+# HOW THE LAPTOP HEARS ABOUT IT
+#
+# A self-hosted runner on the laptop long-polls GitHub over outbound HTTPS, the
+# same direction cloudflared already dials. Nothing on the internet connects
+# in, and no port is opened. If the laptop is asleep the job waits in the queue
+# (up to a day) and runs when it wakes.
+#
+# WHY THIS IS SAFE ON A SELF-HOSTED RUNNER
+#
+# The repository is private, so no stranger's pull request can schedule a job.
+# Only jobs asking for the `karobakbak-live` label reach this machine, and
+# verify.yml asks for `ubuntu-latest`. If the repository is ever made public,
+# remove the runner first: a public repository's pull requests can run code on
+# any self-hosted runner its workflows name.
+
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "main, a commit SHA, a live-* tag, or 'previous' to roll back"
+        required: true
+        default: main
+
+# One at a time, and a second click waits rather than cancelling one that is
+# halfway through restarting containers.
+concurrency:
+  group: deploy-live
+  cancel-in-progress: false
+
+permissions:
+  contents: write # the live-* release tag
+  actions: read # whether verify.yml passed for the commit
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, karobakbak-live]
+    timeout-minutes: 30
+    steps:
+      # The deploy script from the commit being deployed, so a fix to the
+      # script ships with the commit that needs it. The live checkout itself is
+      # moved by the script, not by this step.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref == 'previous' && 'main' || inputs.ref }}
+          sparse-checkout: ops/laptop/deploy.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Deploy
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed through the environment, never interpolated into the
+          # script: an input is text somebody typed.
+          DEPLOY_REF: ${{ inputs.ref }}
+          LIVE_DIR: ${{ vars.LIVE_DIR }}
+        run: |
+          if (-not $env:LIVE_DIR) { $env:LIVE_DIR = Join-Path $env:USERPROFILE 'karobakbak-live' }
+          node ops/laptop/deploy.mjs --live-dir $env:LIVE_DIR --ref $env:DEPLOY_REF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
