@@ -173,9 +173,16 @@ groups:
       # Guarding it means "never backed up at all" is no longer covered here,
       # so the rule below covers it explicitly — which is the better shape
       # anyway: the two states have different causes and different fixes.
+      #
+      # Both backup rules are scoped to the backend job. The persona process
+      # (and the console) build the same registry, so they export these gauges
+      # too — never written, last success 0 and window 0 — and an unscoped
+      # "never observed" rule fired for the personas process thirty minutes
+      # after every start, while the backend had seen the backup succeed.
       - alert: BackupsStale
-        expr: chat_backup_last_success_timestamp > 0
-          and time() - chat_backup_last_success_timestamp > chat_backup_max_age_seconds
+        expr: chat_backup_last_success_timestamp{job="karobakbak-backend"} > 0
+          and time() - chat_backup_last_success_timestamp{job="karobakbak-backend"}
+            > chat_backup_max_age_seconds{job="karobakbak-backend"}
         for: 30m
         labels:
           severity: ticket
@@ -186,8 +193,9 @@ groups:
             indistinguishable from no backup until the restore (§8.1).
 
       - alert: BackupsNeverObserved
-        expr: chat_backup_last_success_timestamp == 0
-          and time() - chat_process_process_start_time_seconds > chat_backup_max_age_seconds
+        expr: chat_backup_last_success_timestamp{job="karobakbak-backend"} == 0
+          and time() - chat_process_process_start_time_seconds{job="karobakbak-backend"}
+            > chat_backup_max_age_seconds{job="karobakbak-backend"}
         for: 30m
         labels:
           severity: ticket
