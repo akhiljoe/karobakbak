@@ -399,6 +399,33 @@ groups:
             Read chat_auth_callbacks_total by outcome. `flow_mismatch` is login-CSRF
             prevention doing its job; `token_error` and `no_credential` are faults.
 
+      # Somebody real is talking. Not a fault: the operator asked to hear about
+      # it while traffic is new. Severity `info` routes to its own receiver,
+      # which sends once when talking starts and stays quiet when it stops.
+      #
+      # Messages from people = every accepted message minus persona bubbles.
+      # A persona is an ordinary client (D-AI-6), so its messages are in
+      # chat_messages_received_total too; chat_persona_replies_total counts the
+      # same unit, one per bubble sent. `or vector(0)` because a stopped
+      # personas process would otherwise make the subtraction empty and hide
+      # every human.
+      #
+      # Counts only. Nothing here can say who or what was said (rule 1).
+      - alert: SomeoneIsChatting
+        expr: >-
+          sum(increase(chat_messages_received_total{job="karobakbak-backend"}[10m]))
+            - (sum(increase(chat_persona_replies_total[10m])) or vector(0))
+          > 0.5
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Someone is chatting on karobakbak"
+          description: >-
+            About {{ $value | printf "%.0f" }} messages from visitors in the last 10 minutes.
+            Conversations started: {{ with query "sum(increase(chat_matches_created_total{job=\"karobakbak-backend\"}[10m]))" }}{{ . | first | value | printf "%.0f" }}{{ end }}.
+            Personas in use now: {{ with query "sum(chat_persona_sessions_active) or vector(0)" }}{{ . | first | value | printf "%.0f" }}{{ end }}.
+
   # Named apart from the recording group in cost.rules.yml. Two rule groups may
   # share a name and Prometheus will load both, which makes a rule impossible to
   # locate from its group label alone.

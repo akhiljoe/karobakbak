@@ -20,6 +20,7 @@
  *
  *   🚨 Urgent · BackendAbsent                  (severity=page  -> priority 5)
  *   ⚠️ Warning · ReportsWaitingTooLong         (severity=ticket -> priority 3)
+ *   👋 Activity · SomeoneIsChatting           (severity=info   -> priority 3, never resolved)
  *   ✅ Fixed · BackendAbsent                   (resolved        -> priority 2)
  *
  * then each alert's `summary`, its `description` while it is firing, and when it
@@ -48,7 +49,7 @@ const TIME = (field) =>
 
 export const TEMPLATES = {
   title:
-    '{{if eq .status "resolved"}}✅ Fixed{{else if eq .commonLabels.severity "page"}}🚨 Urgent{{else}}⚠️ Warning{{end}}' +
+    '{{if eq .status "resolved"}}✅ Fixed{{else if eq .commonLabels.severity "page"}}🚨 Urgent{{else if eq .commonLabels.severity "info"}}👋 Activity{{else}}⚠️ Warning{{end}}' +
     ' · {{.groupLabels.alertname}}',
   message:
     '{{range .alerts}}' +

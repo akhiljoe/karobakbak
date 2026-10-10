@@ -62,6 +62,16 @@ route:
       group_interval: 2m
       repeat_interval: 1h
 
+    # Activity, not a fault (SomeoneIsChatting). Once when it starts; no
+    # repeat while it continues and no "resolved" when it stops, because
+    # neither tells the operator anything a second time.
+    - matchers:
+        - severity = "info"
+      receiver: operator-info
+      group_wait: 10s
+      group_interval: 5m
+      repeat_interval: 24h
+
 inhibit_rules:
   # A backend that is gone explains a backend that is not being scraped, and
   # explains an event loop that stopped reporting. Send the cause, not the
@@ -77,6 +87,11 @@ receivers:
     webhook_configs:
       - url_file: /etc/alertmanager/webhook-url
         send_resolved: true
+
+  - name: operator-info
+    webhook_configs:
+      - url_file: /etc/alertmanager/webhook-url
+        send_resolved: false
 
   - name: operator-ticket
     webhook_configs:
