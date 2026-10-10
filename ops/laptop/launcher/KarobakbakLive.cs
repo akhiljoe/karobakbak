@@ -668,7 +668,10 @@ namespace Karobakbak.Live
             if (!WaitForTunnel(d, log)) return false;
 
             stage("Asking the public site...");
-            return WaitForPublic(d, log);
+            if (!WaitForPublic(d, log)) return false;
+
+            Personas.ResumeIfOn(d, log);
+            return true;
         }
 
         static bool WaitForMigrate(Deployment d, Action<string> log)
@@ -879,8 +882,11 @@ namespace Karobakbak.Live
 
         public static bool Stop(Deployment d, Action<string> log)
         {
-            log("> docker " + d.Compose("down"));
-            RunResult down = d.RunDocker(d.Compose("down"), 5 * 60 * 1000, log);
+            // --profile personas, so the persona container goes too: with the
+            // backend gone it could only fail to reconnect. Start brings it
+            // back if its switch is still on.
+            log("> docker " + d.Compose("--profile personas down"));
+            RunResult down = d.RunDocker(d.Compose("--profile personas down"), 5 * 60 * 1000, log);
             if (down.ExitCode != 0)
             {
                 log("FAILED: docker compose down exited " + down.ExitCode + ".");
@@ -888,6 +894,221 @@ namespace Karobakbak.Live
             }
             log("Stopped. Data volumes are kept.");
             return true;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AI personas: one on/off switch
+    // -----------------------------------------------------------------------
+    // Two things decide whether personas join conversations, and both must say
+    // yes (docs/AI-PERSONAS.md): the `personas` container, which sits behind a
+    // compose profile, and the global row of `persona_control` in PostgreSQL,
+    // which ships disabled. "On" here means both. The switch writes the row as
+    // the database superuser with updated_by/reason, the same as the SQL route
+    // in PERSONA-SETUP.md; the moderation console is the audited route.
+    sealed class PersonaStatus
+    {
+        public bool Known;          // false when PostgreSQL could not be asked
+        public bool SwitchOn;
+        public string Mode = "";
+        public bool ContainerRunning;
+        public string ContainerState = "absent";
+        public long Spent;
+        public long Limit;          // 0 = no spend row yet this month
+        public int Open;
+        public string Hours = "";
+
+        public bool IsOn { get { return SwitchOn && ContainerRunning; } }
+
+        public static string Dollars(long microCents)
+        {
+            return "$" + (microCents / 100000000.0).ToString("0.00");
+        }
+
+        public string Describe()
+        {
+            if (!Known) return "Personas: state unknown (database not answering)";
+            var parts = new List<string>();
+            if (IsOn) parts.Add("on");
+            else if (SwitchOn) parts.Add("switched on, container " + ContainerState);
+            else parts.Add(ContainerRunning ? "off (draining)" : "off");
+            if (IsOn || Open > 0) parts.Add(Open + (Open == 1 ? " conversation" : " conversations"));
+            parts.Add(Dollars(Spent) + (Limit > 0 ? " of " + Dollars(Limit) : "") + " this month");
+            if (Hours.Length > 0) parts.Add(Hours);
+            return "Personas: " + string.Join("  \u00B7  ", parts);
+        }
+    }
+
+    static class Personas
+    {
+        // A read uses -c; a write goes over stdin so its text is never on a
+        // command line.
+        static string Sql(Deployment d, string read, string write)
+        {
+            string user = d.Get("POSTGRES_USER") ?? "karobakbak";
+            string db = d.Get("POSTGRES_DB") ?? "karobakbak";
+            if (write != null)
+            {
+                RunResult w = Proc.Run(d.Docker, "exec -i " + d.Container("postgres") + " psql -v ON_ERROR_STOP=1 -U " + user + " -d " + db,
+                                       d.Root, 30000, null, write);
+                return w.ExitCode == 0 ? w.Output : null;
+            }
+            RunResult r = d.RunDocker("exec " + d.Container("postgres") + " psql -tA -U " + user + " -d " + db + " -c \"" + read + "\"", 30000, null);
+            return r.ExitCode == 0 ? r.Output : null;
+        }
+
+        static string Inspect(Deployment d)
+        {
+            return d.RunDocker("inspect -f \"{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}\" " +
+                               d.Container("personas"), 15000, null).Output.Trim();
+        }
+
+        public static PersonaStatus Status(Deployment d)
+        {
+            var st = new PersonaStatus();
+            string state = Inspect(d);
+            if (state.Contains("|") && !state.StartsWith("Error"))
+            {
+                string[] c = state.Split('|');
+                st.ContainerState = c[1].Length > 0 ? c[0] + ", " + c[1] : c[0];
+                st.ContainerRunning = c[0] == "running" && c[1] != "unhealthy";
+            }
+
+            string row = Sql(d,
+                "select (select enabled::text || ',' || mode from persona_control where scope = 'global' and subject = ''), " +
+                "coalesce((select spent_micro_cents || ',' || limit_micro_cents from persona_spend order by period desc limit 1), '0,0'), " +
+                "(select count(*) from persona_conversations where ended_at is null)", null);
+            if (row != null)
+            {
+                string[] c = row.Trim().Split('|');
+                if (c.Length == 3)
+                {
+                    string[] sw = c[0].Split(',');
+                    string[] sp = c[1].Split(',');
+                    st.SwitchOn = sw[0] == "true";
+                    st.Mode = sw.Length > 1 ? sw[1] : "";
+                    long.TryParse(sp[0], out st.Spent);
+                    if (sp.Length > 1) long.TryParse(sp[1], out st.Limit);
+                    int.TryParse(c[2], out st.Open);
+                    st.Known = true;
+                }
+            }
+
+            string start = d.Get("PERSONA_ACTIVE_START_HOUR") ?? "0", end = d.Get("PERSONA_ACTIVE_END_HOUR") ?? "0";
+            st.Hours = (start == "0" && end == "0") ? "active all day"
+                     : "active " + start.PadLeft(2, '0') + ":00-" + end.PadLeft(2, '0') + ":00";
+            return st;
+        }
+
+        public static bool TurnOn(Deployment d, Action<string> log)
+        {
+            // ---- pre-checks: the things that fail quietly ------------------
+            string provider = d.Get("PERSONA_PROVIDER") ?? "";
+            string model = d.Get("PERSONA_MODEL") ?? "";
+            if (provider.Length == 0 || model.Length == 0)
+            {
+                log("FAILED: PERSONA_PROVIDER and PERSONA_MODEL must be set in .env.laptop (PERSONA-SETUP.md step 2).");
+                return false;
+            }
+            if (string.IsNullOrEmpty(d.Get("PERSONA_API_KEY")))
+                log("NOTE: PERSONA_API_KEY is empty - personas will use the scripted voice (greets, cannot follow a conversation; costs nothing).");
+
+            int concurrent;
+            if (!int.TryParse(d.Get("PERSONA_MAX_CONCURRENT") ?? "4", out concurrent)) concurrent = 4;
+            if (concurrent >= 40)
+            {
+                log("FAILED: PERSONA_MAX_CONCURRENT is " + concurrent + ". Every persona connects from one address and " +
+                    "MAX_CONNECTIONS_PER_IP is 40 in production, so the cap must stay below it.");
+                return false;
+            }
+
+            // The base compose file hardcodes development database credentials
+            // for this service; docker-compose.prod.yml must replace them, or
+            // every query fails with 28P01.
+            RunResult cfg = d.RunDocker(d.Compose("--profile personas config personas"), 60000, null);
+            if (cfg.ExitCode != 0)
+            {
+                log("FAILED: compose refuses the personas configuration: " + PreChecks.FirstLines(cfg.Output, 3));
+                return false;
+            }
+            if (cfg.Output.Contains("karobakbak:karobakbak@postgres") || cfg.Output.Contains("NODE_ENV: development"))
+            {
+                log("FAILED: the personas service would get development database credentials. docker-compose.prod.yml " +
+                    "needs its personas override (on main since the personas fix - pull and try again).");
+                return false;
+            }
+            log("Persona settings: " + provider + " / " + model + ", at most " + concurrent + " at once.");
+
+            // ---- the container -----------------------------------------------
+            log("> docker " + d.Compose("--profile personas up -d --build personas"));
+            RunResult up = d.RunDocker(d.Compose("--profile personas up -d --build personas"), 20 * 60 * 1000, log);
+            if (up.ExitCode != 0)
+            {
+                log("FAILED: starting the personas container exited " + up.ExitCode + ".");
+                return false;
+            }
+
+            DateTime deadline = DateTime.Now.AddSeconds(90);
+            string health = "";
+            while (DateTime.Now < deadline)
+            {
+                health = Inspect(d);
+                if (health.StartsWith("running|healthy") || health.StartsWith("exited") || health.StartsWith("restarting")) break;
+                Thread.Sleep(3000);
+            }
+            string tail = d.RunDocker("logs --tail 60 " + d.Container("personas"), 30000, null).Output;
+            if (tail.Contains("28P01") || tail.Contains("auth_failed"))
+            {
+                log("FAILED: the personas container cannot log in to PostgreSQL (28P01). PERSONA-SETUP.md, troubleshooting.");
+                return false;
+            }
+            if (!health.StartsWith("running|healthy"))
+            {
+                log("FAILED: the personas container is '" + health + "'. Its last lines:");
+                var lines = tail.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (string line in lines.Skip(Math.Max(0, lines.Length - 12))) log("  " + line);
+                return false;
+            }
+            log("Personas container: running and healthy.");
+
+            // ---- the switch ----------------------------------------------------
+            string res = Sql(d, null,
+                "update persona_control set enabled = true, mode = 'drain', updated_by = 'karobakbak-live app', " +
+                "reason = 'Turned on from the launcher', updated_at = now() where scope = 'global' and subject = '';\n");
+            if (res == null || !res.Contains("UPDATE 1"))
+            {
+                log("FAILED: could not turn the switch on in persona_control.");
+                return false;
+            }
+            log("Switch on. Personas join within about 20 seconds, during their active hours, when somebody has waited " +
+                (d.Get("PERSONA_WAIT_BEFORE_FILL_SECONDS") ?? "8") + " seconds alone.");
+            return true;
+        }
+
+        // Drain, not hard: live persona conversations finish, no new ones start.
+        // The container stays up so they can finish; it costs nothing idle.
+        public static bool TurnOff(Deployment d, Action<string> log)
+        {
+            string res = Sql(d, null,
+                "update persona_control set enabled = false, mode = 'drain', updated_by = 'karobakbak-live app', " +
+                "reason = 'Turned off from the launcher', updated_at = now() where scope = 'global' and subject = '';\n");
+            if (res == null || !res.Contains("UPDATE 1"))
+            {
+                log("FAILED: could not turn the switch off in persona_control.");
+                return false;
+            }
+            log("Switch off (drain): conversations already running finish; no new ones start.");
+            return true;
+        }
+
+        // After the site starts: personas that were switched on come back too.
+        public static void ResumeIfOn(Deployment d, Action<string> log)
+        {
+            PersonaStatus st = Status(d);
+            if (!st.Known || !st.SwitchOn || st.ContainerRunning) return;
+            log("Personas were switched on - starting their container.");
+            RunResult up = d.RunDocker(d.Compose("--profile personas up -d personas"), 20 * 60 * 1000, log);
+            if (up.ExitCode != 0) log("WARNING: the personas container did not start; use the Personas button.");
         }
     }
 
@@ -908,10 +1129,11 @@ namespace Karobakbak.Live
         readonly bool autoStart;
         readonly string logFile;
 
-        Label status, sub;
+        Label status, sub, personaLine;
         ListView checks;
         TextBox output;
-        Button startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn;
+        Button startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn, personaBtn;
+        PersonaStatus personas;
         System.Windows.Forms.Timer heartbeat;
         volatile bool busy;
 
@@ -933,11 +1155,13 @@ namespace Karobakbak.Live
             MinimumSize = new Size(720, 520);
             StartPosition = FormStartPosition.CenterScreen;
 
-            var header = new Panel { Dock = DockStyle.Top, Height = 78, BackColor = CPanel, Padding = new Padding(18, 12, 18, 10) };
+            var header = new Panel { Dock = DockStyle.Top, Height = 100, BackColor = CPanel, Padding = new Padding(18, 12, 18, 10) };
             status = new Label { Text = "Checking...", Font = new Font("Segoe UI Semibold", 16f), ForeColor = CAmber, AutoSize = true, Location = new Point(18, 10) };
             sub = new Label { Text = d.Root ?? "", ForeColor = CMuted, AutoSize = true, Location = new Point(20, 46) };
+            personaLine = new Label { Text = "Personas: ...", ForeColor = CMuted, AutoSize = true, Location = new Point(20, 70) };
             header.Controls.Add(status);
             header.Controls.Add(sub);
+            header.Controls.Add(personaLine);
 
             checks = new ListView
             {
@@ -978,7 +1202,9 @@ namespace Karobakbak.Live
             siteBtn = MakeButton("Open site", false);
             grafanaBtn = MakeButton("Grafana", false);
             logBtn = MakeButton("Log file", false);
-            buttons.Controls.AddRange(new Control[] { startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn });
+            personaBtn = MakeButton("Personas: ...", false);
+            personaBtn.Margin = new Padding(14, 0, 10, 0);
+            buttons.Controls.AddRange(new Control[] { startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn, personaBtn });
 
             Controls.Add(split);
             Controls.Add(buttons);
@@ -991,6 +1217,7 @@ namespace Karobakbak.Live
             siteBtn.Click += delegate { Open(d.PublicOrigin()); };
             grafanaBtn.Click += delegate { Open("http://localhost:" + (d.Get("GRAFANA_PORT") ?? "3010")); };
             logBtn.Click += delegate { if (File.Exists(logFile)) Open(logFile); };
+            personaBtn.Click += delegate { TogglePersonas(); };
 
             heartbeat = new System.Windows.Forms.Timer { Interval = 30000 };
             heartbeat.Tick += delegate { Heartbeat(); };
@@ -1046,6 +1273,7 @@ namespace Karobakbak.Live
                 startBtn.Enabled = !value;
                 stopBtn.Enabled = !value;
                 checkBtn.Enabled = !value;
+                personaBtn.Enabled = !value;
                 UseWaitCursor = value;
             });
         }
@@ -1135,6 +1363,7 @@ namespace Karobakbak.Live
             {
                 SetStatus("Start did not complete - read the log", CRed);
             }
+            RefreshPersonas();
             SetBusy(false);
         }
 
@@ -1161,6 +1390,60 @@ namespace Karobakbak.Live
             t.Start();
         }
 
+        // ---- personas ----------------------------------------------------
+        void RefreshPersonas()
+        {
+            if (deployment.Root == null || deployment.Docker == null || deployment.Env.Count == 0) return;
+            PersonaStatus st;
+            try { st = Personas.Status(deployment); } catch { return; }
+            personas = st;
+            Ui(delegate
+            {
+                personaLine.Text = st.Describe();
+                personaLine.ForeColor = st.IsOn ? CGreen : st.SwitchOn ? CAmber : CMuted;
+                personaBtn.Text = st.IsOn ? "Personas: ON" : "Personas: OFF";
+                personaBtn.BackColor = st.IsOn ? CGreen : CPanel;
+                personaBtn.ForeColor = st.IsOn ? CInk : CText;
+                personaBtn.FlatAppearance.BorderColor = st.IsOn ? CGreen : CMuted;
+            });
+        }
+
+        void TogglePersonas()
+        {
+            if (busy) return;
+            if (deployment.Env.Count == 0)
+            {
+                MessageBox.Show(this, "Run the checks first - the configuration has not been read yet.", "Personas");
+                return;
+            }
+            bool turningOn = personas == null || !personas.IsOn;
+            string limit = personas != null && personas.Limit > 0
+                ? PersonaStatus.Dollars(personas.Limit)
+                : "PERSONA_MONTHLY_LIMIT_MICRO_CENTS";
+            string question = turningOn
+                ? "Turn AI personas ON?\n\nWhen somebody waits alone, a persona may join them. Its replies are paid to " +
+                  (deployment.Get("PERSONA_PROVIDER") ?? "the model provider") + ", capped at " + limit +
+                  " a month.\n\nThey only join during their active hours."
+                : "Turn AI personas OFF?\n\nConversations already running finish; no new ones start.";
+            if (MessageBox.Show(this, question, "Personas", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+
+            SetBusy(true);
+            SetStatus(turningOn ? "Turning personas on..." : "Turning personas off...", CAmber);
+            var t = new Thread(delegate ()
+            {
+                bool ok = false;
+                try { ok = turningOn ? Personas.TurnOn(deployment, Log) : Personas.TurnOff(deployment, Log); }
+                catch (Exception ex) { Log("Personas crashed: " + ex); }
+                if (!ok) Log("Personas: " + (turningOn ? "not turned on" : "not turned off") + " - read the lines above.");
+                RefreshPersonas();
+                SetBusy(false);
+                Heartbeat();
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
         // Every 30 s while the window is open: is the public site answering?
         void Heartbeat()
         {
@@ -1168,6 +1451,7 @@ namespace Karobakbak.Live
             var t = new Thread(delegate ()
             {
                 int code = Operations.HttpStatus(deployment.PublicOrigin() + "/ready", true);
+                RefreshPersonas();
                 if (busy) return;
                 if (code == 200) SetStatus("LIVE - " + deployment.PublicOrigin().Replace("https://", ""), CGreen);
                 else SetStatus("Not answering publicly (" + (code == 0 ? "no response" : code.ToString()) + ")", CRed);
