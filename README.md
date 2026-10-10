@@ -61,7 +61,7 @@ WebSocket upgrade is refused with a 403. Change the three together.
 Two backend **replicas** is deliberate. Production starts at **one** (cost §26);
 the second exists here so cross-instance correctness is *exercised* on a laptop
 rather than asserted — it has caught real bugs. They are replicas of one
-service, so they are `karobakbak-backend-1` and `karobakbak-backend-2`, and
+service, so they are `karobakbak-dev-backend-1` and `karobakbak-dev-backend-2`, and
 `--scale backend=N` is how the count changes. nginx finds them through Docker's
 DNS and Prometheus discovers them the same way, so neither needs editing.
 
