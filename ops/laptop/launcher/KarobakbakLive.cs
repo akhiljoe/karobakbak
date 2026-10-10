@@ -924,19 +924,6 @@ namespace Karobakbak.Live
         {
             return "$" + (microCents / 100000000.0).ToString("0.00");
         }
-
-        public string Describe()
-        {
-            if (!Known) return "Personas: state unknown (database not answering)";
-            var parts = new List<string>();
-            if (IsOn) parts.Add("on");
-            else if (SwitchOn) parts.Add("switched on, container " + ContainerState);
-            else parts.Add(ContainerRunning ? "off (draining)" : "off");
-            if (IsOn || Open > 0) parts.Add(Open + (Open == 1 ? " conversation" : " conversations"));
-            parts.Add(Dollars(Spent) + (Limit > 0 ? " of " + Dollars(Limit) : "") + " this month");
-            if (Hours.Length > 0) parts.Add(Hours);
-            return "Personas: " + string.Join("  \u00B7  ", parts);
-        }
     }
 
     static class Personas
@@ -1117,25 +1104,39 @@ namespace Karobakbak.Live
     // -----------------------------------------------------------------------
     sealed class MainForm : Form
     {
+        // ---------------------------------------------------------------
+        // ONE RULE FOR THE WHOLE WINDOW
+        // ---------------------------------------------------------------
+        // Colour says what IS; a button says what clicking WILL DO. The first
+        // version broke both halves: a yellow "Start" button beside a green
+        // "Personas: ON" button, so the colours read as states, the labels read
+        // as states, and nobody could tell whether the site was up. Now each
+        // thing - the website, the personas - has its own card: a coloured dot
+        // and a word for its state, a line of detail, and one neutral button
+        // whose text is a verb.
         static readonly Color CInk = Color.FromArgb(0x13, 0x10, 0x0b);
         static readonly Color CPanel = Color.FromArgb(0x1d, 0x19, 0x12);
+        static readonly Color CCard = Color.FromArgb(0x24, 0x1f, 0x17);
         static readonly Color CAmber = Color.FromArgb(0xff, 0xb4, 0x20);
         static readonly Color CText = Color.FromArgb(0xee, 0xe6, 0xd6);
         static readonly Color CMuted = Color.FromArgb(0x9a, 0x90, 0x7e);
         static readonly Color CGreen = Color.FromArgb(0x6f, 0xd0, 0x8c);
         static readonly Color CRed = Color.FromArgb(0xff, 0x6b, 0x5e);
+        const string Dot = "\u25CF  ";
 
         readonly Deployment deployment;
         readonly bool autoStart;
         readonly string logFile;
 
-        Label status, sub, personaLine;
+        Label siteState, siteDetail, siteNote;
+        Label personaState, personaDetail, personaNote;
+        Button siteBtn, personaBtn, checkBtn, openBtn, grafanaBtn, logBtn;
         ListView checks;
         TextBox output;
-        Button startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn, personaBtn;
         PersonaStatus personas;
         System.Windows.Forms.Timer heartbeat;
         volatile bool busy;
+        volatile bool siteLive;
 
         public MainForm(Deployment d, bool autoStart)
         {
@@ -1151,18 +1152,32 @@ namespace Karobakbak.Live
             ForeColor = CText;
             Font = new Font("Segoe UI", 9.5f);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(900, 640);
-            MinimumSize = new Size(720, 520);
+            ClientSize = new Size(920, 680);
+            MinimumSize = new Size(760, 560);
             StartPosition = FormStartPosition.CenterScreen;
 
-            var header = new Panel { Dock = DockStyle.Top, Height = 100, BackColor = CPanel, Padding = new Padding(18, 12, 18, 10) };
-            status = new Label { Text = "Checking...", Font = new Font("Segoe UI Semibold", 16f), ForeColor = CAmber, AutoSize = true, Location = new Point(18, 10) };
-            sub = new Label { Text = d.Root ?? "", ForeColor = CMuted, AutoSize = true, Location = new Point(20, 46) };
-            personaLine = new Label { Text = "Personas: ...", ForeColor = CMuted, AutoSize = true, Location = new Point(20, 70) };
-            header.Controls.Add(status);
-            header.Controls.Add(sub);
-            header.Controls.Add(personaLine);
+            // ---- the two cards -----------------------------------------------
+            // Sized by its contents, not by a pixel height. A fixed height
+            // clipped the card buttons at the first try: fonts scale with the
+            // Windows display setting and hand-placed coordinates do not.
+            var cards = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1,
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = CInk, Padding = new Padding(12, 12, 12, 6)
+            };
+            cards.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+            cards.Controls.Add(MakeCard("WEBSITE", out siteState, out siteDetail, out siteNote, out siteBtn), 0, 0);
+            cards.Controls.Add(MakeCard("AI PERSONAS", out personaState, out personaDetail, out personaNote, out personaBtn), 1, 0);
 
+            SetSite("Checking", CAmber, "Running the pre-checks before anything starts", "");
+            SetPersonaCard("Checking", CMuted, "", "", "Turn personas on", false);
+            siteBtn.Text = "Start website";
+            siteBtn.Enabled = false;
+
+            // ---- checks and log ------------------------------------------------
             checks = new ListView
             {
                 Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable,
@@ -1180,7 +1195,7 @@ namespace Karobakbak.Live
             checks.DrawItem += delegate (object o, DrawListViewItemEventArgs e) { e.DrawDefault = true; };
             checks.DrawSubItem += delegate (object o, DrawListViewSubItemEventArgs e) { e.DrawDefault = true; };
             checks.Columns.Add("", 64);
-            checks.Columns.Add("Check", 190);
+            checks.Columns.Add("Pre-check", 190);
             checks.Columns.Add("Detail", 600);
             checks.Resize += delegate { checks.Columns[2].Width = Math.Max(200, checks.ClientSize.Width - 64 - 190 - 4); };
 
@@ -1195,44 +1210,66 @@ namespace Karobakbak.Live
             split.Panel1.Controls.Add(checks);
             split.Panel2.Controls.Add(output);
 
-            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 56, BackColor = CPanel, Padding = new Padding(14, 11, 14, 8) };
-            startBtn = MakeButton("Start", true);
-            stopBtn = MakeButton("Stop", false);
-            checkBtn = MakeButton("Run checks", false);
-            siteBtn = MakeButton("Open site", false);
-            grafanaBtn = MakeButton("Grafana", false);
-            logBtn = MakeButton("Log file", false);
-            personaBtn = MakeButton("Personas: ...", false);
-            personaBtn.Margin = new Padding(14, 0, 10, 0);
-            buttons.Controls.AddRange(new Control[] { startBtn, stopBtn, checkBtn, siteBtn, grafanaBtn, logBtn, personaBtn });
+            // ---- secondary actions: they change nothing ----------------------
+            var tools = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, BackColor = CPanel, Padding = new Padding(12, 9, 12, 6) };
+            checkBtn = MakeButton("Run pre-checks");
+            openBtn = MakeButton("Open site");
+            grafanaBtn = MakeButton("Grafana");
+            logBtn = MakeButton("Log file");
+            tools.Controls.AddRange(new Control[] { checkBtn, openBtn, grafanaBtn, logBtn });
 
             Controls.Add(split);
-            Controls.Add(buttons);
-            Controls.Add(header);
-            Load += delegate { split.SplitterDistance = (int)(split.Height * 0.48); };
+            Controls.Add(tools);
+            Controls.Add(cards);
+            Load += delegate { split.SplitterDistance = (int)(split.Height * 0.5); };
 
-            startBtn.Click += delegate { RunStart(); };
-            stopBtn.Click += delegate { RunStop(); };
+            siteBtn.Click += delegate { if (siteLive) RunStop(); else RunStart(); };
+            personaBtn.Click += delegate { TogglePersonas(); };
             checkBtn.Click += delegate { RunChecks(false); };
-            siteBtn.Click += delegate { Open(d.PublicOrigin()); };
+            openBtn.Click += delegate { Open(d.PublicOrigin()); };
             grafanaBtn.Click += delegate { Open("http://localhost:" + (d.Get("GRAFANA_PORT") ?? "3010")); };
             logBtn.Click += delegate { if (File.Exists(logFile)) Open(logFile); };
-            personaBtn.Click += delegate { TogglePersonas(); };
 
             heartbeat = new System.Windows.Forms.Timer { Interval = 30000 };
             heartbeat.Tick += delegate { Heartbeat(); };
-            Shown += delegate { RunChecks(this.autoStart); };
+            Shown += delegate
+            {
+                Log("Repository: " + (d.Root ?? "(not found)"));
+                RunChecks(this.autoStart);
+            };
         }
 
-        Button MakeButton(string text, bool primary)
+        // A card is a column of controls that flows top to bottom and grows to
+        // fit them, so the action button is always below the text however
+        // large the text renders.
+        Control MakeCard(string title, out Label state, out Label detail, out Label note, out Button action)
+        {
+            var card = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = CCard, Margin = new Padding(6), Padding = new Padding(16, 12, 16, 14)
+            };
+            var heading = new Label { Text = title, ForeColor = CMuted, AutoSize = true,
+                                      Font = new Font("Segoe UI Semibold", 8.5f), Margin = new Padding(0, 0, 0, 2) };
+            state = new Label { AutoSize = true, Font = new Font("Segoe UI Semibold", 17f), Margin = new Padding(0, 0, 0, 4) };
+            detail = new Label { AutoSize = true, ForeColor = CText, MaximumSize = new Size(420, 0), Margin = new Padding(2, 0, 0, 2) };
+            note = new Label { AutoSize = true, ForeColor = CMuted, MaximumSize = new Size(420, 0), Margin = new Padding(2, 0, 0, 10) };
+            action = MakeButton("");
+            action.Margin = new Padding(2, 0, 0, 0);
+            card.Controls.AddRange(new Control[] { heading, state, detail, note, action });
+            return card;
+        }
+
+        Button MakeButton(string text)
         {
             var b = new Button
             {
-                Text = text, AutoSize = true, MinimumSize = new Size(96, 34), FlatStyle = FlatStyle.Flat,
-                BackColor = primary ? CAmber : CPanel, ForeColor = primary ? CInk : CText, Margin = new Padding(0, 0, 10, 0),
+                Text = text, AutoSize = true, MinimumSize = new Size(110, 32), FlatStyle = FlatStyle.Flat,
+                BackColor = CPanel, ForeColor = CText, Margin = new Padding(0, 0, 10, 0),
                 Font = new Font("Segoe UI Semibold", 9.5f), Cursor = Cursors.Hand
             };
-            b.FlatAppearance.BorderColor = primary ? CAmber : CMuted;
+            b.FlatAppearance.BorderColor = CMuted;
             return b;
         }
 
@@ -1254,15 +1291,34 @@ namespace Karobakbak.Live
         {
             string stamped = DateTime.Now.ToString("HH:mm:ss") + "  " + line;
             try { File.AppendAllText(logFile, DateTime.Now.ToString("yyyy-MM-dd ") + stamped + Environment.NewLine); } catch { }
+            Ui(delegate { output.AppendText(stamped + Environment.NewLine); });
+        }
+
+        // The website card. The button follows siteLive: a site that is up
+        // offers to stop, anything else offers to start.
+        void SetSite(string state, Color color, string detail, string note)
+        {
             Ui(delegate
             {
-                output.AppendText(stamped + Environment.NewLine);
+                siteState.Text = Dot + state;
+                siteState.ForeColor = color;
+                siteDetail.Text = detail;
+                siteNote.Text = note;
+                siteBtn.Text = siteLive ? "Stop website" : "Start website";
             });
         }
 
-        void SetStatus(string text, Color color)
+        void SetPersonaCard(string state, Color color, string detail, string note, string action, bool enabled)
         {
-            Ui(delegate { status.Text = text; status.ForeColor = color; });
+            Ui(delegate
+            {
+                personaState.Text = Dot + state;
+                personaState.ForeColor = color;
+                personaDetail.Text = detail;
+                personaNote.Text = note;
+                personaBtn.Text = action;
+                personaBtn.Enabled = enabled && !busy;
+            });
         }
 
         void SetBusy(bool value)
@@ -1270,13 +1326,14 @@ namespace Karobakbak.Live
             busy = value;
             Ui(delegate
             {
-                startBtn.Enabled = !value;
-                stopBtn.Enabled = !value;
+                siteBtn.Enabled = !value;
+                personaBtn.Enabled = !value && siteLive;
                 checkBtn.Enabled = !value;
-                personaBtn.Enabled = !value;
                 UseWaitCursor = value;
             });
         }
+
+        string Host { get { return deployment.PublicOrigin().Replace("https://", ""); } }
 
         void AddCheck(CheckResult r)
         {
@@ -1294,13 +1351,13 @@ namespace Karobakbak.Live
                 Log((r.Level == Level.Fail ? "FAIL  " : "WARN  ") + r.Name + ": " + r.Detail);
         }
 
-        // ---- the three actions -------------------------------------------
+        // ---- website -------------------------------------------------------
         void RunChecks(bool thenStart)
         {
             if (busy) return;
             SetBusy(true);
             Ui(delegate { checks.Items.Clear(); });
-            SetStatus("Running pre-checks...", CAmber);
+            if (!siteLive) SetSite("Checking", CAmber, "Running the pre-checks before anything starts", "");
             var t = new Thread(delegate ()
             {
                 List<CheckResult> results;
@@ -1308,7 +1365,7 @@ namespace Karobakbak.Live
                 catch (Exception ex)
                 {
                     Log("Pre-checks crashed: " + ex);
-                    SetStatus("Pre-checks could not run", CRed);
+                    SetSite("Problem", CRed, "The pre-checks could not run", "Details are in the log below");
                     SetBusy(false);
                     return;
                 }
@@ -1317,14 +1374,16 @@ namespace Karobakbak.Live
                 Log("Pre-checks: " + results.Count(r => r.Level == Level.Pass) + " passed, " + warns + " warnings, " + fails + " failed.");
                 if (fails > 0)
                 {
-                    SetStatus(fails + (fails == 1 ? " check failed - not starting" : " checks failed - not starting"), CRed);
-                    Log("Fix the FAIL rows above, then press Run checks. Each names its step in docs\\operations\\LAPTOP-HOSTING.md.");
+                    Log("Fix the FAIL rows, then press Run pre-checks. Each names its step in docs\\operations\\LAPTOP-HOSTING.md.");
                     SetBusy(false);
+                    if (!siteLive)
+                        SetSite("Not started", CRed, fails + (fails == 1 ? " pre-check failed" : " pre-checks failed") + " - nothing was started",
+                                "Fix the red rows below, then Run pre-checks");
+                    Heartbeat();
                     return;
                 }
                 if (!thenStart)
                 {
-                    SetStatus(warns > 0 ? "Ready to start (" + warns + " warnings)" : "Ready to start", warns > 0 ? CAmber : CGreen);
                     SetBusy(false);
                     Heartbeat();
                     return;
@@ -1346,22 +1405,23 @@ namespace Karobakbak.Live
             bool ok;
             try
             {
-                ok = Operations.Start(deployment, Log, delegate (string s) { SetStatus(s, CAmber); });
+                ok = Operations.Start(deployment, Log, delegate (string s) { SetSite("Starting", CAmber, s, "This can take a few minutes the first time"); });
             }
             catch (Exception ex)
             {
                 Log("Start crashed: " + ex);
                 ok = false;
             }
+            siteLive = ok;
             if (ok)
             {
-                SetStatus("LIVE - " + deployment.PublicOrigin().Replace("https://", ""), CGreen);
+                SetSite("Live", CGreen, Host + " is answering", "Checked " + DateTime.Now.ToString("HH:mm:ss") + " - this window can be closed");
                 Log("karobakbak is live. This window can be closed; the site keeps running.");
                 Ui(delegate { heartbeat.Start(); });
             }
             else
             {
-                SetStatus("Start did not complete - read the log", CRed);
+                SetSite("Problem", CRed, "Starting did not complete", "The reason is in the log below");
             }
             RefreshPersonas();
             SetBusy(false);
@@ -1371,74 +1431,26 @@ namespace Karobakbak.Live
         {
             if (busy) return;
             DialogResult answer = MessageBox.Show(this,
-                "This takes " + deployment.PublicOrigin().Replace("https://", "") + " offline.\n\n" +
-                "Anybody in a conversation is disconnected. Data is kept.\n\nStop the site?",
-                "Stop karobakbak", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                "This takes " + Host + " offline.\n\n" +
+                "Anybody in a conversation is disconnected. Personas stop too. Data is kept.\n\nStop the website?",
+                "Stop website", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes) return;
             SetBusy(true);
             heartbeat.Stop();
-            SetStatus("Stopping...", CAmber);
+            SetSite("Stopping", CAmber, "Taking " + Host + " offline", "");
             var t = new Thread(delegate ()
             {
                 bool ok = false;
                 try { ok = Operations.Stop(deployment, Log); }
                 catch (Exception ex) { Log("Stop crashed: " + ex); }
-                SetStatus(ok ? "Stopped - the site is offline" : "Stop did not complete - read the log", ok ? CMuted : CRed);
-                SetBusy(false);
-            });
-            t.IsBackground = true;
-            t.Start();
-        }
-
-        // ---- personas ----------------------------------------------------
-        void RefreshPersonas()
-        {
-            if (deployment.Root == null || deployment.Docker == null || deployment.Env.Count == 0) return;
-            PersonaStatus st;
-            try { st = Personas.Status(deployment); } catch { return; }
-            personas = st;
-            Ui(delegate
-            {
-                personaLine.Text = st.Describe();
-                personaLine.ForeColor = st.IsOn ? CGreen : st.SwitchOn ? CAmber : CMuted;
-                personaBtn.Text = st.IsOn ? "Personas: ON" : "Personas: OFF";
-                personaBtn.BackColor = st.IsOn ? CGreen : CPanel;
-                personaBtn.ForeColor = st.IsOn ? CInk : CText;
-                personaBtn.FlatAppearance.BorderColor = st.IsOn ? CGreen : CMuted;
-            });
-        }
-
-        void TogglePersonas()
-        {
-            if (busy) return;
-            if (deployment.Env.Count == 0)
-            {
-                MessageBox.Show(this, "Run the checks first - the configuration has not been read yet.", "Personas");
-                return;
-            }
-            bool turningOn = personas == null || !personas.IsOn;
-            string limit = personas != null && personas.Limit > 0
-                ? PersonaStatus.Dollars(personas.Limit)
-                : "PERSONA_MONTHLY_LIMIT_MICRO_CENTS";
-            string question = turningOn
-                ? "Turn AI personas ON?\n\nWhen somebody waits alone, a persona may join them. Its replies are paid to " +
-                  (deployment.Get("PERSONA_PROVIDER") ?? "the model provider") + ", capped at " + limit +
-                  " a month.\n\nThey only join during their active hours."
-                : "Turn AI personas OFF?\n\nConversations already running finish; no new ones start.";
-            if (MessageBox.Show(this, question, "Personas", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
-                                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-
-            SetBusy(true);
-            SetStatus(turningOn ? "Turning personas on..." : "Turning personas off...", CAmber);
-            var t = new Thread(delegate ()
-            {
-                bool ok = false;
-                try { ok = turningOn ? Personas.TurnOn(deployment, Log) : Personas.TurnOff(deployment, Log); }
-                catch (Exception ex) { Log("Personas crashed: " + ex); }
-                if (!ok) Log("Personas: " + (turningOn ? "not turned on" : "not turned off") + " - read the lines above.");
+                if (ok)
+                {
+                    siteLive = false;
+                    SetSite("Stopped", CMuted, Host + " is offline", "Visitors see the \"back soon\" page");
+                }
+                else SetSite("Problem", CRed, "Stopping did not complete", "The reason is in the log below");
                 RefreshPersonas();
                 SetBusy(false);
-                Heartbeat();
             });
             t.IsBackground = true;
             t.Start();
@@ -1451,14 +1463,100 @@ namespace Karobakbak.Live
             var t = new Thread(delegate ()
             {
                 int code = Operations.HttpStatus(deployment.PublicOrigin() + "/ready", true);
-                RefreshPersonas();
                 if (busy) return;
-                if (code == 200) SetStatus("LIVE - " + deployment.PublicOrigin().Replace("https://", ""), CGreen);
-                else SetStatus("Not answering publicly (" + (code == 0 ? "no response" : code.ToString()) + ")", CRed);
+                siteLive = code == 200;
+                string at = "Checked " + DateTime.Now.ToString("HH:mm:ss");
+                if (code == 200) SetSite("Live", CGreen, Host + " is answering", at + " - this window can be closed");
+                else if (code == 0) SetSite("Offline", CRed, Host + " is not answering", at + " - no response from Cloudflare");
+                else SetSite("Offline", CRed, Host + " answered " + code, at + (code == 503 ? " - the \"back soon\" page" : ""));
+                RefreshPersonas();
             });
             t.IsBackground = true;
             t.Start();
             Ui(delegate { if (!heartbeat.Enabled) heartbeat.Start(); });
+        }
+
+        // ---- personas ------------------------------------------------------
+        // Whether "now" falls inside the persona hours, in the zone the
+        // persona process itself uses (PERSONA_UTC_OFFSET_MINUTES).
+        string PersonaHours()
+        {
+            int start, end, offset;
+            if (!int.TryParse(deployment.Get("PERSONA_ACTIVE_START_HOUR") ?? "0", out start)) start = 0;
+            if (!int.TryParse(deployment.Get("PERSONA_ACTIVE_END_HOUR") ?? "0", out end)) end = 0;
+            if (!int.TryParse(deployment.Get("PERSONA_UTC_OFFSET_MINUTES") ?? "330", out offset)) offset = 330;
+            if (start == end) return "They can join at any hour";
+            int hour = DateTime.UtcNow.AddMinutes(offset).Hour;
+            bool inside = start < end ? (hour >= start && hour < end) : (hour >= start || hour < end);
+            string window = start.ToString("00") + ":00-" + end.ToString("00") + ":00";
+            return inside ? "Joining now (hours " + window + ")" : "Outside their hours - they join from " + start.ToString("00") + ":00";
+        }
+
+        void RefreshPersonas()
+        {
+            if (deployment.Root == null || deployment.Docker == null || deployment.Env.Count == 0) return;
+            PersonaStatus st;
+            try { st = Personas.Status(deployment); } catch { return; }
+            personas = st;
+
+            if (!st.Known)
+            {
+                SetPersonaCard("Unknown", CMuted, "The database is not answering", siteLive ? "" : "Start the website first", "Turn personas on", false);
+                return;
+            }
+            string money = PersonaStatus.Dollars(st.Spent) + (st.Limit > 0 ? " of " + PersonaStatus.Dollars(st.Limit) : "") + " spent this month";
+            string chatting = st.Open + (st.Open == 1 ? " chatting now" : " chatting now");
+            if (!siteLive)
+            {
+                SetPersonaCard(st.SwitchOn ? "Waiting for the website" : "Off", st.SwitchOn ? CAmber : CMuted, money,
+                               st.SwitchOn ? "They come back when the website starts" : "Start the website first",
+                               st.SwitchOn ? "Turn personas off" : "Turn personas on", st.SwitchOn);
+            }
+            else if (st.IsOn)
+                SetPersonaCard("On", CGreen, chatting + "  \u00B7  " + money, PersonaHours(), "Turn personas off", true);
+            else if (st.SwitchOn)
+                SetPersonaCard("Not running", CAmber, "Switched on, but the container is " + st.ContainerState,
+                               "Turn on again to restart it", "Turn personas on", true);
+            else if (st.ContainerRunning && st.Open > 0)
+                SetPersonaCard("Finishing", CAmber, chatting + " - no new ones start", money, "Turn personas on", true);
+            else
+                SetPersonaCard("Off", CMuted, money, "Nobody is matched with a persona", "Turn personas on", true);
+        }
+
+        void TogglePersonas()
+        {
+            if (busy) return;
+            if (deployment.Env.Count == 0)
+            {
+                MessageBox.Show(this, "Run the pre-checks first - the configuration has not been read yet.", "AI personas");
+                return;
+            }
+            bool turningOn = personas == null || !personas.SwitchOn || !personas.ContainerRunning;
+            if (personas != null && personas.SwitchOn && !siteLive) turningOn = false;
+            string limit = personas != null && personas.Limit > 0
+                ? PersonaStatus.Dollars(personas.Limit)
+                : "PERSONA_MONTHLY_LIMIT_MICRO_CENTS";
+            string question = turningOn
+                ? "Turn AI personas on?\n\nWhen somebody waits alone, a persona may join them. Its replies are paid to " +
+                  (deployment.Get("PERSONA_PROVIDER") ?? "the model provider") + ", capped at " + limit +
+                  " a month.\n\nThey only join during their hours. The website keeps running either way."
+                : "Turn AI personas off?\n\nConversations already running finish; no new ones start.\nThe website keeps running.";
+            if (MessageBox.Show(this, question, "AI personas", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+
+            SetBusy(true);
+            SetPersonaCard(turningOn ? "Turning on" : "Turning off", CAmber, turningOn ? "Starting the persona container" : "", "", personaBtn.Text, false);
+            var t = new Thread(delegate ()
+            {
+                bool ok = false;
+                try { ok = turningOn ? Personas.TurnOn(deployment, Log) : Personas.TurnOff(deployment, Log); }
+                catch (Exception ex) { Log("Personas crashed: " + ex); }
+                if (!ok) Log("AI personas: " + (turningOn ? "not turned on" : "not turned off") + " - read the lines above.");
+                SetBusy(false);
+                RefreshPersonas();
+            });
+            t.IsBackground = true;
+            t.Start();
         }
     }
 
