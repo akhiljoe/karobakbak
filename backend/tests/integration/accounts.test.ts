@@ -13,6 +13,7 @@ import {
   mintCredential,
   resolveAccount,
   revokeCredential,
+  storablePicture,
 } from '../../src/accounts/credentials';
 import { createPostgresContext, type PostgresContext } from '../helpers/postgres';
 
@@ -124,7 +125,7 @@ describe('the session credential', () => {
 
   it('round-trips: minted, then resolves to its account', async () => {
     const { accountId, token } = await signedIn();
-    expect(await resolveAccount(pg.db, pg.logger, token)).toEqual({ ok: true, accountId });
+    expect(await resolveAccount(pg.db, pg.logger, token)).toEqual({ ok: true, accountId, pictureUrl: null });
   });
 
   it('is stored only as a hash — the plaintext is nowhere in the table', async () => {
@@ -200,6 +201,63 @@ describe('the session credential', () => {
       'select last_used_at from account_credentials',
     );
     expect(rows[0]?.last_used_at).not.toBeNull();
+  });
+});
+
+describe('the profile picture URL (020_credential_picture.sql)', () => {
+  const PICTURE = 'https://lh3.googleusercontent.com/a/abc=s96-c';
+
+  async function account(): Promise<string> {
+    const created = await subject('sub_alice');
+    if (!created.ok) throw new Error('expected an account');
+    return created.accountId;
+  }
+
+  it('rides on the credential, so it is read back without Redis', async () => {
+    // The bug this column fixed: the URL lived only in Redis, which has
+    // persistence off, so a restart left everybody signed in and faceless.
+    const token = await mintCredential(pg.db, pg.logger, await account(), 3600, PICTURE);
+    expect(await resolveAccount(pg.db, pg.logger, token ?? '')).toMatchObject({
+      ok: true,
+      pictureUrl: PICTURE,
+    });
+  });
+
+  it('belongs to one browser: another sign-in without a picture shows none', async () => {
+    const accountId = await account();
+    const laptop = await mintCredential(pg.db, pg.logger, accountId, 3600, PICTURE);
+    const phone = await mintCredential(pg.db, pg.logger, accountId, 3600, null);
+    expect(await resolveAccount(pg.db, pg.logger, laptop ?? '')).toMatchObject({ pictureUrl: PICTURE });
+    expect(await resolveAccount(pg.db, pg.logger, phone ?? '')).toMatchObject({ pictureUrl: null });
+  });
+
+  it('is cleared on sign-out, not merely hidden behind the revocation', async () => {
+    const token = await mintCredential(pg.db, pg.logger, await account(), 3600, PICTURE);
+    await revokeCredential(pg.db, pg.logger, token ?? '');
+    const rows = await pg.rows<{ picture_url: string | null }>('select picture_url from account_credentials');
+    expect(rows).toEqual([{ picture_url: null }]);
+  });
+
+  it('never costs a sign-in: a URL the column would refuse is stored as none', async () => {
+    const accountId = await account();
+    for (const bad of ['http://lh3.googleusercontent.com/a/x', `https://x.test/${'a'.repeat(2100)}`]) {
+      const token = await mintCredential(pg.db, pg.logger, accountId, 3600, bad);
+      expect(token).not.toBeNull();
+      expect(await resolveAccount(pg.db, pg.logger, token ?? '')).toMatchObject({ ok: true, pictureUrl: null });
+    }
+  });
+
+  it('is refused by the column itself, not only by the code in front of it', async () => {
+    const accountId = await account();
+    await expect(
+      pg.db.query(
+        `insert into account_credentials (token_hash, account_id, expires_at, picture_url)
+         values ($1, $2, now() + interval '1 hour', 'javascript:alert(1)')`,
+        [createHash('sha256').update('raw').digest(), accountId],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+    expect(storablePicture('javascript:alert(1)')).toBeNull();
+    expect(storablePicture(PICTURE)).toBe(PICTURE);
   });
 });
 

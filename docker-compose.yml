@@ -547,6 +547,18 @@ services:
     # Never proxied by nginx, never given a public hostname, never a Caddy site.
     ports:
       - "127.0.0.1:8088:8088"
+    # Same override as `personas`, for the same reason: the image probes :8080,
+    # where the chat server listens, and this process serves :8088. Without it
+    # the console reports unhealthy while answering every request.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8088/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy

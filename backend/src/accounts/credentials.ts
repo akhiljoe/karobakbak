@@ -36,7 +36,17 @@ import { dbErrorFields, type Logger } from '../logger';
 import type { Database } from '../storage/pool';
 
 export type AccountResolution =
-  | { readonly ok: true; readonly accountId: string }
+  | {
+      readonly ok: true;
+      readonly accountId: string;
+      /**
+       * Where this browser's profile picture lives on the provider's CDN, or
+       * null. Per credential, not per account (`020_credential_picture.sql`).
+       * Only `/auth/session` and `/auth/avatar` read it, and the browser is
+       * never handed it.
+       */
+      readonly pictureUrl: string | null;
+    }
   | { readonly ok: false; readonly reason: 'absent' | 'unknown' | 'suspended' | 'error' };
 
 /**
@@ -79,8 +89,8 @@ export async function resolveAccount(
   const tokenHash = createHash('sha256').update(token).digest();
 
   try {
-    const found = await db.query<{ account_id: string; status: string }>(
-      `select c.account_id, a.status
+    const found = await db.query<{ account_id: string; status: string; picture_url: string | null }>(
+      `select c.account_id, a.status, c.picture_url
          from account_credentials c
          join accounts a on a.id = c.account_id
         where c.token_hash = $1
@@ -105,7 +115,7 @@ export async function resolveAccount(
       ])
       .catch(() => undefined);
 
-    return { ok: true, accountId: row.account_id };
+    return { ok: true, accountId: row.account_id, pictureUrl: row.picture_url };
   } catch (err) {
     logger.error('could not resolve an account credential', dbErrorFields(err));
     return { ok: false, reason: 'error' };
@@ -207,16 +217,21 @@ export async function mintCredential(
   logger: Logger,
   accountId: string,
   ttlSeconds: number,
+  pictureUrl: string | null = null,
 ): Promise<string | null> {
   const token = newSessionToken();
   const tokenHash = createHash('sha256').update(token).digest();
   const expires = new Date(Date.now() + ttlSeconds * 1000);
+  // Checked here as well as by the column's constraint, because the constraint
+  // would refuse the whole insert: a picture is decoration and must never cost
+  // somebody their sign-in.
+  const picture = storablePicture(pictureUrl);
 
   try {
     await db.query(
-      `insert into account_credentials (token_hash, account_id, expires_at)
-       values ($1, $2, $3)`,
-      [tokenHash, accountId, expires],
+      `insert into account_credentials (token_hash, account_id, expires_at, picture_url)
+       values ($1, $2, $3, $4)`,
+      [tokenHash, accountId, expires, picture],
     );
     return token;
   } catch (err) {
@@ -246,10 +261,19 @@ export async function revokeCredential(
   const tokenHash = createHash('sha256').update(token).digest();
   try {
     await db.query(
-      'update account_credentials set revoked_at = now() where token_hash = $1 and revoked_at is null',
+      // The picture goes with it: a signed-out browser has no reason to keep
+      // pointing at somebody's face.
+      `update account_credentials set revoked_at = now(), picture_url = null
+        where token_hash = $1 and revoked_at is null`,
       [tokenHash],
     );
   } catch (err) {
     logger.error('could not revoke a session credential', dbErrorFields(err));
   }
+}
+
+/** A picture URL the `account_credentials` constraint will accept, or null. */
+export function storablePicture(url: string | null): string | null {
+  if (url === null || !url.startsWith('https://') || url.length > 2048) return null;
+  return url;
 }
