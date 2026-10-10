@@ -23,6 +23,12 @@ if (-not $out) { $out = Join-Path (Resolve-Path (Join-Path $here '..')) 'karobak
 $obj = Join-Path $here 'obj'
 New-Item -ItemType Directory -Force $obj | Out-Null
 
+# Windows will not overwrite a running exe, and csc's message for it
+# (CS0016, "being used by another process") does not say which process.
+if (Get-Process -Name 'karobakbak-live' -ErrorAction SilentlyContinue) {
+    throw 'The karobakbak live window is open. Close it (the site keeps running) and build again.'
+}
+
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) {
     throw "The .NET Framework C# compiler was not found at $csc"
