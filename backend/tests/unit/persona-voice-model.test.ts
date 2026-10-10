@@ -26,6 +26,7 @@ import type {
 import { NO_USAGE } from '../../src/personas/provider';
 import { CHARACTERS } from '../../src/personas/characters';
 import type { PersonaCharacter } from '../../src/personas/types';
+import type { TranscriptLine } from '../../src/personas/judge';
 
 const character: PersonaCharacter = (() => {
   const first = CHARACTERS[0];
@@ -68,8 +69,18 @@ const loudFallback: PersonaVoice = {
   reply: () => 'THE FALLBACK RAN',
 };
 
+/**
+ * The conversation so far, kept the way the client keeps it: the stranger's
+ * lines as `turn` delivers them and the persona's as `build`'s voice returns
+ * them. The voice holds no history of its own any more.
+ */
+let log: TranscriptLine[] = [];
+beforeEach(() => {
+  log = [];
+});
+
 function build(provider: ModelProvider): PersonaVoice {
-  return modelVoice({
+  const voice = modelVoice({
     provider,
     budget: okBudget,
     character,
@@ -77,13 +88,24 @@ function build(provider: ModelProvider): PersonaVoice {
     logger,
     fallback: loudFallback,
   });
+  return {
+    async reply(t: VoiceTurn): Promise<string | null> {
+      const said = await voice.reply(t);
+      if (said !== null) log.push({ role: 'persona', text: said });
+      return said;
+    },
+  };
 }
 
-const turn = (sent: number, incoming?: string): VoiceTurn => ({
-  character,
-  sent,
-  ...(incoming === undefined ? {} : { incoming }),
-});
+const turn = (sent: number, incoming?: string): VoiceTurn => {
+  if (incoming !== undefined) log.push({ role: 'stranger', text: incoming });
+  return {
+    character,
+    sent,
+    transcript: [...log],
+    ...(incoming === undefined ? {} : { incoming }),
+  };
+};
 
 describe('the shape of every request', () => {
   it('is user-first once the persona has spoken — this was the bug', async () => {
@@ -267,5 +289,104 @@ describe('when the provider fails', () => {
     await voice.reply(turn(0));
 
     expect(await voice.reply(turn(1, 'hi'))).toBeNull();
+  });
+});
+
+describe("the transcript, which is the client's and not the voice's", () => {
+  it('sends only what the client says was delivered, never a reply it generated and abandoned', async () => {
+    // The voice used to push every generated reply into its own history. A
+    // reply cancelled because the stranger typed again was still "said", so
+    // the next call continued a conversation the stranger never saw.
+    const { provider, requests } = recordingProvider();
+    const voice = modelVoice({
+      provider,
+      budget: okBudget,
+      character,
+      surfaceDescription: 'Ana, 24, female, India',
+      logger,
+      fallback: loudFallback,
+    });
+
+    // First call: generated, then abandoned by the client (not in the transcript).
+    await voice.reply({
+      character,
+      sent: 1,
+      incoming: 'hi',
+      transcript: [
+        { role: 'persona', text: 'hey' },
+        { role: 'stranger', text: 'hi' },
+      ],
+    });
+    await voice.reply({
+      character,
+      sent: 1,
+      incoming: 'hi' + String.fromCharCode(10) + 'where are you from',
+      transcript: [
+        { role: 'persona', text: 'hey' },
+        { role: 'stranger', text: 'hi' },
+        { role: 'stranger', text: 'where are you from' },
+      ],
+    });
+
+    const texts = (requests[1]?.messages ?? []).map((m) => m.text);
+    expect(texts).not.toContain('a reply');
+    expect(texts).toEqual(expect.arrayContaining(['hey', 'hi', 'where are you from']));
+  });
+
+  it('tells the model when several messages are waiting to be answered', async () => {
+    const { provider, requests } = recordingProvider();
+    await build(provider).reply({
+      character,
+      sent: 1,
+      incoming: 'hi' + String.fromCharCode(10) + 'where are you from',
+      transcript: [
+        { role: 'stranger', text: 'hi' },
+        { role: 'stranger', text: 'where are you from' },
+      ],
+    });
+
+    expect(requests[0]?.volatileSystem).toContain('several messages');
+  });
+});
+
+describe('the turn reading', () => {
+  const reading = (kind: 'greeting' | 'question' | 'statement') => ({
+    kind,
+    sexual: false,
+    minor: false,
+    crisis: false,
+    identity: false,
+    source: 'jev' as const,
+  });
+
+  it('tells the model a bare hello is not a question — "hi" got "haan and you?"', async () => {
+    const { provider, requests } = recordingProvider();
+    await build(provider).reply({ ...turn(1, 'hi'), reading: reading('greeting') });
+
+    expect(requests[0]?.volatileSystem.toLowerCase()).toContain('only said hello');
+    expect(requests[0]?.volatileSystem.toLowerCase()).toContain('do not answer any question');
+  });
+
+  it('tells the model to answer first when they asked something', async () => {
+    const { provider, requests } = recordingProvider();
+    await build(provider).reply({ ...turn(1, 'kaha se ho'), reading: reading('question') });
+
+    expect(requests[0]?.volatileSystem.toLowerCase()).toContain('answer it plainly first');
+  });
+
+  it('adds nothing for a plain statement, which is the default', async () => {
+    const { provider, requests } = recordingProvider();
+    await build(provider).reply({ ...turn(1, 'long day'), reading: reading('statement') });
+
+    expect(requests[0]?.volatileSystem).not.toContain('answer it plainly');
+    expect(requests[0]?.volatileSystem).not.toContain('only said hello');
+  });
+
+  it('carries a retry note into the volatile half, never the cached one', async () => {
+    const { provider, requests } = recordingProvider();
+    await build(provider).reply({ ...turn(1, 'hi'), retryNote: 'RETRY NOTE' });
+
+    expect(requests[0]?.volatileSystem).toContain('RETRY NOTE');
+    expect(requests[0]?.stableSystem).not.toContain('RETRY NOTE');
   });
 });

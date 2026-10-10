@@ -103,7 +103,7 @@ const ACKNOWLEDGEMENTS = [
  * under-matching costs a question ignored, which is the failure this voice was
  * built to stop making.
  */
-function looksLikeQuestion(text: string): boolean {
+export function looksLikeQuestion(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (t === '') return false;
   if (t.includes('?')) return true;

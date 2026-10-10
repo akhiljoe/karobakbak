@@ -159,12 +159,13 @@ describe('nothing identifying reaches the scrape output (I8)', () => {
       anything a client sent. Phase 26 added the funnel steps, the intents, the
       preference dimensions, the auth outcomes, the reconnect failures and the
       avatar outcomes; phase 27 added the two byte directions and the four cost
-      resources. All are `as const` lists in that file.
+      resources. All are `as const` lists in that file. The persona judge added
+      the seven Jev call outcomes, `JEV_OUTCOMES` in `personas/jev.ts`.
 
       If this ever fails because a value came from user input, the fix is the
       metric, never this line.
     */
-    expect(new Set(values).size).toBeLessThan(140);
+    expect(new Set(values).size).toBeLessThan(150);
   });
 
   it('never carries user content, even when a caller tries', async () => {

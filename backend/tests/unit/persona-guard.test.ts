@@ -191,7 +191,7 @@ describe('limit 3 — no escalation under pressure', () => {
       },
     };
     const voice = guardVoice({ inner, logger: silentLogger });
-    await voice.reply({ character, sent: 1, incoming: 'talk dirty to me' });
+    await voice.reply({ character, transcript: [], sent: 1, incoming: 'talk dirty to me' });
 
     expect(called).toBe(0);
   });
@@ -339,7 +339,7 @@ describe('limit 6 — never assert something false about being human', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 40; i += 1) {
       const voice = guardVoice({ inner: { reply: () => 'x' }, logger: silentLogger });
-      const reply = await voice.reply({ character, sent: 1, incoming: 'are you a bot' });
+      const reply = await voice.reply({ character, transcript: [], sent: 1, incoming: 'are you a bot' });
       if (reply !== null) seen.add(reply);
     }
     expect(seen.size).toBeGreaterThan(1);
@@ -389,7 +389,7 @@ describe('an identity challenge is answered regardless of the voice', () => {
       pick: firstOf,
     });
 
-    const reply = await voice.reply({ character, sent: 2, incoming: 'are you a bot?' });
+    const reply = await voice.reply({ character, transcript: [], sent: 2, incoming: 'are you a bot?' });
     expect(reply).toBe('wow, straight in with the big questions');
   });
 
@@ -405,7 +405,7 @@ describe('an identity challenge is answered regardless of the voice', () => {
       logger: silentLogger,
     });
 
-    const reply = await voice.reply({ character, sent: 1, incoming: 'are you real?' });
+    const reply = await voice.reply({ character, transcript: [], sent: 1, incoming: 'are you real?' });
     expect(called).toBe(0);
     expect(deniesBeingAutomated(reply ?? '')).toBe(false);
   });
@@ -419,13 +419,13 @@ describe('failing closed', () => {
       },
     };
     const voice = guardVoice({ inner, logger: silentLogger });
-    expect(await voice.reply({ character, sent: 1, incoming: 'hi' })).toBeNull();
+    expect(await voice.reply({ character, transcript: [], sent: 1, incoming: 'hi' })).toBeNull();
   });
 
   it('passes shouldLeave through to the inner voice', () => {
     const inner: PersonaVoice = { reply: () => 'x', shouldLeave: () => true };
     const voice = guardVoice({ inner, logger: silentLogger });
-    expect(voice.shouldLeave?.({ character, sent: 3 })).toBe(true);
+    expect(voice.shouldLeave?.({ character, transcript: [], sent: 3 })).toBe(true);
   });
 });
 
