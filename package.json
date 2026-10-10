@@ -67,6 +67,14 @@
     "vps:down": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml down -v",
     "vps:stats": "docker stats --no-stream --format \"table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\" karobakbak-vps-frontend-1 karobakbak-vps-backend-1 karobakbak-vps-redis-1 karobakbak-vps-postgres-1 karobakbak-vps-prometheus-1",
     "vps:climb": "npm --prefix load-test/swarm run swarm -- --url ws://localhost:8091/ws --origin http://localhost:8091 --workers 6",
-    "vps:ps": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml ps"
+    "vps:ps": "docker compose --env-file .env.vps -p karobakbak-vps -f docker-compose.yml -f docker-compose.vps.yml ps",
+    "laptop:config": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml config",
+    "laptop:up": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml up -d --build",
+    "laptop:down": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml down",
+    "laptop:ps": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml ps -a",
+    "laptop:logs": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml logs -f --tail 200 backend cloudflared",
+    "laptop:stats": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml stats --no-stream",
+    "laptop:console": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml --profile admin up -d --build admin",
+    "laptop:personas": "docker compose --env-file .env.laptop -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.laptop.yml --profile personas up -d --build personas"
   }
 }
