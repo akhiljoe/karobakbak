@@ -21,6 +21,9 @@ build/
 !.env.example
 !.env.prod.example
 !.env.laptop.example
+# The laptop launcher is built from ops/laptop/launcher/ by build.ps1.
+ops/laptop/karobakbak-live.exe
+ops/laptop/launcher/obj/
 # Tracked on purpose: it holds no secrets, only the port and abuse-limit
 # overrides a load run needs.
 !.env.loadtest
