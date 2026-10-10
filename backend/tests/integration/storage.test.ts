@@ -169,6 +169,30 @@ describe('migrations', () => {
     expect(privileges.has('DELETE')).toBe(false);
   });
 
+  it('lets only the chat role expire audit rows, and only through the function', async () => {
+    // 018_audit_expiry.sql: the deletion worker runs as the chat role, which
+    // has no delete on admin_audit (the test above). Expiry goes through a
+    // SECURITY DEFINER function instead: callable by the chat role and nobody
+    // else, and pinned to this schema so a temporary table cannot stand in for
+    // the real one.
+    const fn = `${ctx.schema}.expire_admin_audit(integer)`;
+    const rows = await ctx.rows<{ app: boolean; console: boolean; public_can: boolean }>(
+      `select has_function_privilege('karobakbak_app', $1, 'EXECUTE') as app,
+              has_function_privilege('karobakbak_console', $1, 'EXECUTE') as console,
+              exists (select 1 from aclexplode((select proacl from pg_proc where oid = $1::regprocedure))
+                       where grantee = 0 and privilege_type = 'EXECUTE') as public_can`,
+      [fn],
+    );
+    expect(rows[0]).toEqual({ app: true, console: false, public_can: false });
+
+    const shape = await ctx.rows<{ prosecdef: boolean; proconfig: string[] | null }>(
+      `select prosecdef, proconfig from pg_proc where oid = $1::regprocedure`,
+      [fn],
+    );
+    expect(shape[0]?.prosecdef).toBe(true);
+    expect(shape[0]?.proconfig).toEqual([`search_path=${ctx.schema}, pg_temp`]);
+  });
+
   it('denies the console the ability to delete retained content', async () => {
     // A console that could delete a conversation could destroy the evidence in
     // the case it was opened for. Deletion belongs to the retention worker,
