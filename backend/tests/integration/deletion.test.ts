@@ -515,6 +515,79 @@ describe('picture URLs on dead credentials (020_credential_picture.sql)', () => 
   });
 });
 
+describe('dormant accounts (D66, 022_account_expiry.sql)', () => {
+  async function account(
+    state: 'expired' | 'current',
+    status: 'active' | 'suspended' = 'active',
+  ): Promise<string> {
+    const id = `acc_${newMatchId().slice(2)}`;
+    await ctx.db.query(
+      `insert into accounts (id, status, retention_expires_at)
+       values ($1, $2, now() + ($3 || ' days')::interval)`,
+      [id, status, state === 'expired' ? '-1' : '30'],
+    );
+    return id;
+  }
+
+  async function exists(id: string): Promise<boolean> {
+    const rows = await ctx.rows<{ n: string }>('select count(*)::text as n from accounts where id = $1', [id]);
+    return rows[0]?.n === '1';
+  }
+
+  afterEach(async () => {
+    await ctx.db.query('delete from accounts');
+  });
+
+  it('removes an expired account as the chat role, with everything hanging off it', async () => {
+    const gone = await account('expired');
+    const friend = await account('current');
+    const [lo, hi] = gone < friend ? [gone, friend] : [friend, gone];
+    await ctx.db.query('insert into connections (account_lo, account_hi) values ($1, $2)', [lo, hi]);
+    await ctx.db.query(
+      `insert into connection_labels (owner_account_id, other_account_id, label) values ($1, $2, 'Sam'), ($2, $1, 'Ana')`,
+      [friend, gone],
+    );
+    await ctx.db.query(
+      `insert into account_credentials (token_hash, account_id, expires_at)
+       values (convert_to($1, 'utf8'), $2, now() + interval '1 day')`,
+      [`h_${newMatchId()}`, gone],
+    );
+
+    const result = await asChatRole((db) =>
+      new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass(),
+    );
+
+    expect(result.failed).toBe(false);
+    expect(result.deleted.accounts).toBe(1);
+    expect(await exists(gone)).toBe(false);
+    // The friend stays, and loses the friendship and both names with it.
+    expect(await exists(friend)).toBe(true);
+    expect(await ctx.count('connections')).toBe(0);
+    expect(await ctx.count('connection_labels')).toBe(0);
+    expect(await ctx.count('account_credentials')).toBe(0);
+  });
+
+  it('keeps an account whose deadline has not passed', async () => {
+    const kept = await account('current');
+    await asChatRole((db) => new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass());
+    expect(await exists(kept)).toBe(true);
+  });
+
+  it('keeps a suspended account, so dormancy cannot wash out a suspension', async () => {
+    const suspended = await account('expired', 'suspended');
+    await asChatRole((db) => new DeletionWorker(ctx.config, createNullLogger(), db, new FakeLock()).runPass());
+    expect(await exists(suspended)).toBe(true);
+  });
+
+  it('still refuses the chat role a plain delete on accounts', async () => {
+    await account('expired');
+    await asChatRole(async (db) => {
+      await expect(db.query('delete from accounts')).rejects.toMatchObject({ code: '42501' });
+    });
+    expect(await ctx.count('accounts')).toBe(1);
+  });
+});
+
 describe('legal holds protect data (§15)', () => {
   it('suspends deletion of a held conversation, and of everything in it', async () => {
     // This test used to assert one thing — that the conversation row survived —

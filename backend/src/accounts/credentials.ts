@@ -140,9 +140,11 @@ export async function resolveAccount(
  * period, and it keeps "we know almost nothing about you" true for users who
  * sign in. The verified email is read from the token and deliberately dropped.
  *
- * `retention_expires_at` is stamped here, at insert, because D17 forbids
- * computing a deadline at deletion time — a config change must not retroactively
- * extend the life of data already stored.
+ * `retention_expires_at` is stamped here because D17 forbids computing a
+ * deadline at deletion time — at insert, and again on every returning sign-in
+ * (D66), so the deadline is always "this long after the last sign-in" under the
+ * setting in force at that moment. The deletion worker removes an active
+ * account once it passes.
  */
 export async function accountForSubject(
   db: Database,
@@ -174,12 +176,15 @@ export async function accountForSubject(
     // apart, because by then the row exists either way.
     const isNew = row !== undefined;
     if (row === undefined) {
+      // The deadline moves forward with use. Without this an account expired a
+      // fixed period after it was made, however active its owner still was.
       const found = await db.query<{ id: string; status: string }>(
         `update accounts
-            set last_seen_at = now()
+            set last_seen_at = now(),
+                retention_expires_at = $2
           where external_id = $1
       returning id, status`,
-        [subject],
+        [subject, expires],
       );
       row = found.rows[0];
     }
