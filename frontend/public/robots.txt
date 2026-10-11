@@ -1,0 +1,9 @@
+# karobakbak.com. The sitemap lists every public page; src/meta.ts is its source.
+User-agent: *
+Allow: /
+Disallow: /auth/
+Disallow: /api/
+Disallow: /ws
+Disallow: /signin-done.html
+
+Sitemap: https://karobakbak.com/sitemap.xml

@@ -1,0 +1,117 @@
+<!doctype html>
+<!--
+  The link-preview card: frontend/public/og-image.png is a 1200x630 render of
+  this file. Regenerate after any change (README.md, "The share card"):
+
+    chrome --headless=new --hide-scrollbars --window-size=1200,630 \
+      --screenshot=frontend/public/og-image.png docs/brand/og-card.html
+
+  The mark is the same geometry as logo-lockup.svg, scaled. Everything that
+  matters sits inside the central square, because WhatsApp and some chat apps
+  crop the card to a square thumbnail.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: 'Fraunces';
+        font-weight: 600;
+        src: url('../../frontend/node_modules/@fontsource/fraunces/files/fraunces-latin-600-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Fraunces';
+        font-weight: 600;
+        font-style: italic;
+        src: url('../../frontend/node_modules/@fontsource/fraunces/files/fraunces-latin-600-italic.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'Plus Jakarta Sans';
+        font-weight: 400;
+        src: url('../../frontend/node_modules/@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-400-normal.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        font-weight: 400;
+        src: url('../../frontend/node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: #13100b;
+      }
+      .card {
+        position: relative;
+        width: 1200px;
+        height: 630px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        /* The landing page's warm glow, behind the headline. */
+        background:
+          radial-gradient(ellipse 620px 360px at 50% 46%, rgba(255, 180, 32, 0.11), transparent 70%),
+          #13100b;
+        border: 1px solid #2a241c;
+        box-sizing: border-box;
+      }
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        margin-bottom: 44px;
+      }
+      .lockup span {
+        font-family: 'Fraunces', Georgia, serif;
+        font-weight: 600;
+        font-size: 40px;
+        letter-spacing: -0.5px;
+        color: #f7f5f3;
+      }
+      h1 {
+        margin: 0;
+        font-family: 'Fraunces', Georgia, serif;
+        font-weight: 600;
+        font-size: 84px;
+        line-height: 1.04;
+        letter-spacing: -2px;
+        color: #f7f5f3;
+      }
+      h1 em {
+        color: #ffc94a;
+      }
+      p {
+        margin: 30px 0 0;
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        font-size: 32px;
+        color: #b8ab97;
+      }
+      .url {
+        position: absolute;
+        bottom: 34px;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 22px;
+        color: #8a7d68;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="lockup">
+        <svg width="88" height="88" viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M16.1 13.5 A 13.5 13.5 0 0 1 16.1 34.5" stroke="#ffb420" stroke-width="2.7" stroke-linecap="round" fill="none" />
+          <path d="M31.9 17 A 9.7 9.7 0 0 0 31.9 31" stroke="#ffc94a" stroke-opacity="0.5" stroke-width="2.7" stroke-linecap="round" fill="none" />
+          <circle cx="25.1" cy="24" r="1.4" fill="#ffb420" />
+        </svg>
+        <span>karobakbak</span>
+      </div>
+      <h1>Talk to someone<br />you’ve <em>never met</em>.</h1>
+      <p>Anonymous. Text-only. No sign-up.</p>
+      <div class="url">karobakbak.com</div>
+    </div>
+  </body>
+</html>
