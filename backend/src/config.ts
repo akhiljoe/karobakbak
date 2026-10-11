@@ -542,6 +542,15 @@ export interface Config {
      * the property a stolen one benefits from most.
      */
     readonly sessionTtlSeconds: number;
+    /**
+     * How long an account survives without a sign-in (D66).
+     *
+     * Restamped on every sign-in, and the deletion worker removes an active
+     * account once it passes, with its friendships, labels and credentials.
+     * Must exceed the session lifetime, or an account could be deleted while
+     * one of its own credentials is still valid; `assertCoherent` refuses that.
+     */
+    readonly accountRetentionDays: number;
     /** How long the browser has to complete a started sign-in. */
     readonly flowTtlSeconds: number;
     /**
@@ -1581,6 +1590,8 @@ export function loadConfig(
       // Thirty days. Long enough that signing in is rare, short enough that a
       // credential lifted from a shared machine dies on its own.
       sessionTtlSeconds: int(env, 'AUTH_SESSION_TTL_SECONDS', 2_592_000, 300, 31_536_000),
+      // A year without signing in, then the account and its friendships go.
+      accountRetentionDays: int(env, 'AUTH_ACCOUNT_RETENTION_DAYS', 365, 30, 3650),
       // Ten minutes to finish a redirect the user is actively performing. It
       // bounds how long a state/verifier pair is worth stealing.
       flowTtlSeconds: int(env, 'AUTH_FLOW_TTL_SECONDS', 600, 60, 3600),
@@ -2011,6 +2022,16 @@ function assertCoherent(config: Config): void {
   // exists to convert into a startup error. Every one of these is required for
   // a redirect to complete, and a missing one produces a button that renders,
   // navigates, and lands on a provider error page the user cannot act on.
+  // An account deleted while one of its own credentials is valid would sign
+  // somebody out of an account that no longer exists mid-visit — and the next
+  // sign-in would mint a fresh one, losing every friend without a word.
+  if (config.auth.accountRetentionDays * 86_400 <= config.auth.sessionTtlSeconds) {
+    throw new ConfigError(
+      'AUTH_ACCOUNT_RETENTION_DAYS must be longer than AUTH_SESSION_TTL_SECONDS, ' +
+        'or an account can expire while it is still signed in',
+    );
+  }
+
   if (config.auth.enabled) {
     const missing = (
       [

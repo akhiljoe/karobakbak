@@ -74,6 +74,12 @@ export interface DeletionCounts {
    * `migrations-pending/` on purpose.
    */
   paymentOrders: number;
+  /**
+   * Accounts nobody has signed in to for `AUTH_ACCOUNT_RETENTION_DAYS` (D66).
+   * Counts accounts only; what cascades with each — credentials, friendships,
+   * labels, block records — is not counted separately.
+   */
+  accounts: number;
 }
 
 export interface DeletionPassResult {
@@ -107,6 +113,7 @@ const EMPTY: DeletionCounts = {
   enforcement: 0,
   adminAudit: 0,
   paymentOrders: 0,
+  accounts: 0,
 };
 
 export class DeletionWorker {
@@ -419,6 +426,17 @@ export class DeletionWorker {
       ? await this.expireBatch('expire_payment_orders', batch)
       : 0;
 
+    /*
+      Dormant accounts, last: an account's removal cascades into tables the
+      steps above never touch, so nothing earlier depends on it.
+
+      Through a function for the reason the audit log is: the chat role holds
+      no delete on `accounts`. Only active accounts past their own deadline go;
+      a suspended one is kept so dormancy cannot wash out a suspension
+      (022_account_expiry.sql).
+    */
+    const accounts = await this.expireBatch('expire_accounts', batch);
+
     return {
       conversations,
       messages,
@@ -427,6 +445,7 @@ export class DeletionWorker {
       enforcement,
       adminAudit,
       paymentOrders,
+      accounts,
     };
   }
 
@@ -480,12 +499,12 @@ export class DeletionWorker {
   /**
    * Call one of the expiry functions for tables this role may not delete from.
    *
-   * The name is one of two literals, never a parameter that came from anywhere
+   * The name is one of three literals, never a parameter that came from anywhere
    * else, so interpolating it is not an injection path; a function name cannot
    * be a bind parameter.
    */
   private async expireBatch(
-    fn: 'expire_admin_audit' | 'expire_payment_orders',
+    fn: 'expire_admin_audit' | 'expire_payment_orders' | 'expire_accounts',
     batch: number,
   ): Promise<number> {
     const result = await this.db.query<{ removed: number }>(`select ${fn}($1::integer) as removed`, [batch]);

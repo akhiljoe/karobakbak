@@ -102,6 +102,26 @@ describe('resolving an account from an OIDC subject', () => {
     expect(rows[0]?.retention_expires_at.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it('moves the deadline forward on a returning sign-in (D66)', async () => {
+    const first = await subject('sub_returning');
+    if (!first.ok) throw new Error('expected an account');
+    // As if it had been made long ago and was close to lapsing.
+    await pg.db.query(
+      `update accounts set retention_expires_at = now() + interval '1 day' where id = $1`,
+      [first.accountId],
+    );
+
+    await subject('sub_returning');
+
+    const rows = await pg.rows<{ days: number }>(
+      `select extract(epoch from retention_expires_at - now()) / 86400 as days from accounts where id = $1`,
+      [first.accountId],
+    );
+    // A year from now again, not a day — use keeps an account alive.
+    expect(Number(rows[0]?.days)).toBeGreaterThan(RETENTION_DAYS - 1);
+    expect(Number(rows[0]?.days)).toBeLessThanOrEqual(RETENTION_DAYS);
+  });
+
   it('leaves external_id null for accounts made another way, without colliding', async () => {
     // The index is partial for exactly this: a plain unique index would collapse
     // every account that predates sign-in into one.

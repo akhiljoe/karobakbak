@@ -487,7 +487,9 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         db,
         logger,
         identity.subject,
-        config.payments.recordRetentionDays,
+        // The account's own period (D66), not the payment records' seven years
+        // it used to borrow. Restamped on every sign-in, not only the first.
+        auth.accountRetentionDays,
       );
       if (!account.ok) {
         logger.warn('sign-in resolved no usable account', { reason: account.reason });

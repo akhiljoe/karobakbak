@@ -1066,3 +1066,19 @@ describe('the persona cadence has exactly one set of defaults', () => {
     expect(config.personas.cadence.readFloorMs).toBe(DEFAULT_CADENCE.readFloorMs);
   });
 });
+
+describe('account retention (D66)', () => {
+  it('defaults to a year after the last sign-in', () => {
+    expect(loadConfig(baseEnv()).auth.accountRetentionDays).toBe(365);
+  });
+
+  it('refuses a period no longer than a session, or a signed-in account could expire', () => {
+    expect(() =>
+      loadConfig(baseEnv({ AUTH_ACCOUNT_RETENTION_DAYS: '30', AUTH_SESSION_TTL_SECONDS: String(31 * 86_400) })),
+    ).toThrow(/AUTH_ACCOUNT_RETENTION_DAYS/);
+    expect(
+      loadConfig(baseEnv({ AUTH_ACCOUNT_RETENTION_DAYS: '31', AUTH_SESSION_TTL_SECONDS: String(30 * 86_400) }))
+        .auth.accountRetentionDays,
+    ).toBe(31);
+  });
+});

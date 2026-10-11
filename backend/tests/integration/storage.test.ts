@@ -238,6 +238,7 @@ describe('migrations', () => {
       'external_id',
       'last_active_at',
       'last_seen_at',
+      'retention_expires_at',
       'share_presence',
     ]);
   });
