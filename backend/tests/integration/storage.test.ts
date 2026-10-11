@@ -222,6 +222,26 @@ describe('migrations', () => {
     expect(updatable.has('limit_micro_cents')).toBe(false);
   });
 
+  it('lets the chat role update only the account columns a user changes about themselves', async () => {
+    // `status` and `risk_state` are moderation decisions (010_accounts.sql) and
+    // must stay out of the chat role's reach. The list is exact, so a new grant
+    // has to be added here on purpose rather than slipping in with a migration.
+    const grants = await ctx.rows<{ column_name: string }>(
+      `select column_name
+         from information_schema.column_privileges
+        where grantee = 'karobakbak_app'
+          and table_schema = '${ctx.schema}'
+          and table_name = 'accounts'
+          and privilege_type = 'UPDATE'`,
+    );
+    expect(grants.map((row) => row.column_name).sort()).toEqual([
+      'external_id',
+      'last_active_at',
+      'last_seen_at',
+      'share_presence',
+    ]);
+  });
+
   it('keeps spend non-negative and the ceiling positive', async () => {
     await expect(
       ctx.db.query(

@@ -13,12 +13,23 @@
  * presence that was wrong.
  *
  * ---------------------------------------------------------------------------
- * THERE IS NO LAST-SEEN, AND THERE WILL NOT BE ONE
+ * LAST-SEEN EXISTS NOW, AND IT IS COARSE ON PURPOSE (D65)
  * ---------------------------------------------------------------------------
- * "Are they here" is a fact about this moment that stops being true on its own.
- * "When were they last here" is a history of somebody's habits — when they wake
- * up, when they are at work, how long they were away — and it is a far larger
- * disclosure wearing the same words. The key holds no timestamp to read.
+ * This file used to say there would never be one. "Are they here" is a fact
+ * about this moment; "when were they last here" is a history of somebody's
+ * habits — when they wake up, when they are at work — and it is a larger
+ * disclosure wearing the same words. The operator chose to offer it anyway,
+ * and D65 is the reversal. What survives of the old argument is its shape:
+ *
+ *   * The key above still holds no timestamp. Last-active lives in PostgreSQL
+ *     (`accounts.last_active_at`), truncated to the hour, and leaves the server
+ *     only as a bucket (`lastActiveBucket`) — never the value.
+ *   * It is written only while the account shares presence and erased the
+ *     moment it stops. Hiding means not being remembered.
+ *   * It is shown only to connections who share their own, so nobody can
+ *     watch while invisible. That rule lives in the route.
+ *   * One write per account per hour at most, gated in Redis, and never
+ *     awaited by the heartbeat that triggers it.
  *
  * ---------------------------------------------------------------------------
  * THE CHOICE IS DURABLE EVEN THOUGH THE PRESENCE IS NOT
@@ -55,6 +66,46 @@ export const PRESENCE_TTL_SECONDS = 75;
  */
 export const PRESENCE_TOKEN_TTL_SECONDS = 12 * 60 * 60;
 
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * How long ago somebody was last here, as a connection may see it.
+ *
+ * `{ unit: 'hour', count: 0 }` is "within the last hour". Every other value is
+ * a whole number of its unit, rounded down, so "3 hours ago" means somewhere
+ * between three and four.
+ */
+export interface LastActive {
+  readonly unit: 'hour' | 'day' | 'week' | 'month' | 'year';
+  readonly count: number;
+}
+
+/**
+ * The bucket a stored stamp is shown as (D65).
+ *
+ * The stamp is the start of the last hour somebody was here, so they were
+ * active at some point before `stamp + 1h`. Measuring from the end of that hour
+ * errs toward "more recent" by at most an hour, which is the honest direction
+ * for a value that was rounded down when it was written.
+ *
+ * Coarser the further back it is. "4 months ago" says what a friends list needs
+ * to say; "4 months, 3 days and 6 hours ago" is the habit trail D65 exists to
+ * refuse. Pure, so the boundaries are tested without a clock.
+ */
+export function lastActiveBucket(stamp: Date, now: Date): LastActive {
+  const elapsed = now.getTime() - (stamp.getTime() + HOUR_MS);
+  if (elapsed < HOUR_MS) return { unit: 'hour', count: 0 };
+  const hours = Math.floor(elapsed / HOUR_MS);
+  if (hours < 24) return { unit: 'hour', count: hours };
+  const days = Math.floor(elapsed / DAY_MS);
+  if (days < 7) return { unit: 'day', count: days };
+  if (days < 30) return { unit: 'week', count: Math.floor(days / 7) };
+  const months = Math.floor(days / 30);
+  if (months < 12) return { unit: 'month', count: months };
+  return { unit: 'year', count: Math.max(1, Math.floor(days / 365)) };
+}
+
 export interface PresenceService {
   /**
    * Publish, or refresh, that this account is here, on this session.
@@ -69,6 +120,15 @@ export interface PresenceService {
   withdraw(accountId: string): Promise<void>;
   /** Which of these accounts are online. Absent means offline or hidden. */
   online(accountIds: readonly string[]): Promise<Set<string>>;
+  /**
+   * The live session of an account that is visibly online, or null.
+   *
+   * Reads the visibility key, not the routing one, so somebody who turned
+   * presence off answers null exactly as somebody away does. This is what a
+   * friend's "Chat" button resolves through — being reachable by a friend is
+   * being visible to them.
+   */
+  visibleSession(accountId: string): Promise<string | null>;
   /** Whether this account currently shares presence. */
   sharing(accountId: string): Promise<boolean>;
   /** This account's own live session, whatever it shows other people. */
@@ -126,6 +186,11 @@ export function createPresenceService(
         // publishing somebody who has just turned it off.
         if (!(await this.sharing(accountId))) return;
         await redis.set(keys.presence(accountId), sessionId, 'EX', PRESENCE_TTL_SECONDS);
+
+        // Not awaited. The heartbeat loop walks every socket on this instance
+        // in turn, so a slow database here would delay everybody's beat and
+        // start timing out connections that are perfectly healthy.
+        void stampActive(accountId);
       } catch (err) {
         // Never fatal. Presence is decoration; a heartbeat that fails to
         // publish must not cost the connection it rode in on.
@@ -138,6 +203,16 @@ export function createPresenceService(
         await redis.del(keys.presence(accountId));
       } catch (err) {
         logger.warn('could not withdraw presence', errorFields(err));
+      }
+    },
+
+    async visibleSession(accountId) {
+      try {
+        const sessionId = await redis.get(keys.presence(accountId));
+        return sessionId === null || sessionId === '' ? null : sessionId;
+      } catch (err) {
+        logger.warn('could not resolve a visible account to a session', errorFields(err));
+        return null;
       }
     },
 
@@ -281,7 +356,15 @@ export function createPresenceService(
 
     async setSharing(accountId, share) {
       try {
-        await db.query(`update accounts set share_presence = $2 where id = $1`, [accountId, share]);
+        // Turning it off erases the last-active stamp in the same statement, so
+        // there is no moment at which somebody is hidden and still remembered.
+        await db.query(
+          `update accounts
+              set share_presence = $2,
+                  last_active_at = case when $2 then last_active_at else null end
+            where id = $1`,
+          [accountId, share],
+        );
       } catch (err) {
         logger.error('could not change the presence setting', dbErrorFields(err));
         throw new Error('presence setting could not be saved');
@@ -289,7 +372,41 @@ export function createPresenceService(
       // Immediately, not within a TTL. Somebody turning this off is asking to
       // stop being visible now, and up to 75 seconds of "still online" would be
       // the interface ignoring them.
-      if (!share) await this.withdraw(accountId);
+      if (!share) {
+        await this.withdraw(accountId);
+        try {
+          // So turning it back on stamps at once rather than next hour.
+          await redis.del(keys.activeHour(accountId));
+        } catch (err) {
+          logger.warn('could not clear the last-active gate', errorFields(err));
+        }
+      }
     },
   };
+
+  /**
+   * Record that this account was here this hour, at most once per hour.
+   *
+   * The Redis value is the hour last written; PostgreSQL is touched only when it
+   * changes. Two instances racing write the same value, which is harmless.
+   * `and share_presence` re-checks the setting in the statement itself, so a
+   * stamp in flight when somebody turns presence off cannot land after the
+   * erase.
+   */
+  async function stampActive(accountId: string): Promise<void> {
+    const hour = Math.floor(Date.now() / HOUR_MS);
+    try {
+      const gate = keys.activeHour(accountId);
+      if ((await redis.get(gate)) === String(hour)) return;
+      await redis.set(gate, String(hour), 'EX', 2 * 60 * 60);
+      await db.query(
+        `update accounts set last_active_at = to_timestamp($2) where id = $1 and share_presence`,
+        [accountId, hour * 3600],
+      );
+    } catch (err) {
+      // Lossy by design: a missed stamp makes somebody look an hour staler to
+      // their friends, and nothing else.
+      logger.warn('could not record last-active', dbErrorFields(err));
+    }
+  }
 }

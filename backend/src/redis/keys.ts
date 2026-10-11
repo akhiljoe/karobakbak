@@ -123,14 +123,23 @@ export interface RedisKeys {
    * Whether an account is online *right now*.
    *
    * A key with a short TTL, refreshed while a session carrying that account is
-   * connected. There is deliberately no last-seen and there will not be one:
-   * "when were they last here" is a far more revealing claim than "are they
-   * here", and only the second is offered.
+   * connected. When they were last here is a different question, answered
+   * coarsely from PostgreSQL (`accounts.last_active_at`, D65) — never from this
+   * key, which holds no timestamp.
    *
    * Redis is the right home precisely because it forgets. Presence that
    * survived a restart would be presence that was wrong.
    */
   presence(accountId: string): string;
+  /**
+   * STRING — the hour an account's last-active stamp was last written for.
+   *
+   * The gate that keeps `last_active_at` to one write per account per hour:
+   * the heartbeat compares the current hour with this value and touches
+   * PostgreSQL only when they differ. Losing it to a restart costs one extra
+   * write, never a wrong answer.
+   */
+  activeHour(accountId: string): string;
   /**
    * A presence token, resolving to the account it was minted for.
    *
@@ -194,6 +203,7 @@ export function createKeys(prefix: string): RedisKeys {
     ban: (subjectKey) => `${prefix}:ban:${assertComponent(subjectKey, 'subject key')}`,
     resume: (tokenHash) => `${prefix}:resume:${assertComponent(tokenHash, 'resume hash')}`,
     presence: (accountId) => `${prefix}:online:${assertComponent(accountId, 'account id')}`,
+    activeHour: (accountId) => `${prefix}:active:${assertComponent(accountId, 'account id')}`,
     presenceToken: (token) => `${prefix}:ptok:${assertComponent(token, 'presence token')}`,
     accountSession: (accountId) => `${prefix}:sess:${assertComponent(accountId, 'account id')}`,
     instance: (iid) => `${prefix}:instance:${assertComponent(iid, 'instance id')}`,

@@ -253,6 +253,8 @@ export function createChatServer(deps: ChatServerDeps): ChatServer {
   // Mints the presence tokens the matched frame carries. Null when sign-in is
   // not configured, which is the same as every partner being signed out.
   accountPresence ?? undefined,
+  // So blocking a saved friend also ends the friendship (D65).
+  deps.connections,
   );
 
   /**

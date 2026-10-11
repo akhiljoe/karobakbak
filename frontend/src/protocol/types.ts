@@ -720,13 +720,21 @@ export interface ConnectionRequestPayload {
  * Somebody you spoke to earlier would like to talk again.
  *
  * Reaches a person who is online, from a person who is online, and carries
- * nothing about who is asking beyond what the recipient's own Recent list
- * already remembers. Declining sends nothing back — the same rule as a
- * connection request.
+ * nothing about who is asking beyond what the recipient already holds: their
+ * own Recent list, or — for a saved friend — their own name for that friend.
+ * Declining sends nothing back — the same rule as a connection request.
  */
 export interface ReconnectRequestPayload {
   /** Answer with this to accept. Opaque, single-use, and short-lived. */
   readonly offer: string;
+  /** Present when the asker is one of the recipient's saved connections. */
+  readonly friend?: {
+    /**
+     * The recipient's own name for them, or null if they never gave one.
+     * Never a name the asker chose, and never anything about the asker.
+     */
+    readonly label: string | null;
+  };
 }
 
 /**

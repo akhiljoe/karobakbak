@@ -55,7 +55,7 @@ import { fetchAvatar } from './avatar';
 import { createHash } from 'node:crypto';
 import type { ConnectionRepository } from './connections';
 import type { BlockRepository } from './blocks';
-import type { PresenceService } from './presence';
+import { lastActiveBucket, type PresenceService } from './presence';
 import type { EntitlementService } from './entitlement';
 import type { Redis } from 'ioredis';
 import { TokenError, type OidcClient } from './oidc';
@@ -80,6 +80,15 @@ export type FlowMode = 'redirect' | 'popup';
 const POPUP_DONE_PAGE = '/signin-done.html';
 /** The session credential itself. */
 const SESSION_COOKIE = '__Host-kbb_session';
+
+/**
+ * How long before the same friend can be asked again.
+ *
+ * Long enough that a prompt cannot be repeated faster than somebody can read
+ * and ignore it; short enough that a request that genuinely went astray can be
+ * sent again without anybody wondering whether the button works.
+ */
+export const FRIEND_ASK_COOLDOWN_SECONDS = 60;
 
 /**
  * What the sign-in and connection routes report to the metrics registry.
@@ -146,7 +155,10 @@ export interface AuthRoutesDeps {
     /** Both sides' block keys, and a way to write a block between them. */
     block(offerAsker: string, offerTarget: string): Promise<boolean>;
     /** The session behind a request, if it is still attached here or anywhere. */
-    notify(sessionId: string, event: { offer: string } | { startedAt: string }): Promise<boolean>;
+    notify(
+      sessionId: string,
+      event: { offer: string; friend?: { label: string | null } } | { startedAt: string },
+    ): Promise<boolean>;
     /** Put a session into a private lane so ordinary matchmaking pairs the two. */
     pair(sessionA: string, sessionB: string): Promise<void>;
   };
@@ -640,7 +652,16 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
           presence === undefined
             ? new Set<string>()
             : await presence.online(rows.map((row) => row.other));
+        /*
+          Last-active is mutual (D65): somebody who hides their own presence
+          sees nobody else's last-active either, so there is no watching while
+          invisible. Online dots are not gated this way — they were shipped
+          without the rule and say nothing about the past.
+        */
+        const sharing = presence === undefined ? false : await presence.sharing(resolved.accountId);
+        const now = new Date();
         json(res, 200, {
+          sharing,
           connections: rows.map((row) => ({
             handle: connectionHandle(resolved.accountId, row.other),
             since: row.since.toISOString(),
@@ -651,6 +672,13 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
             // distinguishable "hidden" would disclose the very thing the
             // setting exists to hide.
             online: here.has(row.other),
+            // A bucket, never the stamp: the page learns "3 hours ago" and
+            // nothing finer. Null for hidden, never-recorded and not-mutual
+            // alike, so the three cannot be told apart.
+            lastActive:
+              sharing && row.lastActiveAt !== null
+                ? lastActiveBucket(row.lastActiveAt, now)
+                : null,
           })),
         });
       } catch (err) {
@@ -940,16 +968,88 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
 
       const body = await readBody(req);
       const token = typeof body?.token === 'string' ? body.token : '';
-      if (!/^[0-9a-f]{32}$/.test(token)) {
+      const handle = typeof body?.handle === 'string' ? body.handle : '';
+      const byToken = /^[0-9a-f]{32}$/.test(token);
+      const byHandle = /^[0-9a-f]{32}$/.test(handle);
+      if (byToken === byHandle) {
+        // Exactly one. Both is ambiguous about who is being asked, and neither
+        // asks nobody.
         json(res, 400, { error: 'bad_request' });
         return;
       }
 
-      const theirSession = await presence.sessionForToken(token);
+      let theirSession: string | null;
+      let friend: { label: string | null } | undefined;
+      if (byToken) {
+        theirSession = await presence.sessionForToken(token);
+      } else {
+        /*
+          A saved connection, addressed by its per-viewer handle and resolved
+          against the caller's own list — the rule every handle route follows,
+          so nobody can ask a stranger by guessing.
+
+          Through the *visible* session: a friend who hid their presence answers
+          exactly as one who is away, or the Chat button would disclose the very
+          thing the setting hides.
+        */
+        if (connections === undefined) {
+          json(res, 200, { asked: false, reason: 'away' });
+          return;
+        }
+        let other: string | undefined;
+        try {
+          const mine = await connections.list(me.accountId);
+          other = mine.find((row) => connectionHandle(me.accountId, row.other) === handle)?.other;
+        } catch (err) {
+          logger.warn('could not resolve a friend to ask', errorFields(err));
+        }
+        if (other === undefined) {
+          json(res, 404, { error: 'not_found' });
+          return;
+        }
+
+        /*
+          One ask per friend per minute. A prompt arrives on somebody's screen
+          uninvited; without this, one person could put a fresh one there every
+          second. Answered as "wait" to the asker only — it is about their own
+          button, and tells them nothing about the other side.
+        */
+        try {
+          const gate = await redis?.set(
+            `${config.redis.keyPrefix}:askgate:${me.accountId}:${other}`,
+            '1',
+            'EX',
+            FRIEND_ASK_COOLDOWN_SECONDS,
+            'NX',
+          );
+          if (gate !== 'OK' && redis !== undefined) {
+            json(res, 200, { asked: false, reason: 'wait' });
+            return;
+          }
+        } catch (err) {
+          logger.warn('could not check the friend ask gate', errorFields(err));
+        }
+
+        theirSession = await presence.visibleSession(other);
+        if (theirSession !== null) {
+          // The recipient's own name for the asker, from the recipient's own
+          // list — never a name the asker chose. Null when they never named
+          // them, which the prompt renders as "a friend".
+          try {
+            const theirs = await connections.list(other);
+            const row = theirs.find((r) => r.other === me.accountId);
+            friend = { label: row?.label ?? null };
+          } catch (err) {
+            logger.warn('could not read the recipient label', errorFields(err));
+            friend = { label: null };
+          }
+        }
+      }
+
       if (theirSession === null) {
         // One answer for every reason — expired, invented, opted out, away — so
-        // this cannot be used to learn anything about a token beyond whether
-        // the ask can happen right now.
+        // this cannot be used to learn anything about a token or a friend
+        // beyond whether the ask can happen right now.
         json(res, 200, { asked: false, reason: 'away' });
         return;
       }
@@ -970,7 +1070,10 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
         return;
       }
 
-      const delivered = await reconnect.notify(theirSession, { offer });
+      const delivered = await reconnect.notify(
+        theirSession,
+        friend === undefined ? { offer } : { offer, friend },
+      );
       json(res, 200, { asked: delivered, ...(delivered ? {} : { reason: 'away' }) });
     },
 

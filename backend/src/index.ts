@@ -7,7 +7,7 @@
  * build its own without touching `process.env`.
  */
 import { configWarnings, loadConfig } from './config';
-import { createLoggerFromConfig } from './logger';
+import { createLoggerFromConfig, errorFields } from './logger';
 import { createRedisClients } from './redis/client';
 import { createKeys } from './redis/keys';
 import { ScriptRunner } from './redis/scripts';
@@ -256,7 +256,12 @@ async function main(): Promise<void> {
         async notify(sessionId, event) {
           const frame =
             'offer' in event
-              ? ({ event: 'reconnect_request', matchId: '', offer: event.offer } as const)
+              ? ({
+                  event: 'reconnect_request',
+                  matchId: '',
+                  offer: event.offer,
+                  ...(event.friend === undefined ? {} : { friend: event.friend }),
+                } as const)
               : ({ event: 'reconnect_ready', matchId: '', startedAt: event.startedAt } as const);
           /*
             Published on the session's own channel rather than handed to the
@@ -291,6 +296,14 @@ async function main(): Promise<void> {
             Date.now() + config.blocks.ttlSeconds * 1000,
           ).toISOString();
           const accounts = await store.readAccounts(target, asker);
+          // Refusing a friend's request with Block ends the friendship as
+          // well, for the reason the in-chat block does (D65). Not awaited:
+          // the block is what was asked for and it is already written.
+          if (accounts.a !== null && accounts.b !== null && accounts.a !== accounts.b) {
+            void connections?.remove(accounts.a, accounts.b).catch((err: unknown) => {
+              logger.warn('could not end a connection after a block', errorFields(err));
+            });
+          }
           for (const entry of written) {
             retention.enqueue({
               kind: 'block',

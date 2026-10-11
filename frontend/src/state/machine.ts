@@ -169,6 +169,11 @@ export interface ChatState {
    */
   readonly reconnectOffer: string | null;
   /**
+   * Set when the pending offer is from a saved friend: the recipient's own name
+   * for them, or null for "a friend". Null for a past partner from Recent.
+   */
+  readonly reconnectFriend: { readonly label: string | null } | null;
+  /**
    * Both sides agreed and should start looking.
    *
    * A flag rather than an action with a side effect, because the reducer is
@@ -263,6 +268,7 @@ export const initialState: ChatState = {
   connectionMade: false,
   connectionAsked: false,
   reconnectOffer: null,
+  reconnectFriend: null,
   reconnectReady: false,
   leaving: false,
   searchPending: false,
@@ -303,7 +309,7 @@ export type Action =
   | { type: 'connection_request'; matchId: string }
   /** The prompt was declined here. Nothing is sent; see §31. */
   | { type: 'connection_dismissed' }
-  | { type: 'reconnect_request'; offer: string }
+  | { type: 'reconnect_request'; offer: string; friend?: { label: string | null } }
   /** Answered, either way. Declining sends nothing; see §31. */
   | { type: 'reconnect_dismissed' }
   | { type: 'reconnect_ready' }
@@ -669,13 +675,13 @@ export function reduce(state: ChatState, action: Action): ChatState {
       // Ignored mid-conversation. Somebody already talking to a stranger should
       // not be asked to abandon them, and the offer expires on its own.
       if (state.screen === 'chatting') return state;
-      return { ...state, reconnectOffer: action.offer };
+      return { ...state, reconnectOffer: action.offer, reconnectFriend: action.friend ?? null };
 
     case 'reconnect_dismissed':
-      return { ...state, reconnectOffer: null };
+      return { ...state, reconnectOffer: null, reconnectFriend: null };
 
     case 'reconnect_ready':
-      return { ...state, reconnectOffer: null, reconnectReady: true };
+      return { ...state, reconnectOffer: null, reconnectFriend: null, reconnectReady: true };
 
     case 'reconnect_started':
       return { ...state, reconnectReady: false };

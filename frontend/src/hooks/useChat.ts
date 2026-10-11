@@ -483,7 +483,11 @@ export function toAction(frame: AnyServerEnvelope): Action | null {
       return { type: 'connection_request', matchId: frame.payload.matchId };
 
     case 'reconnect_request':
-      return { type: 'reconnect_request', offer: frame.payload.offer };
+      return {
+        type: 'reconnect_request',
+        offer: frame.payload.offer,
+        ...(frame.payload.friend === undefined ? {} : { friend: frame.payload.friend }),
+      };
 
     case 'reconnect_ready':
       return { type: 'reconnect_ready' };
