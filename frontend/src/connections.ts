@@ -11,12 +11,15 @@
  * page its own account id, and somebody else's is worse by the same argument.
  *
  * ---------------------------------------------------------------------------
- * A DATE IS ALL THERE IS TO SHOW, AND THAT IS NOT A GAP
+ * A DATE, A DOT AND A BUCKET, AND NOTHING THAT DESCRIBES THEM
  * ---------------------------------------------------------------------------
  * Nothing durable describes another account — the server keeps no profile
  * between sessions (D34, §24.3) — so a name or a picture in this list would
  * mean storing one. That is a decision about what people learn about each other
  * rather than a display detail, and it is not made here.
+ *
+ * What the list does carry is whether they are here, and roughly when they last
+ * were (D65) — the second only as a bucket the server chose, never a time.
  */
 
 /** One connection, as the browser is allowed to see it. */
@@ -40,6 +43,30 @@ export interface Connection {
    * setting exists to hide.
    */
   readonly online: boolean;
+  /**
+   * Roughly how long ago they were last here, or null (D65).
+   *
+   * Null for a friend who hides their presence, one never seen since this
+   * shipped, and every friend when *you* hide yours — deliberately the same
+   * value for all three.
+   */
+  readonly lastActive: LastActive | null;
+}
+
+/** A bucket, as the server sends it. `{ unit: 'hour', count: 0 }` is "within the hour". */
+export interface LastActive {
+  readonly unit: 'hour' | 'day' | 'week' | 'month' | 'year';
+  readonly count: number;
+}
+
+/** The list, and whether the viewer shares their own presence. */
+export interface FriendList {
+  readonly connections: readonly Connection[];
+  /**
+   * Whether you appear online. When false the server sends no last-active for
+   * anybody, and the drawer says why rather than looking broken.
+   */
+  readonly sharing: boolean;
 }
 
 /**
@@ -49,7 +76,7 @@ export interface Connection {
  * so the panel can say "we could not load this" instead of "you have none".
  * Those are different statements and only one of them is a lie.
  */
-export async function readConnections(): Promise<Connection[] | null> {
+export async function readConnections(): Promise<FriendList | null> {
   let response: Response;
   try {
     response = await fetch('/auth/connections', {
@@ -70,14 +97,18 @@ export async function readConnections(): Promise<Connection[] | null> {
     const rows = (body as { connections?: unknown }).connections;
     if (!Array.isArray(rows)) return null;
     // Normalised rather than trusted: the guard proves handle and since, and
-    // the two newer fields are filled in here so a row from an older server
-    // renders as unnamed and offline instead of `undefined`.
-    return rows.filter(isConnection).map((row) => ({
-      handle: row.handle,
-      since: row.since,
-      label: typeof row.label === 'string' && row.label !== '' ? row.label : null,
-      online: row.online === true,
-    }));
+    // the newer fields are filled in here so a row from an older server renders
+    // as unnamed, offline and never seen instead of `undefined`.
+    return {
+      sharing: (body as { sharing?: unknown }).sharing === true,
+      connections: rows.filter(isConnection).map((row) => ({
+        handle: row.handle,
+        since: row.since,
+        label: typeof row.label === 'string' && row.label !== '' ? row.label : null,
+        online: row.online === true,
+        lastActive: readLastActive(row.lastActive),
+      })),
+    };
   } catch {
     return null;
   }
@@ -98,6 +129,43 @@ export async function removeConnection(handle: string): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+function readLastActive(value: unknown): LastActive | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { unit, count } = value as { unit?: unknown; count?: unknown };
+  if (unit !== 'hour' && unit !== 'day' && unit !== 'week' && unit !== 'month' && unit !== 'year') {
+    return null;
+  }
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return null;
+  return { unit, count };
+}
+
+/** What happened when a friend was asked to chat. */
+export type FriendAskResult = 'asked' | 'away' | 'wait' | 'failed';
+
+/**
+ * Ask an online friend to chat.
+ *
+ * Only the handle: which session is asking, and which of theirs is asked, are
+ * the server's to decide. "away" covers a friend who left and one who hid —
+ * the server answers both alike, so the button cannot reveal which.
+ */
+export async function askFriend(handle: string): Promise<FriendAskResult> {
+  try {
+    const response = await fetch('/auth/reconnect/ask', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ handle }),
+    });
+    if (!response.ok) return 'failed';
+    const body = (await response.json()) as { asked?: unknown; reason?: unknown };
+    if (body.asked === true) return 'asked';
+    return body.reason === 'wait' ? 'wait' : 'away';
+  } catch {
+    return 'failed';
   }
 }
 

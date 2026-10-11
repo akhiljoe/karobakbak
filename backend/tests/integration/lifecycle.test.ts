@@ -301,6 +301,76 @@ describe('block across two instances (D18)', () => {
   });
 });
 
+describe('blocking a saved friend (D65)', () => {
+  it('ends the friendship as well as the match', async () => {
+    const removed: Array<[string, string]> = [];
+    const logger = createNullLogger();
+    const registry = new ConnectionRegistry(logger);
+    const lifecycle = new SessionLifecycle(
+      one.ctx.store,
+      new EventDispatcher(registry, one.ctx.store, logger),
+      registry,
+      one.ctx.config,
+      logger,
+      new NullRetentionSink(),
+      undefined,
+      undefined,
+      {
+        async remove(a, b) {
+          removed.push([a, b]);
+          return true;
+        },
+      },
+    );
+    const instance = { ctx: one.ctx, registry, lifecycle };
+    const a = await connect(instance);
+    const b = await connect(instance);
+    await one.ctx.store.setAccount(a.sessionId, 'acct_a');
+    await one.ctx.store.setAccount(b.sessionId, 'acct_b');
+    await lifecycle.joinQueue(b.sessionId);
+    const matched = await lifecycle.joinQueue(a.sessionId);
+    if (matched.kind !== 'matched') throw new Error('expected a match');
+
+    await lifecycle.block(a.sessionId, { ipHash: a.ipHash, clientHash: 'cl' });
+    await delay(60);
+    expect(removed).toHaveLength(1);
+    expect(new Set(removed[0])).toEqual(new Set(['acct_a', 'acct_b']));
+  });
+
+  it('touches no connection when either side is signed out', async () => {
+    const removed: Array<[string, string]> = [];
+    const logger = createNullLogger();
+    const registry = new ConnectionRegistry(logger);
+    const lifecycle = new SessionLifecycle(
+      one.ctx.store,
+      new EventDispatcher(registry, one.ctx.store, logger),
+      registry,
+      one.ctx.config,
+      logger,
+      new NullRetentionSink(),
+      undefined,
+      undefined,
+      {
+        async remove(a, b) {
+          removed.push([a, b]);
+          return true;
+        },
+      },
+    );
+    const instance = { ctx: one.ctx, registry, lifecycle };
+    const a = await connect(instance);
+    const b = await connect(instance);
+    await one.ctx.store.setAccount(a.sessionId, 'acct_a');
+    await lifecycle.joinQueue(b.sessionId);
+    const matched = await lifecycle.joinQueue(a.sessionId);
+    if (matched.kind !== 'matched') throw new Error('expected a match');
+
+    await lifecycle.block(a.sessionId, { ipHash: a.ipHash, clientHash: 'cl' });
+    await delay(60);
+    expect(removed).toHaveLength(0);
+  });
+});
+
 describe('leave_chat — end the conversation without re-queueing', () => {
   it('lands the leaver in IDLE, not back in the queue', async () => {
     const a = await connect(one);

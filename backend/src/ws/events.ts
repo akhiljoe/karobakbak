@@ -81,7 +81,13 @@ export type SessionEvent =
    * point — so the bus carries it only to satisfy the envelope every event
    * shares.
    */
-  | { event: 'reconnect_request'; matchId: string; offer: string }
+  | {
+      event: 'reconnect_request';
+      matchId: string;
+      offer: string;
+      /** The recipient's own name for a friend asking; absent for a past partner. */
+      friend?: { label: string | null };
+    }
   /** Both agreed; start searching in the private lane. */
   | { event: 'reconnect_ready'; matchId: string; startedAt: string }
   | { event: 'partner_disconnected'; matchId: string }
@@ -214,7 +220,12 @@ export function decodeSessionEvent(payload: string): SessionEvent | null {
       return { event: 'connection_request', matchId };
     case 'reconnect_request':
       if (typeof data.offer !== 'string' || data.offer === '') return null;
-      return { event: 'reconnect_request', matchId, offer: data.offer };
+      return {
+        event: 'reconnect_request',
+        matchId,
+        offer: data.offer,
+        ...friendOf(data.friend),
+      };
     case 'reconnect_ready':
       if (typeof data.startedAt !== 'string') return null;
       return { event: 'reconnect_ready', matchId, startedAt: data.startedAt };
@@ -278,7 +289,10 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
     case 'connection_request':
       return serverFrame('connection_request', { matchId: event.matchId });
     case 'reconnect_request':
-      return serverFrame('reconnect_request', { offer: event.offer });
+      return serverFrame('reconnect_request', {
+        offer: event.offer,
+        ...(event.friend === undefined ? {} : { friend: event.friend }),
+      });
     case 'reconnect_ready':
       return serverFrame('reconnect_ready', { startedAt: event.startedAt });
     case 'session_evicted':
@@ -292,4 +306,18 @@ export function toClientFrame(event: SessionEvent): ServerEnvelope | null {
       throw new Error('unhandled session event');
     }
   }
+}
+
+/**
+ * The friend marker off a decoded pub/sub payload, or nothing.
+ *
+ * Shape-checked rather than passed through: anything malformed drops the
+ * marker and leaves an ordinary request, which is the prompt that says least.
+ */
+function friendOf(raw: unknown): { friend?: { label: string | null } } {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const label = (raw as { label?: unknown }).label;
+  if (label === null) return { friend: { label: null } };
+  if (typeof label === 'string' && label.length <= 40) return { friend: { label } };
+  return {};
 }

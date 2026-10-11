@@ -48,6 +48,14 @@ export interface Connection {
    * the person it names.
    */
   readonly label: string | null;
+  /**
+   * The start of the last hour they were here, or null (D65).
+   *
+   * Null whenever they do not share presence, as well as when nothing was ever
+   * recorded — the two must look the same, or hiding would be visible. Never
+   * sent to a browser as-is; the route turns it into a bucket.
+   */
+  readonly lastActiveAt: Date | null;
 }
 
 export interface ConnectionRepository {
@@ -108,8 +116,16 @@ export function createConnectionRepository(
         // The label joins from the viewer's side only, so two people looking at
         // the same connection see their own word for each other and never the
         // other's.
-        const { rows } = await db.query<{ other: string; since: Date; label: string | null }>(
-          `select p.other, p.since, l.label
+        // The other account's last-active rides along, gated on their own
+        // setting in the query as well as by the erase in `setSharing`.
+        const { rows } = await db.query<{
+          other: string;
+          since: Date;
+          label: string | null;
+          last_active_at: Date | null;
+        }>(
+          `select p.other, p.since, l.label,
+                  case when a.share_presence then a.last_active_at end as last_active_at
              from (
                select account_hi as other, created_at as since from connections where account_lo = $1
                union all
@@ -117,10 +133,16 @@ export function createConnectionRepository(
              ) p
              left join connection_labels l
                on l.owner_account_id = $1 and l.other_account_id = p.other
+             left join accounts a on a.id = p.other
             order by p.since desc, p.other`,
           [accountId],
         );
-        return rows.map((row) => ({ other: row.other, since: row.since, label: row.label }));
+        return rows.map((row) => ({
+          other: row.other,
+          since: row.since,
+          label: row.label,
+          lastActiveAt: row.last_active_at,
+        }));
       } catch (err) {
         logger.error('failed to list connections', dbErrorFields(err));
         throw new Error('connections could not be listed');

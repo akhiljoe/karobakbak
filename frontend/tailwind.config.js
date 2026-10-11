@@ -126,6 +126,11 @@ export default {
         'glow': '0 0 0 1px rgba(255,180,32,0.25), 0 8px 32px rgba(245,158,11,0.18)',
       },
       keyframes: {
+        // The friends drawer, entering from the left edge it is pinned to.
+        'slide-in-left': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
         'fade-in': {
           '0%': { opacity: '0', transform: 'translateY(4px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
@@ -235,6 +240,7 @@ export default {
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out both',
+        'slide-in-left': 'slide-in-left 0.22s cubic-bezier(0.22,1,0.36,1) both',
         'msg-in': 'msg-in 0.28s cubic-bezier(0.22,1,0.36,1) both',
         'pop-in': 'pop-in 0.4s cubic-bezier(0.22,1,0.36,1) both',
         'pulse-ring': 'pulse-ring 2s ease-out infinite',

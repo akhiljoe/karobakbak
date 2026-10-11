@@ -934,3 +934,25 @@ describe('a handshake that was refused', () => {
     ).toContain('Connection lost');
   });
 });
+
+describe('a reconnect request from a friend (D65)', () => {
+  it("carries the recipient's own name for them, and forgets it once answered", () => {
+    const frame = {
+      type: 'reconnect_request',
+      version: 1,
+      payload: { offer: 'o'.repeat(32), friend: { label: 'Sam' } },
+    } as unknown as AnyServerEnvelope;
+    const action = toAction(frame);
+    expect(action).toEqual({ type: 'reconnect_request', offer: 'o'.repeat(32), friend: { label: 'Sam' } });
+
+    const asked = reduce(connected(), action!);
+    expect(asked.reconnectFriend).toEqual({ label: 'Sam' });
+    expect(reduce(asked, { type: 'reconnect_dismissed' }).reconnectFriend).toBeNull();
+  });
+
+  it('leaves a past partner request unnamed', () => {
+    const asked = reduce(connected(), { type: 'reconnect_request', offer: 'o'.repeat(32) });
+    expect(asked.reconnectOffer).toBe('o'.repeat(32));
+    expect(asked.reconnectFriend).toBeNull();
+  });
+});

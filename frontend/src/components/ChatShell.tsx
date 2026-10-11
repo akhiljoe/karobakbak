@@ -15,7 +15,6 @@ import {
   SkipForward,
   UserPlus,
   X,
-  Users,
   Flag,
 } from 'lucide-react';
 
@@ -25,14 +24,7 @@ import { COUNTRY_NAMES, type Profile } from '../protocol/types';
 import { GENDER_LABELS } from '../profile';
 import { ACCOUNTS_ENABLED } from '../features';
 import { HistoryPanel } from './HistoryPanel';
-import { FriendsPanel } from './FriendsPanel';
 import type { HistoryEntry } from '../history';
-import {
-  labelConnection,
-  readConnections,
-  removeConnection,
-  type Connection,
-} from '../connections';
 import {
   colourFor,
   composerDisabled,
@@ -177,31 +169,6 @@ export function ChatShell({
   }, [moreOpen]);
 
 
-  const [friendsOpen, setFriendsOpen] = useState(false);
-  const [connections, setConnections] = useState<readonly Connection[] | null>(null);
-  const [connectionsFailed, setConnectionsFailed] = useState(false);
-
-  /*
-    Fetched when the panel opens rather than on mount: it is a list most people
-    will never look at, and asking for it on every conversation would be a
-    request per chat to render nothing. Re-fetched on each open, because the
-    other side can remove a connection at any time and a stale list would offer
-    a Remove for something already gone.
-  */
-  useEffect(() => {
-    if (!friendsOpen) return;
-    let live = true;
-    setConnections(null);
-    setConnectionsFailed(false);
-    void readConnections().then((rows) => {
-      if (!live) return;
-      setConnections(rows ?? []);
-      setConnectionsFailed(rows === null);
-    });
-    return () => {
-      live = false;
-    };
-  }, [friendsOpen]);
   const chatting = state.screen === 'chatting';
   // The gap between two conversations, with the next one already on its way.
   // The transcript is cleared by the time this is true, so there is nothing to
@@ -555,29 +522,6 @@ export function ChatShell({
       </div>
 
       {/*
-        Connections: a list, and not an action.
-
-        They belong to the conversation surface — both are about people you met
-        while chatting, and on the landing screen they would be controls for
-        something that has not happened yet.
-
-        THEY ARE ON THE LEFT, AND A ROW ABOVE THE ACTIONS
-        The first attempt put them right-aligned directly under "Next stranger",
-        which is the mistake the note on Block already describes: that button is
-        pressed dozens of times a session, and anything sharing an edge with a
-        reflex gets pressed by accident. This row follows the same grammar as
-        the one below it — choice on the left, action on the right — so these
-        sit on the left, and a whole row of separation stands between them and
-        the thing everybody is actually aiming for.
-
-        Links rather than buttons, because they open lists instead of doing
-        something, and quiet enough not to compete with Next stranger for
-        attention.
-
-        Both panels open upward: this is near the bottom of the viewport, and
-        one dropping downward would open off-screen on a phone.
-      */}
-      {/*
         The incoming ask, above the action row and below the transcript, so it
         is between the conversation and the controls rather than covering
         either. Not a modal: it is not urgent, it must not interrupt typing, and
@@ -616,61 +560,6 @@ export function ChatShell({
             </button>
           )}
         </div>
-      )}
-
-      {/*
-        Visible while searching as well as while chatting. Waiting is exactly
-        when somebody looks at who they met before — the list is most useful in
-        the gap, and hiding it there made it disappear at the moment it was
-        wanted. Nothing in it depends on there being a conversation.
-      */}
-      {(chatting || searching) && (
-      <div className="flex items-center gap-4 px-3 pt-1 sm:px-4">
-        {/*
-          Connections. Only when signed in: the list belongs to
-          an account, and a control that always opens "sign in to see this"
-          would be the disabled-but-present shape `features.ts` argues against.
-        */}
-        {ACCOUNTS_ENABLED && signedIn && (
-          <div className="relative">
-            <button
-              onClick={() => setFriendsOpen((was) => !was)}
-              aria-haspopup="dialog"
-              aria-expanded={friendsOpen}
-              className={`inline-flex items-center gap-1.5 rounded text-xs underline underline-offset-2 transition-colors ${
-                friendsOpen ? 'text-amber-300' : 'text-ink-500 hover:text-ink-300'
-              }`}
-            >
-              <Users className="h-3 w-3" aria-hidden="true" />
-              Connections
-            </button>
-
-            <FriendsPanel
-              open={friendsOpen}
-              connections={connections}
-              failed={connectionsFailed}
-              onClose={() => setFriendsOpen(false)}
-              onRename={async (handle, label) => {
-                const saved = await labelConnection(handle, label);
-                // Applied only on confirmation, so a failed save leaves the old
-                // name on screen rather than a new one that was never stored.
-                setConnections((was) =>
-                  (was ?? []).map((c) => (c.handle === handle ? { ...c, label: saved } : c)),
-                );
-              }}
-              onRemove={async (handle) => {
-                const done = await removeConnection(handle);
-                // Only drop the row once the server confirmed it, or the panel
-                // would show a connection as gone that is still there.
-                if (done) {
-                  setConnections((was) => (was ?? []).filter((c) => c.handle !== handle));
-                }
-                return done;
-              }}
-            />
-          </div>
-        )}
-      </div>
       )}
 
       {/*

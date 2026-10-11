@@ -35,6 +35,12 @@
  * sees the control appear a moment after the page does. That is the same trade
  * the sign-in button makes above, in the same direction: showing nothing
  * briefly beats showing something false.
+ *
+ * Friends sits immediately left of the avatar, because it belongs to the
+ * account the avatar stands for — signed out there is no list, so there is no
+ * button (absent, not disabled). The number on it is how many friends are
+ * online and appears only when that is more than zero: a badge reading 0 is a
+ * claim about nobody that draws the eye to nothing.
  */
 import { Lock, Settings, SlidersHorizontal, Users } from 'lucide-react';
 
@@ -53,6 +59,8 @@ interface AppHeaderProps {
   onOpenSettings(): void;
   onOpenAuth(): void;
   session: Session;
+  /** Null when signed out, or when accounts are off: then there is no button. */
+  friends: { online: number; open: boolean; onOpen(): void } | null;
 }
 
 export function AppHeader({
@@ -62,6 +70,7 @@ export function AppHeader({
   onOpenSettings,
   onOpenAuth,
   session,
+  friends,
 }: AppHeaderProps): JSX.Element {
   const presence = state.features.presence ? state.presence : null;
 
@@ -144,6 +153,30 @@ export function AppHeader({
         >
           <Settings className="h-3.5 w-3.5" />
         </button>
+
+        {friends !== null && (
+          <button
+            onClick={friends.onOpen}
+            aria-haspopup="dialog"
+            aria-expanded={friends.open}
+            aria-label={
+              friends.online > 0 ? `Friends, ${friends.online} online` : 'Friends'
+            }
+            className="relative inline-flex h-9 items-center gap-1.5 rounded-lg border border-ink-700 bg-ink-900 px-2.5 text-sm text-ink-200 transition-all hover:border-ink-600 hover:bg-ink-800 active:scale-95"
+          >
+            <Users className="h-3.5 w-3.5" aria-hidden="true" />
+            {/* The word only where there is room for it; the icon says it on a phone. */}
+            <span className="hidden sm:inline">Friends</span>
+            {friends.online > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-green-500 px-1 font-mono text-[10px] font-semibold leading-none text-ink-950"
+              >
+                {friends.online > 9 ? '9+' : friends.online}
+              </span>
+            )}
+          </button>
+        )}
 
         {/*
           Absent rather than disabled while the flag is off or the first

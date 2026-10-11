@@ -22,7 +22,7 @@
  * turn a cosmetic failure into a real one.
  */
 import type { Config } from '../config';
-import type { Logger } from '../logger';
+import { errorFields, type Logger } from '../logger';
 import type { Identity, MatchedPayload, MatchPreferences, Profile } from '../protocol/types';
 import type {
   ResumeSessionResult,
@@ -273,6 +273,13 @@ export class SessionLifecycle {
     private readonly presence?: {
       mintToken(accountId: string): Promise<string | null>;
       mintSessionToken(sessionId: string): Promise<string | null>;
+    },
+    /**
+     * Saved connections, so a block can end one. Optional and last for the
+     * same reason as the two above: absent means there are none to end.
+     */
+    private readonly connections?: {
+      remove(accountId: string, otherId: string): Promise<boolean>;
     },
   ) {
     this.segment = config.matchmaking.defaultSegment;
@@ -670,6 +677,22 @@ export class SessionLifecycle {
       });
     }
 
+    /*
+      Blocking a saved friend ends the friendship too. Otherwise the person
+      just blocked would keep seeing this one online and when they were last
+      here (D65), and keep a Chat button that can put a prompt on their screen
+      — none of which a block that only stops matchmaking would touch.
+
+      Only where the partner's session is known, which is every live block. A
+      late block (D38) holds the departed partner's key hashes and not their
+      session, so it cannot name an account; the drawer's Remove covers it.
+      Not awaited: the block itself is done, and a removal that fails leaves a
+      connection the blocker can still remove by hand.
+    */
+    if (result.partnerSessionId !== '' && this.connections !== undefined) {
+      void this.unfriend(sessionId, result.partnerSessionId);
+    }
+
     if (result.matchId === '') {
       // The partner had already gone. Worth its own line: this is the case that
       // silently recorded nothing before the late window existed, so a count of
@@ -678,6 +701,18 @@ export class SessionLifecycle {
     }
 
     return { kind: 'blocked', matchId: result.matchId, recorded: result.recorded };
+  }
+
+  /** End a saved connection between the accounts behind two sessions, if any. */
+  private async unfriend(sessionId: string, partnerSessionId: string): Promise<void> {
+    try {
+      const accounts = await this.store.readAccounts(sessionId, partnerSessionId);
+      if (accounts.a === null || accounts.b === null || accounts.a === accounts.b) return;
+      const removed = await this.connections?.remove(accounts.a, accounts.b);
+      if (removed === true) this.logger.info('block ended a saved connection', { sessionId });
+    } catch (err) {
+      this.logger.warn('could not end a connection after a block', errorFields(err));
+    }
   }
 
   /** Refresh every TTL this session depends on (I7). */

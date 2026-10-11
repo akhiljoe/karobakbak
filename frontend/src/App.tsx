@@ -31,6 +31,7 @@ import {
 import type { MatchPreferences, Profile } from './protocol/types';
 import { AuthModal } from './components/AuthModal';
 import { ChatShell } from './components/ChatShell';
+import { FriendsDrawer } from './components/FriendsDrawer';
 import { FiltersModal } from './components/FiltersModal';
 import { LandingScreen } from './components/LandingScreen';
 import { SiteFooter } from './components/SiteFooter';
@@ -45,6 +46,8 @@ import { ACCOUNTS_ENABLED, FILTERS_AVAILABLE } from './features';
 import { useChat } from './hooks/useChat';
 import { usePreferences } from './hooks/usePreferences';
 import { useSession } from './hooks/useSession';
+import { useFriends } from './hooks/useFriends';
+import { onlineCount } from './view/friends';
 import {
   acceptReconnect,
   blockReconnect,
@@ -61,6 +64,12 @@ export function App(): JSX.Element {
   const { state } = chat;
   const { preferences, set: setPreference } = usePreferences();
   const session = useSession();
+  // The list behind the header's Friends button. Signed out it holds nothing
+  // and asks for nothing.
+  const friends = useFriends(ACCOUNTS_ENABLED && session.signedIn);
+  const { setOpen: setFriendsOpen } = friends;
+  // Stable, because the drawer re-arms its Escape listener whenever it changes.
+  const closeFriends = useCallback(() => setFriendsOpen(false), [setFriendsOpen]);
 
   const [history, setHistory] = useState<readonly HistoryEntry[]>(() => readHistory());
 
@@ -270,6 +279,9 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!state.reconnectReady) return;
+    // Both agreed; the drawer the ask came from has done its job, and the
+    // conversation about to start belongs on screen.
+    friends.setOpen(false);
     chat.reconnectStarted();
     startSearch();
   }, [state.reconnectReady]);
@@ -427,6 +439,25 @@ export function App(): JSX.Element {
           setAuthOpen(true);
         }}
         session={session}
+        friends={
+          ACCOUNTS_ENABLED && session.signedIn
+            ? {
+                online: onlineCount(friends.list?.connections ?? null),
+                open: friends.open,
+                onOpen: () => friends.setOpen(true),
+              }
+            : null
+        }
+      />
+
+      <FriendsDrawer
+        open={friends.open}
+        list={friends.list}
+        failed={friends.failed}
+        onClose={closeFriends}
+        onRemove={friends.remove}
+        onRename={friends.rename}
+        onAsk={friends.ask}
       />
 
       <main className="flex flex-1 overflow-hidden">
@@ -577,7 +608,14 @@ export function App(): JSX.Element {
       {state.reconnectOffer !== null && (
         <div className="pointer-events-auto fixed inset-x-3 top-16 z-40 mx-auto max-w-sm animate-fade-in rounded-xl border border-green-500/40 bg-ink-900 p-3 shadow-2xl ring-1 ring-black/50">
           <p className="mb-2 text-sm text-ink-100">
-            Someone you talked to earlier is here and would like to chat again.
+            {/*
+              A friend is named with the recipient's own word for them, which
+              the server read from the recipient's own list — never a name the
+              asker chose. A past partner from Recent stays unnamed.
+            */}
+            {state.reconnectFriend === null
+              ? 'Someone you talked to earlier is here and would like to chat again.'
+              : `${state.reconnectFriend.label ?? 'A friend'} is here and would like to chat.`}
           </p>
           <div className="flex gap-2">
             <button

@@ -229,9 +229,10 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
             server has answered — a toggle rendered before its value is known
             would show a state nobody chose, and the first tap would fight it.
 
-            It hides being here *now*. There is no last-seen to hide, and there
-            will not be one: when somebody was last here is a history of their
-            habits, which is a much larger disclosure wearing the same words.
+            It hides being here now *and* when you were last here (D65): turning
+            it off erases the stored hour at once. It is also mutual — while
+            you appear offline you see nobody else's last-active either — so the
+            second line says so before anybody flips it, not after.
           */}
           {sharing !== null && (
             <button
@@ -254,7 +255,16 @@ export function AccountMenu({ session, onOpenAuth }: AccountMenuProps): JSX.Elem
               ) : (
                 <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               )}
-              {sharing ? 'Friends can see you online' : 'You appear offline'}
+              <span className="min-w-0">
+                <span className="block">
+                  {sharing ? 'Friends can see you online' : 'You appear offline'}
+                </span>
+                <span className="block text-xs text-ink-500">
+                  {sharing
+                    ? 'And when you were last here. Turn off to hide both.'
+                    : "You can't see when friends were last here either."}
+                </span>
+              </span>
             </button>
           )}
 
