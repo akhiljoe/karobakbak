@@ -6,8 +6,49 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Matches the page background, so mobile browser chrome does not flash white. -->
     <meta name="theme-color" content="#13100b" />
-    <title>karobakbak</title>
-    <meta name="description" content="Talk to a stranger. Anonymous, text only, no account." />
+    <title>karobakbak — Anonymous random text chat with strangers</title>
+    <meta
+      name="description"
+      content="Talk to someone you've never met. Free, anonymous, text-only random chat — no sign-up, no app."
+    />
+    <!--
+      Link previews (WhatsApp, Instagram, Facebook, X, Discord, Slack).
+
+      Static on purpose: the crawlers that build a preview card do not run
+      JavaScript, so they only ever see this file. Every page therefore shares
+      one card. `src/meta.ts` updates the title, description and canonical per
+      page for the crawlers that do run script — Google among them.
+
+      The image URL is absolute because several of those crawlers ignore a
+      relative one. It is a static file in `public/`, served by this origin, so
+      nothing here makes a browser contact a third party.
+      `docs/brand/og-card.html` is its source.
+    -->
+    <link rel="canonical" href="https://karobakbak.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="karobakbak" />
+    <meta property="og:url" content="https://karobakbak.com/" />
+    <meta property="og:title" content="karobakbak — Talk to someone you've never met" />
+    <meta
+      property="og:description"
+      content="Free, anonymous, text-only random chat. No sign-up, no app — open it and start talking."
+    />
+    <meta property="og:image" content="https://karobakbak.com/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="karobakbak: Talk to someone you've never met. Anonymous. Text-only. No sign-up."
+    />
+    <meta property="og:locale" content="en_IN" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="karobakbak — Talk to someone you've never met" />
+    <meta
+      name="twitter:description"
+      content="Free, anonymous, text-only random chat. No sign-up, no app — open it and start talking."
+    />
+    <meta name="twitter:image" content="https://karobakbak.com/og-image.png" />
 
     <!--
       Content Security Policy.

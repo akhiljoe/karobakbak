@@ -24,7 +24,7 @@
  * visitor believes they arrived, and a crawler indexes the homepage under a
  * dozen wrong URLs.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { App } from './App';
 import { clientConfig } from './config';
@@ -42,6 +42,7 @@ import { NotFound } from './components/NotFound';
 import { SitePage } from './components/SitePage';
 import { STATIC_PAGES } from './content/pages';
 import { useRoute } from './router';
+import { applyPageMeta } from './meta';
 import { useSession } from './hooks/useSession';
 
 /** Path to page, built from the content so the two cannot disagree. */
@@ -54,6 +55,14 @@ export function Root(): JSX.Element {
   // these two mount sites is ever live — `/premium` renders instead of `App`,
   // never beside it — so this is one session check, not two.
   const session = useSession();
+
+  // Title, description and canonical for the page about to render. Premium and
+  // support are 404s while nothing can be bought, so they take the 404's meta
+  // — including `noindex` — rather than a title for a page that is not there.
+  useEffect(() => {
+    const unbuyable = !PAYMENTS_ENABLED && (path === '/premium' || path === '/support');
+    applyPageMeta(unbuyable ? '/__not_found' : path);
+  }, [path]);
 
   if (path === '/') return <App />;
 
