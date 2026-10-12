@@ -176,9 +176,9 @@ export const FAQ: StaticPage = {
     {
       heading: 'Can I send photos or videos?',
       body: [
-        'No.',
-        'The chat currently supports text messages only. Photos, videos and other file uploads ' +
-          'are not supported.',
+        'Not yet.',
+        'Photos, videos and other file uploads are not supported right now. When we add new ' +
+          'ways to share, we will update this answer and explain what changes.',
       ],
     },
     {
