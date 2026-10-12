@@ -167,7 +167,7 @@ function TextOnlySpecimen(): JSX.Element {
 
       <div className="mt-2 flex items-center justify-between gap-3 border-t border-ink-800 pt-3.5">
         <span className="font-mono text-[13px] uppercase tracking-[0.14em] text-ink-400">
-          text only
+          anonymous
         </span>
         <button
           type="button"
@@ -208,7 +208,7 @@ export function AboutPage(): JSX.Element {
 
   const short = section('The short version');
   const why = section('Why it exists');
-  const textOnly = section('Text only, on purpose');
+  const textOnly = section('Just the conversation');
   const anonymous = section('Anonymous, with an important distinction');
   const automated = section('Some conversations are with automated accounts');
   const adults = section('Adults only');

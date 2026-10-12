@@ -149,14 +149,13 @@ const ABOUT: StaticPage = {
       ],
     },
     {
-      heading: 'Text only, on purpose',
+      heading: 'Just the conversation',
       body: [
-        'karobakbak is currently built around text conversations.',
-        'Keeping the experience focused on text makes the product simpler and gives us fewer ' +
-          'types of content to deal with. It also means you can have a conversation without ' +
-          'sharing your face, your voice or an image of yourself.',
-        'We may add other ways to communicate in the future. If we do, we will explain what ' +
-          'changes and what it means for you.',
+        'karobakbak is built around the conversation itself.',
+        'Nothing to set up, nothing to show. You can talk to someone without sharing your ' +
+          'face, your voice or an image of yourself.',
+        'We will add more ways to talk over time. When we do, we will explain what changes ' +
+          'and what it means for you.',
       ],
     },
     {

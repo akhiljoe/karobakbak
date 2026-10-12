@@ -25,15 +25,15 @@ const SUFFIX = ' — karobakbak';
 
 export const PAGE_META: Readonly<Record<string, PageMeta>> = {
   '/': {
-    title: 'karobakbak — Anonymous random text chat with strangers',
+    title: 'karobakbak — Anonymous random chat with strangers',
     description:
-      "Talk to someone you've never met. Free, anonymous, text-only random chat — no sign-up, no app.",
+      "Talk to someone you've never met. Free, anonymous random chat. No sign-up, no app.",
     indexable: true,
   },
   '/about': {
     title: `About${SUFFIX}`,
     description:
-      'What karobakbak is: a text-only random chat for talking to strangers, built to be anonymous and simple.',
+      'What karobakbak is: a random chat for talking to strangers, built to be anonymous and simple.',
     indexable: true,
   },
   '/how-it-works': {
