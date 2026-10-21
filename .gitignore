@@ -24,9 +24,10 @@ build/
 # The laptop launcher is built from ops/laptop/launcher/ by build.ps1.
 ops/laptop/karobakbak-live.exe
 ops/laptop/launcher/obj/
-# Tracked on purpose: it holds no secrets, only the port and abuse-limit
-# overrides a load run needs.
-!.env.loadtest
+# Local copies of the load-test and VPS-rehearsal templates
+# (`.env.loadtest.example`, `.env.vps.example`), made by scripts/ensure-env.mjs.
+.env.loadtest
+.env.vps
 
 # Local payment testing. Reads RAZORPAY_WEBHOOK_SECRET out of `.env` to sign a
 # simulated `payment.captured`, so it is a script that handles a secret and has

@@ -274,8 +274,8 @@ const ENV_TEMPLATES = {
   '.env.example': '.env',
   '.env.prod.example': '.env.prod',
   '.env.laptop.example': '.env.laptop',
-  '.env.loadtest': '.env.loadtest',
-  '.env.vps': '.env.vps',
+  '.env.loadtest.example': '.env.loadtest',
+  '.env.vps.example': '.env.vps',
 };
 
 const assigned = (text) => new Set([...text.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map(([, n]) => n));

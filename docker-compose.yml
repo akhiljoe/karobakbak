@@ -267,9 +267,9 @@ services:
       METRICS_ENABLED: "true"
       # Per-IP abuse controls. Tunable because a load generator is a single
       # address and is exactly the traffic shape these exist to refuse — see
-      # `.env.loadtest`. Production keeps the shipped defaults.
-      CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-60}"
-      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-40}"
+      # `.env.loadtest.example`. Production sets its own values.
+      CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-30}"
+      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-20}"
       # The aggregate ceiling, as opposed to the per-IP one above. These two
       # answer different questions: MAX_CONNECTIONS_PER_IP stops one actor,
       # MAX_CONNECTIONS stops legitimate demand exceeding the box.

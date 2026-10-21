@@ -178,11 +178,11 @@ services:
       IP_HASH_SALT: "${IP_HASH_SALT:?a long random value, kept secret}"
       SPOOL_DIR: "/var/lib/karobakbak/spool"
       METRICS_ENABLED: "true"
-      # The shipped defaults. Not tunable here on purpose: these are abuse
-      # controls, and the only reason to raise them is a load test, which runs
-      # against its own stack.
-      CONN_RATE_LIMIT: "60"
-      MAX_CONNECTIONS_PER_IP: "40"
+      # Abuse controls. The fallbacks are the shipped starting points; a public
+      # deployment sets its own in the env file and keeps them out of the
+      # repository, because a published limit is one to sit just under.
+      CONN_RATE_LIMIT: "${CONN_RATE_LIMIT:-30}"
+      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-20}"
     logging: *logging
     deploy:
       replicas: 1
@@ -276,6 +276,17 @@ services:
       REDIS_SENTINEL_PASSWORD: "${REDIS_SENTINEL_PASSWORD-}"
       IP_HASH_SALT: "${IP_HASH_SALT:?a long random value, kept secret}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?the public origin}"
+    logging: *logging
+
+  admin:
+    # The base file gives the console a development posture and a default
+    # connection string so `docker compose --profile admin up` works locally.
+    # Neither belongs in production: the posture decides which startup checks
+    # run, and the default URL carries a password printed in this repository.
+    # Required here, so an unset value stops compose instead of falling back.
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "${CONSOLE_DATABASE_URL:?console role connection string, from secret management}"
     logging: *logging
 
   redis:
