@@ -27,7 +27,7 @@ describe('loadConfig', () => {
     expect(config.redis.keyPrefix).toBe('chat');
     expect(config.limits.maxMessageLength).toBe(500);
     expect(config.limits.maxReportNoteLength).toBe(500);
-    expect(config.limits.rates.message).toEqual({ perSecond: 5, burst: 10 });
+    expect(config.limits.rates.message).toEqual({ perSecond: 3, burst: 8 });
     expect(config.presence.intervalMs).toBe(15_000);
     expect(config.ttl.sessionSeconds).toBe(120);
     expect(config.matchmaking.candidateSample).toBe(8);
@@ -218,7 +218,7 @@ describe('loadConfig — per-command rate limits (R7)', () => {
     expect(rates.typing).toEqual({ perSecond: 1.5, burst: 3 });
     expect(rates.report.burst).toBe(1);
     // Changing one bucket does not disturb another.
-    expect(rates.message).toEqual({ perSecond: 5, burst: 10 });
+    expect(rates.message).toEqual({ perSecond: 3, burst: 8 });
   });
 
   it('rejects a nonsense rate rather than falling back to a default', () => {
@@ -233,7 +233,7 @@ describe('loadConfig — Redis layer settings', () => {
   it('applies the documented matchmaking and block defaults', () => {
     const config = loadConfig(baseEnv());
     expect(config.matchmaking.defaultSegment).toBe('default');
-    expect(config.limits.maxConnectionsPerIp).toBe(40);
+    expect(config.limits.maxConnectionsPerIp).toBe(20);
     expect(config.limits.dedupeMaxEntries).toBe(10_000);
     expect(config.blocks).toEqual({
       ttlSeconds: 2_592_000,
@@ -443,8 +443,8 @@ describe('loadConfig — preference matching (D44)', () => {
       // The bucket outlives any one connection on purpose (§29, D18): keying
       // it to a session would make replacing the connection a way to reset it.
       bucketTtlSeconds: 7200,
-      cooldownMs: 10_000,
-      hourlyBudget: 120,
+      cooldownMs: 15_000,
+      hourlyBudget: 60,
     });
   });
 

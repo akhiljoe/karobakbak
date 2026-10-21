@@ -82,15 +82,6 @@ const POPUP_DONE_PAGE = '/signin-done.html';
 const SESSION_COOKIE = '__Host-kbb_session';
 
 /**
- * How long before the same friend can be asked again.
- *
- * Long enough that a prompt cannot be repeated faster than somebody can read
- * and ignore it; short enough that a request that genuinely went astray can be
- * sent again without anybody wondering whether the button works.
- */
-export const FRIEND_ASK_COOLDOWN_SECONDS = 60;
-
-/**
  * What the sign-in and connection routes report to the metrics registry.
  *
  * Injected as callbacks rather than the registry itself, the same shape as
@@ -1021,7 +1012,7 @@ export function createAuthRoutes(deps: AuthRoutesDeps): AuthRoutes {
             `${config.redis.keyPrefix}:askgate:${me.accountId}:${other}`,
             '1',
             'EX',
-            FRIEND_ASK_COOLDOWN_SECONDS,
+            config.auth.friendAskCooldownSeconds,
             'NX',
           );
           if (gate !== 'OK' && redis !== undefined) {

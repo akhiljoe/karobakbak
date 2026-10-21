@@ -324,6 +324,15 @@ export interface Config {
    */
   readonly personas: {
     readonly enabled: boolean;
+    /**
+     * Optional JSON file of operator-supplied guard terms (`guard.ts`).
+     *
+     * Detection lists in the file **extend** the built-in ones and can never
+     * shorten them, so a missing entry cannot weaken a safety limit. The reply
+     * pools in the file replace the built-in ones, so a deployment's wording is
+     * not the wording printed in this repository. Empty means built-ins only.
+     */
+    readonly guardTermsFile: string;
     /** How long one lone searcher waits before a persona is dispatched. */
     readonly waitBeforeFillSeconds: number;
     /**
@@ -589,6 +598,15 @@ export interface Config {
      * sender chooses.
      */
     readonly avatarMaxBytes: number;
+    /**
+     * How long before the same friend can be asked again.
+     *
+     * Long enough that a prompt cannot be repeated faster than somebody can
+     * read and ignore it; short enough that a request that genuinely went
+     * astray can be sent again without anybody wondering whether the button
+     * works.
+     */
+    readonly friendAskCooldownSeconds: number;
     /** A sign-in is a person waiting; a slow CDN must not become a slow sign-in. */
     readonly avatarFetchTimeoutMs: number;
     /**
@@ -1427,6 +1445,11 @@ export function loadConfig(
 
     redis: redisConfig(env),
 
+    // The abuse limits below ship as conservative starting points, not as the
+    // values any particular deployment runs. Each is an environment setting;
+    // a public deployment should choose its own and keep them out of the
+    // repository, because a limit somebody can read is a limit they can sit
+    // just under.
     limits: {
       // 500, not 2000: security §11, and it quarters the retained-storage
       // footprint every message costs for the whole retention period (R3).
@@ -1436,16 +1459,19 @@ export function loadConfig(
       rateLimitTtlSeconds: int(env, 'RATE_LIMIT_TTL_SECONDS', 3600, 5, 86_400),
       maxConnections,
       resumeReserve: resumeReserve(env, maxConnections, resumeGraceSeconds),
-      connRateLimit: int(env, 'CONN_RATE_LIMIT', 60, 1, 1_000_000),
+      connRateLimit: int(env, 'CONN_RATE_LIMIT', 30, 1, 1_000_000),
       connRateWindowSeconds: int(env, 'CONN_RATE_WINDOW_SECONDS', 60, 1, 86_400),
-      invalidMessageStrikes: int(env, 'INVALID_MESSAGE_STRIKES', 10, 1, 10_000),
+      invalidMessageStrikes: int(env, 'INVALID_MESSAGE_STRIKES', 5, 1, 10_000),
       maxBufferedBytes: int(env, 'MAX_BUFFERED_BYTES', 1_048_576, 4096, 268_435_456),
-      maxConnectionsPerIp: int(env, 'MAX_CONNECTIONS_PER_IP', 40, 1, 100_000),
+      // Shared by everybody behind one address, which on mobile networks with
+      // carrier-grade NAT can be many unrelated people. Too low refuses them;
+      // too high lets one actor hold a large share of the box.
+      maxConnectionsPerIp: int(env, 'MAX_CONNECTIONS_PER_IP', 20, 1, 100_000),
       dedupeMaxEntries: int(env, 'DEDUPE_MAX_ENTRIES', 10_000, 16, 1_000_000),
       rates: {
-        message: rateLimit(env, 'MESSAGE', 5, 10),
+        message: rateLimit(env, 'MESSAGE', 3, 8),
         typing: rateLimit(env, 'TYPING', 4, 8),
-        join_queue: rateLimit(env, 'JOIN_QUEUE', 0.2, 5), //     12/min
+        join_queue: rateLimit(env, 'JOIN_QUEUE', 0.1667, 4), //  10/min
         leave_queue: rateLimit(env, 'LEAVE_QUEUE', 0.333, 6), // 20/min
         leave_chat: rateLimit(env, 'LEAVE_CHAT', 0.333, 6), //   20/min
         // Naturally bounded by how many messages exist to react to, but not
@@ -1459,9 +1485,9 @@ export function loadConfig(
         // things one side can do that the other side can *sometimes* observe
         // (through `connection_made`), so a fast toggle is a way to signal.
         save_connection: rateLimit(env, 'SAVE_CONNECTION', 0.1, 4), // 6/min
-        skip: rateLimit(env, 'SKIP', 0.333, 6), //               20/min
-        report: rateLimit(env, 'REPORT', 0.00278, 3), //         10/hour
-        block: rateLimit(env, 'BLOCK', 0.00556, 3), //           20/hour
+        skip: rateLimit(env, 'SKIP', 0.25, 5), //                15/min
+        report: rateLimit(env, 'REPORT', 0.00167, 2), //         6/hour
+        block: rateLimit(env, 'BLOCK', 0.00333, 3), //           12/hour
       },
     },
 
@@ -1489,8 +1515,8 @@ export function loadConfig(
     preference: {
       enabled: bool(env, 'FILTERS_ENABLED', false),
       wideSample: int(env, 'PREFERENCE_WIDE_SAMPLE', 32, 1, 1000),
-      cooldownMs: int(env, 'PREFERENCE_COOLDOWN_MS', 10_000, 0, 600_000),
-      hourlyBudget: int(env, 'PREFERENCE_HOURLY_BUDGET', 120, 1, 100_000),
+      cooldownMs: int(env, 'PREFERENCE_COOLDOWN_MS', 15_000, 0, 600_000),
+      hourlyBudget: int(env, 'PREFERENCE_HOURLY_BUDGET', 60, 1, 100_000),
       bucketTtlSeconds: int(env, 'PREFERENCE_BUCKET_TTL_SECONDS', 7200, 60, 604_800),
     },
 
@@ -1503,6 +1529,7 @@ export function loadConfig(
 
     personas: {
       enabled: bool(env, 'PERSONAS_ENABLED', false),
+      guardTermsFile: str(env, 'PERSONA_GUARD_TERMS_FILE', ''),
       waitBeforeFillSeconds: int(env, 'PERSONA_WAIT_BEFORE_FILL_SECONDS', 25, 1, 3600),
       silenceTimeoutSeconds: int(env, 'PERSONA_SILENCE_TIMEOUT_SECONDS', 120, 0, 3600),
       maxConcurrent: int(env, 'PERSONA_MAX_CONCURRENT', 8, 1, 1000),
@@ -1601,6 +1628,7 @@ export function loadConfig(
       jwksTimeoutMs: int(env, 'OIDC_JWKS_TIMEOUT_MS', 5000, 250, 60_000),
       tokenTimeoutMs: int(env, 'OIDC_TOKEN_TIMEOUT_MS', 10_000, 250, 60_000),
       avatarMaxBytes: int(env, 'AVATAR_MAX_BYTES', 128 * 1024, 1024, 10 * 1024 * 1024),
+      friendAskCooldownSeconds: int(env, 'FRIEND_ASK_COOLDOWN_SECONDS', 120, 1, 86_400),
       avatarFetchTimeoutMs: int(env, 'AVATAR_FETCH_TIMEOUT_MS', 4000, 250, 60_000),
       avatarCacheSeconds: int(env, 'AVATAR_CACHE_SECONDS', 86_400, 0, 31_536_000),
       premiumCacheSeconds: int(env, 'PREMIUM_CACHE_SECONDS', 300, 0, 86_400),

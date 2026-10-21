@@ -36,6 +36,11 @@ beforeAll(async () => {
     MAX_FRAME_BYTES: '16384',
     // The strike budget, so P13 does not depend on the shipped default.
     INVALID_MESSAGE_STRIKES: '10',
+    // Every case here connects from the same loopback address, and the file
+    // opens more sockets in a minute than the shipped per-IP default allows.
+    // That limit is tested in limits.test.ts; here it would only be noise.
+    CONN_RATE_LIMIT: '1000',
+    MAX_CONNECTIONS_PER_IP: '1000',
   });
 });
 
