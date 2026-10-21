@@ -120,16 +120,19 @@ export { modelVoice } from './voice-model';
 export {
   CRISIS_REPLY,
   challengesIdentity,
+  configureGuardTerms,
   deniesBeingAutomated,
+  GuardTermsError,
   guardVoice,
   isRomantic,
   looksLikeCrisis,
   looksLikeMinor,
   looksSexual,
+  parseGuardTerms,
   solicitsPersonalInfo,
   statesMinorAge,
 } from './guard';
-export type { GuardEvents, GuardOptions, LimitId, LimitTrip } from './guard';
+export type { GuardEvents, GuardOptions, GuardTermsFile, LimitId, LimitTrip } from './guard';
 export type { ModelVoiceOptions, SpendEvent } from './voice-model';
 export { scriptedVoice } from './voice-scripted';
 export type { ScriptedVoiceOptions } from './voice-scripted';

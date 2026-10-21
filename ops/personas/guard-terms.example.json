@@ -1,0 +1,11 @@
+{
+  "sexual": ["example-explicit-term"],
+  "minorPhrases": ["example school phrase"],
+  "crisis": ["example crisis phrase"],
+  "identityChallenge": ["example bot question"],
+  "identityDenial": ["example denial phrase"],
+  "solicitation": ["example contact request"],
+  "romantic": ["example flirt phrase"],
+  "identityDeflections": ["example deflection one", "example deflection two"],
+  "sexualDeclines": ["example decline one", "example decline two"]
+}

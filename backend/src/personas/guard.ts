@@ -220,27 +220,27 @@ export function statesMinorAge(text: string): boolean {
 }
 
 export function looksLikeMinor(text: string): boolean {
-  return statesMinorAge(text) || containsAny(view(text), MINOR_PHRASES);
+  return statesMinorAge(text) || containsAny(view(text), active.minorPhrases);
 }
 
 export function looksSexual(text: string): boolean {
-  return containsAny(view(text), SEXUAL);
+  return containsAny(view(text), active.sexual);
 }
 
 export function looksLikeCrisis(text: string): boolean {
-  return containsAny(view(text), CRISIS);
+  return containsAny(view(text), active.crisis);
 }
 
 export function challengesIdentity(text: string): boolean {
-  return containsAny(view(text), IDENTITY_CHALLENGE);
+  return containsAny(view(text), active.identityChallenge);
 }
 
 export function deniesBeingAutomated(text: string): boolean {
-  return containsAny(view(text), IDENTITY_DENIAL);
+  return containsAny(view(text), active.identityDenial);
 }
 
 export function solicitsPersonalInfo(text: string): boolean {
-  return containsAny(view(text), SOLICITATION);
+  return containsAny(view(text), active.solicitation);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -459,7 +459,7 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
           // The tenth decline is the first decline. The counter exists to be
           // measured, never to soften the answer — only to keep the *wording*
           // from repeating, which is a tell rather than a position.
-          return pickFresh(SEXUAL_DECLINES);
+          return pickFresh(active.sexualDeclines);
         }
 
         /* ---- limit 6: an identity challenge never gets a lie ---- */
@@ -474,7 +474,7 @@ export function guardVoice(options: GuardOptions): PersonaVoice {
         // inconsistent, which is worse than either answer.
         if (incoming !== '' && (challengesIdentity(incoming) || reading?.identity === true)) {
           trip('identity', true);
-          return pickFresh(IDENTITY_DEFLECTIONS);
+          return pickFresh(active.identityDeflections);
         }
 
         /* ---- generate ---- */
@@ -540,5 +540,157 @@ const ROMANTIC = [
 ];
 
 export function isRomantic(text: string): boolean {
-  return containsAny(view(text), ROMANTIC);
+  return containsAny(view(text), active.romantic);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Operator-supplied terms                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The shape of `PERSONA_GUARD_TERMS_FILE`. Every key is optional.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY DETECTION EXTENDS AND REPLIES REPLACE
+ * ---------------------------------------------------------------------------
+ * The lists above are a floor that ships with the code, and a floor that a
+ * configuration file could lower is not a floor. So a detection list in the
+ * file is **added** to the built-in one: an empty or missing key leaves the
+ * built-in list exactly as it is.
+ *
+ * The reply pools are the opposite case. The built-in wording is printed in a
+ * public repository, and a fixed public deflection is a tell: anyone who has
+ * read it can recognise a persona by it. So a reply pool in the file
+ * **replaces** the built-in one, and is checked against the same denial list
+ * the built-in deflections are tested against, so the escape hatch cannot be
+ * used to reintroduce a lie.
+ */
+export interface GuardTermsFile {
+  readonly sexual?: readonly string[];
+  readonly minorPhrases?: readonly string[];
+  readonly crisis?: readonly string[];
+  readonly identityChallenge?: readonly string[];
+  readonly identityDenial?: readonly string[];
+  readonly solicitation?: readonly string[];
+  readonly romantic?: readonly string[];
+  readonly identityDeflections?: readonly string[];
+  readonly sexualDeclines?: readonly string[];
+}
+
+interface GuardTerms {
+  readonly sexual: readonly string[];
+  readonly minorPhrases: readonly string[];
+  readonly crisis: readonly string[];
+  readonly identityChallenge: readonly string[];
+  readonly identityDenial: readonly string[];
+  readonly solicitation: readonly string[];
+  readonly romantic: readonly string[];
+  readonly identityDeflections: readonly string[];
+  readonly sexualDeclines: readonly string[];
+}
+
+const DETECTION_KEYS = [
+  'sexual',
+  'minorPhrases',
+  'crisis',
+  'identityChallenge',
+  'identityDenial',
+  'solicitation',
+  'romantic',
+] as const;
+
+const REPLY_KEYS = ['identityDeflections', 'sexualDeclines'] as const;
+
+const BUILT_IN: GuardTerms = {
+  sexual: SEXUAL,
+  minorPhrases: MINOR_PHRASES,
+  crisis: CRISIS,
+  identityChallenge: IDENTITY_CHALLENGE,
+  identityDenial: IDENTITY_DENIAL,
+  solicitation: SOLICITATION,
+  romantic: ROMANTIC,
+  identityDeflections: IDENTITY_DEFLECTIONS,
+  sexualDeclines: SEXUAL_DECLINES,
+};
+
+let active: GuardTerms = BUILT_IN;
+
+export class GuardTermsError extends Error {}
+
+function stringList(value: unknown, key: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    throw new GuardTermsError(`${key} must be an array of strings`);
+  }
+  return value as string[];
+}
+
+/**
+ * Parse and validate the file's contents. Throws rather than skipping a bad
+ * key: a guard that silently ignored half its configuration would look applied
+ * and not be (the F-006 shape).
+ */
+export function parseGuardTerms(json: string): GuardTermsFile {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    throw new GuardTermsError('guard terms file is not valid JSON');
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new GuardTermsError('guard terms file must be a JSON object');
+  }
+  const known = new Set<string>([...DETECTION_KEYS, ...REPLY_KEYS]);
+  for (const key of Object.keys(raw)) {
+    if (!known.has(key)) throw new GuardTermsError(`unknown guard terms key ${key}`);
+  }
+  const record = raw as Record<string, unknown>;
+  const parsed: Record<string, string[]> = {};
+  for (const key of known) parsed[key] = stringList(record[key], key);
+  return parsed as GuardTermsFile;
+}
+
+/**
+ * Apply a parsed file. `null` restores the built-in terms (tests use it).
+ *
+ * Detection terms go through the same `view` as the text they are matched
+ * against, so an operator writing "I'm 15" or "Hook Up" gets the match they
+ * meant rather than one that can never fire.
+ */
+export function configureGuardTerms(file: GuardTermsFile | null): void {
+  if (file === null) {
+    active = BUILT_IN;
+    return;
+  }
+
+  const extend = (key: (typeof DETECTION_KEYS)[number]): readonly string[] => {
+    const extra = (file[key] ?? []).map(view).map((term) => term.trim()).filter((t) => t !== '');
+    return [...new Set([...BUILT_IN[key], ...extra])];
+  };
+  const next = {
+    sexual: extend('sexual'),
+    minorPhrases: extend('minorPhrases'),
+    crisis: extend('crisis'),
+    identityChallenge: extend('identityChallenge'),
+    identityDenial: extend('identityDenial'),
+    solicitation: extend('solicitation'),
+    romantic: extend('romantic'),
+    identityDeflections: IDENTITY_DEFLECTIONS as readonly string[],
+    sexualDeclines: SEXUAL_DECLINES as readonly string[],
+  };
+
+  for (const key of REPLY_KEYS) {
+    const replies = (file[key] ?? []).map((reply) => reply.trim()).filter((r) => r !== '');
+    if (replies.length === 0) continue;
+    next[key] = replies;
+  }
+
+  // Limit 6 holds for operator wording too, judged against the extended list.
+  for (const reply of [...next.identityDeflections, ...next.sexualDeclines]) {
+    if (containsAny(view(reply), next.identityDenial)) {
+      throw new GuardTermsError('a configured reply denies being automated');
+    }
+  }
+
+  active = next;
 }

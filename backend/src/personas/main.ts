@@ -29,6 +29,7 @@
  * the bill or the behaviour is wrong, and it must not be undone by a redeploy.
  */
 
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { configWarnings, loadConfig } from '../config';
 import { createLoggerFromConfig } from '../logger';
@@ -38,6 +39,7 @@ import { createKeys } from '../redis/keys';
 import { createRedisClients } from '../redis/client';
 import { assertTlsWhereRequired, createDatabase } from '../storage/pool';
 import { PersonaBudget } from './budget';
+import { configureGuardTerms, parseGuardTerms } from './guard';
 import { NO_JEV, jevClient } from './jev';
 import { loadCharacters } from './index';
 import { personaMetrics } from './metrics';
@@ -68,6 +70,17 @@ async function main(): Promise<void> {
   // where the population was edited without running it.
   const characters = loadCharacters(undefined, { checkDifferentiation: true });
   logger.info('persona population loaded', { count: characters.length });
+
+  // Fails closed: an unreadable or invalid file stops the service rather than
+  // running on terms the operator believes are applied and are not. Counts
+  // only in the log, never the terms themselves.
+  if (config.personas.guardTermsFile !== '') {
+    const terms = parseGuardTerms(readFileSync(config.personas.guardTermsFile, 'utf8'));
+    configureGuardTerms(terms);
+    logger.info('persona guard terms loaded', {
+      keys: Object.entries(terms).filter(([, list]) => (list as string[]).length > 0).length,
+    });
+  }
 
   assertTlsWhereRequired(config);
   const database = createDatabase(config, logger);
