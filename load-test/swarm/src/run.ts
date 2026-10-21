@@ -87,6 +87,39 @@ interface Options {
   human: boolean;
 }
 
+/**
+ * Refuse a target that is not this machine or a private network.
+ *
+ * The swarm includes abuser personas and runs hundreds of bots by default. It
+ * is a test of a stack you own, started next to it; pointed at somebody else's
+ * service it is an attack. So a public host needs `--allow-remote-target`,
+ * which is a deliberate act rather than a typo in `--url`.
+ */
+export function assertLocalTarget(url: string, allowRemote: boolean): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    throw new Error(`--url is not a URL: ${url}`);
+  }
+  const octets = host.split('.').map(Number);
+  const ipv4 = octets.length === 4 && octets.every((o) => Number.isInteger(o) && o >= 0 && o <= 255);
+  const [a = -1, b = -1] = octets;
+  const local =
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '::1' ||
+    // A compose service name, reached from inside the stack's network.
+    (!host.includes('.') && !host.includes(':')) ||
+    (ipv4 && (a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)));
+  if (!local && !allowRemote) {
+    throw new Error(
+      `refusing to run against ${host}: not a local or private address. ` +
+        'Pass --allow-remote-target only for a stack you own.',
+    );
+  }
+}
+
 function parseArgs(argv: readonly string[]): Options {
   const flags = new Map<string, string>();
   for (let i = 0; i < argv.length; i += 1) {
@@ -117,9 +150,13 @@ function parseArgs(argv: readonly string[]): Options {
 
   const bots = Math.max(1, Math.floor(num('bots', 500)));
 
+  const url = flags.get('url') ?? 'ws://localhost:8090/ws';
+  const origin = flags.get('origin') ?? 'http://localhost:8090';
+  assertLocalTarget(url, flags.get('allow-remote-target') === 'true');
+
   return {
-    url: flags.get('url') ?? 'ws://localhost:8090/ws',
-    origin: flags.get('origin') ?? 'http://localhost:8090',
+    url,
+    origin,
     bots,
     durationSeconds: Math.max(10, Math.floor(num('duration', 120))),
     profile: profileRaw,
