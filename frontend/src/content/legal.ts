@@ -5,11 +5,9 @@
  * WHERE THIS TEXT COMES FROM, AND WHAT IT IS NOT
  * ---------------------------------------------------------------------------
  * `docs/policies/terms-of-service.md` and `privacy-policy.md` are the source of
- * truth. They are **not** publishable as they stand, and not because they are
- * unfinished: they interleave the operative text with `DRAFTED POSITION` blocks
- * that are notes addressed to the operator — arguments for and against a
- * position, and the triggers that would reopen it. Shipping them verbatim would
- * publish internal deliberation to every visitor.
+ * truth. They are **not** publishable verbatim: they hold the operator's
+ * identity as `<OPERATOR_...>` placeholders that a deployment fills in, and
+ * they carry the occasional note for maintainers.
  *
  * So this is the operative half, rewritten for somebody who is about to talk to
  * a stranger rather than for somebody deciding policy. **Every position here is
@@ -72,20 +70,11 @@ const TERMS: StaticPage = {
       body: [
         'karobakbak is operated by:',
         /*
-          The registered enterprise, never the individual (register row 19, and
-          the operator's instruction of 2026-09-04).
-
-          This replaced "Operator: [operator name — not published yet]", which
-          was a blank waiting for a person's name — the one fact that is not
-          going to be filled in here. What waits in the gap now is a
-          registration number, which is verifiable by anyone with standing to
-          ask and printed on nobody's screen.
-
-          It keeps the `[...]` shape deliberately: `pages.test.ts` skips a
-          rendered gap when it checks that this page transcribes the draft
-          rather than paraphrasing it, and a line without one would have to be
-          added to the legal draft first. This says no more than the draft's own
-          opening sentence already does.
+          The service name, never an individual. The site renders no personal
+          name, phone number, registration number or postal address; the legal
+          drafts in `docs/policies/` hold those as `<OPERATOR_...>` placeholders
+          for a deployment to fill in, and this page says no more than the
+          drafts' opening sentence already does.
         */
         `Service operator: karobakbak`,
         'Jurisdiction: India',
@@ -1234,8 +1223,16 @@ const PRIVACY: StaticPage = {
         'We use no analytics provider, no error-reporting service and no product telemetry service. Nothing about your use of karobakbak is sent to an outside logging or analytics company.',
         'Our pages make no requests to any third party from your browser — no analytics, no trackers, no advertising, not even external fonts.',
         'Signing in is the one exception, and it is a deliberate one: you are taken to the provider’s own page, you can see it in the address bar, and you chose to go there. Your profile picture is relayed by us rather than loaded from them, so browsing this site never tells them you were here.',
-        'Moderation of what users send runs on our own servers, on rules rather than on an outside service.',
-        'If we ever introduce an analytics provider, a content delivery network, an outside moderation service or any other third party that receives information about you, this section becomes false and will be updated before that change ships.',
+        'Automatic moderation of what users send runs on our own servers, on rules. The outside services that can receive conversation content are listed under "Automated accounts and outside processing".',
+        'If we ever introduce an analytics provider, a content delivery network or any other third party that receives information about you, this section will be updated before that change ships.',
+      ],
+    },
+    {
+      heading: 'Automated accounts and outside processing',
+      body: [
+        'Some conversation partners may be automated accounts operated by karobakbak. An automated account never claims to be human.',
+        'When you talk with an automated account, the messages in that conversation are sent from our servers to an outside AI model provider so that it can write replies. We require terms that forbid the provider from training on what we send.',
+        'When report triage is enabled, the recent messages of a reported conversation are sent from our servers to an outside classification service that sorts reports by urgency for a human reviewer. It never takes action against anyone on its own.',
       ],
     },
     {
@@ -1508,9 +1505,8 @@ const PRIVACY: StaticPage = {
 
         The clocks are the ones `docs/policies/terms-of-service.md` commits to
         and are stated there rather than invented here: acknowledgement within
-        24 hours, resolution aimed at 15 days. The asymmetry is deliberate and
-        recorded in that draft — an acknowledgement can be automated and a
-        resolution cannot, so one is a machine's promise and the other is a
+        24 hours, resolution aimed at 15 days. The asymmetry is deliberate: an
+        acknowledgement can be automated and a resolution cannot, so one is a machine's promise and the other is a
         person's.
       */
       body: [

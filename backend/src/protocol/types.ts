@@ -413,8 +413,9 @@ export const MAX_PREFERENCE_VALUES = 8;
  * WHAT THIS DOES NOT FIX, STATED PLAINLY
  * ---------------------------------------------------------------------------
  * There is **no age assurance anywhere in this system**. The age gate is the
- * whole of the minor-safety enforcement (`minor-safety-policy.md` §3), `age` is
- * a claim anyone can type (§26.4, D36), and symmetry does nothing about either.
+ * whole of the minor-safety enforcement (adults only, asked and not verified),
+ * `age` is a claim anyone can type (§26.4, D36), and symmetry does nothing
+ * about either.
  * A minor who passed the gate by lying can select this value and be paired with
  * an adult who selected it.
  *

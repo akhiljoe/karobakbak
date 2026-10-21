@@ -5,7 +5,7 @@
 # is gitignored, and it never becomes an environment variable.
 #
 # `BACKUP_REMOTE` names one of the sections below plus a path, for example
-# `b2:***REMOVED***` or `s3:my-bucket/karobakbak`.
+# `b2:<backup-bucket>` or `s3:my-bucket/karobakbak`.
 #
 # Generate these interactively with `rclone config` rather than by hand -- it
 # knows each provider's required fields and will obtain tokens where they are

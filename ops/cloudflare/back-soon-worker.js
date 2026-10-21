@@ -1,15 +1,15 @@
 // karobakbak "back soon" — a Cloudflare Worker in front of karobakbak.com.
 //
-// Deployed by pasting this file into the Cloudflare dashboard
-// (docs/operations/LAPTOP-HOSTING.md step 4.6). This copy is the source of
-// truth; the dashboard holds a copy of it.
+// Deployed by pasting this file into the Cloudflare dashboard (Workers, with
+// a route on the site's hostname). This copy is the source of truth; the
+// dashboard holds a copy of it.
 //
 // ---------------------------------------------------------------------------
 // WHAT IT DOES
 // ---------------------------------------------------------------------------
 // Every request is passed to the origin unchanged, WebSocket upgrades included,
 // and the origin's answer is returned unchanged. The ONE exception: the origin
-// is unreachable (the laptop is off, the tunnel is down, the ISP is out) AND the
+// is unreachable (the host is down or the tunnel is disconnected) AND the
 // request is a browser loading a page. Then, instead of Cloudflare's error 1033,
 // the visitor gets the page below, which checks every 20 seconds and reloads
 // itself when the site answers again.

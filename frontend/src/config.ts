@@ -48,9 +48,8 @@ export interface ClientConfig {
    * **Empty is a launch blocker, not a default.** The age gate links both and
    * they must be reachable *without* passing it, so a build that ships with
    * these unset has a gate that states obligations a user cannot go and read.
-   * `hasLegalLinks` below is what the interface tests, and
-   * `docs/policies/README.md` step 5 is the reason: a policy nobody can find is
-   * not published.
+   * `hasLegalLinks` below is what the interface tests, and the reason is that
+   * a policy nobody can find is not published.
    */
   readonly legal: {
     readonly termsUrl: string;

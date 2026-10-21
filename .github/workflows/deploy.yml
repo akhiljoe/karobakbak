@@ -1,23 +1,24 @@
-# Deploy to the live stack on the operator's laptop. docs/operations/DEPLOY.md.
+# Deploy to the live stack on the single production host (a host behind a
+# Cloudflare Tunnel). docs/operations/DEPLOY.md.
 #
 # Manual on purpose: Actions → deploy → Run workflow. Merging to main deploys
-# nothing. The laptop is also somebody's daily machine, and a restart nobody
-# chose, in the middle of a conversation, costs more than a deploy that waited.
+# nothing. A restart nobody chose, in the middle of a conversation, costs more
+# than a deploy that waited.
 #
-# HOW THE LAPTOP HEARS ABOUT IT
+# HOW THE HOST HEARS ABOUT IT
 #
-# A self-hosted runner on the laptop long-polls GitHub over outbound HTTPS, the
+# A self-hosted runner on the host long-polls GitHub over outbound HTTPS, the
 # same direction cloudflared already dials. Nothing on the internet connects
-# in, and no port is opened. If the laptop is asleep the job waits in the queue
-# (up to a day) and runs when it wakes.
+# in, and no port is opened. If the host is offline the job waits in the queue
+# (up to a day) and runs when it is back.
 #
-# WHY THIS IS SAFE ON A SELF-HOSTED RUNNER
+# WHERE THE RUNNER MAY BE REGISTERED
 #
-# The repository is private, so no stranger's pull request can schedule a job.
-# Only jobs asking for the `karobakbak-live` label reach this machine, and
-# verify.yml asks for `ubuntu-latest`. If the repository is ever made public,
-# remove the runner first: a public repository's pull requests can run code on
-# any self-hosted runner its workflows name.
+# The runner is registered only to a private deployment repository, and must
+# never be registered on a public repository: pull requests on a public
+# repository can run code on self-hosted runners. Only jobs asking for the
+# `karobakbak-live` label reach the host, and verify.yml asks for
+# `ubuntu-latest`.
 
 name: deploy
 

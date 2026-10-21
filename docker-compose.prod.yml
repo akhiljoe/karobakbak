@@ -42,7 +42,7 @@
 # ---------------------------------------------------------------------------
 # Overrides the base file's `karobakbak-dev`. Production containers are
 # `karobakbak-live-<service>-1` and its volumes `karobakbak-live_<name>`, on
-# every host - the VPS and the laptop alike - so a command written for one is
+# every host - the VPS and the tunnel host alike - so a command written for one is
 # right for the other, and nothing development does can reach them. Why the two
 # must differ is in the header of `docker-compose.yml`.
 name: karobakbak-live
@@ -105,8 +105,7 @@ services:
         # Required in production, unlike development, because the age gate links
         # both and they must be reachable *without* passing it. A production
         # build without them ships a screen stating obligations the user cannot
-        # go and read, which is worse than no screen — see
-        # docs/policies/README.md step 5.
+        # go and read, which is worse than no screen.
         VITE_TERMS_URL: "${VITE_TERMS_URL:?the published Terms URL, e.g. https://karobakbak.com/terms}"
         VITE_PRIVACY_URL: "${VITE_PRIVACY_URL:?the published Privacy Policy URL}"
 
@@ -256,9 +255,9 @@ services:
     # fallback salt in `environment:`, and `environment:` always beats
     # `env_file:`. So the production values in the env file never reached the
     # container: every query failed with 28P01 auth_failed, the budget read as
-    # unreadable and the persona refused to spend. The droplet was fixed by
-    # editing this file on the box, which was never committed — the laptop
-    # deployment would have met the same failure. This is that edit, in git.
+    # unreadable and the persona refused to spend. The fix is to set the
+    # production values here, in the overlay, so every production deployment
+    # gets them from git rather than from a local edit.
     #
     # DATABASE_URL is the application role, the same as the backend's: the
     # chat role can add to the persona spend and cannot raise the ceiling or

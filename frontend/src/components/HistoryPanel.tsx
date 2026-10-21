@@ -9,7 +9,7 @@
  * WHAT A ROW DELIBERATELY DOES NOT HAVE
  * ---------------------------------------------------------------------------
  * No reconnect button. Reconnecting means asking the server to match you with
- * one specific person again, which is the clause `minor-safety-policy.md` §6
+ * one specific person again, which is the clause the minor-safety position
  * rests on and the thing the privacy policy says cannot happen. The list is a
  * record of who you met, not a route back to them.
  *
@@ -282,7 +282,7 @@ export function HistoryPanel({
                     on screen during the conversation. Knowing whether a past
                     stranger is here now would mean keeping a durable handle
                     for them, which is the thing `history.ts` does not do and
-                    `minor-safety-policy.md` §6 is written about.
+                    the minor-safety position is written about.
                   */}
                   <p className="text-xs text-ink-500">
                     {entry.presence !== null && online.has(entry.presence) ? (

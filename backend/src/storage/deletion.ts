@@ -407,7 +407,7 @@ export class DeletionWorker {
 
       Seven years, which is the common Indian bookkeeping figure and is now the
       operator's decision rather than a placeholder (`PAYMENT_RECORD_RETENTION_DAYS`,
-      row 22 of the decision register). It is longer than everything above by an
+      set in configuration). It is longer than everything above by an
       order of magnitude, and deliberately so: every other retention period here
       argues for keeping as little as possible for as short as possible, and
       this one argues the opposite way, because a financial record that is gone

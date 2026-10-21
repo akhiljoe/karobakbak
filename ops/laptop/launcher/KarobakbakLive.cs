@@ -1,4 +1,5 @@
-// karobakbak live - the double-click launcher for the laptop deployment.
+// karobakbak live - the double-click launcher for the single-host deployment
+// behind a Cloudflare Tunnel.
 //
 // Build:  powershell -ExecutionPolicy Bypass -File ops\laptop\launcher\build.ps1 -Shortcut
 // Run:    double-click ops\laptop\karobakbak-live.exe (or the desktop shortcut)
@@ -10,13 +11,14 @@
 //
 // WHAT IT DOES, IN ORDER
 //
-//   1. Pre-checks. Every one names the step of docs/operations/LAPTOP-HOSTING.md
-//      that fixes it. A FAIL stops the start; a WARN is shown and does not.
+//   1. Pre-checks. Every one says what fixes it (usually the matching comment
+//      in .env.laptop.example). A FAIL stops the start; a WARN is shown and
+//      does not.
 //   2. Starts Docker Desktop if it is not running, and waits for the engine.
-//   3. `docker compose ... up -d --build` with the three files the laptop uses.
+//   3. `docker compose ... up -d --build` with the three files this deployment uses.
 //   4. Waits for `migrate` to exit 0 - a stack whose migration failed has every
 //      other container looking healthy.
-//   5. Gives `karobakbak_app` its password on the first start (step 8.4), read
+//   5. Gives `karobakbak_app` its password on the first start, read
 //      from DATABASE_URL and sent over stdin so it never appears in a process
 //      list or in this program's log.
 //   6. Waits for every service to be running and none restarting.
@@ -262,7 +264,7 @@ namespace Karobakbak.Live
     // -----------------------------------------------------------------------
     static class PreChecks
     {
-        const string Doc = "LAPTOP-HOSTING.md";
+        const string Doc = ".env.laptop.example";
 
         // startDocker: whether a stopped Docker Desktop may be started. False
         // for --check, which must not change anything.
@@ -296,7 +298,7 @@ namespace Karobakbak.Live
             if (!File.Exists(d.EnvPath))
             {
                 add("Configuration file", Level.Fail,
-                    ".env.laptop does not exist. Copy .env.laptop.example and fill it in (" + Doc + " step 5).");
+                    ".env.laptop does not exist. Copy .env.laptop.example and fill it in (see the comments in " + Doc + ").");
                 return all;
             }
             try { d.LoadEnv(); }
@@ -311,7 +313,7 @@ namespace Karobakbak.Live
             {
                 add("Line endings", Level.Fail,
                     ".env.laptop has Windows (CRLF) line endings, which carry an invisible character into every " +
-                    "value. In VS Code click CRLF in the status bar, choose LF, save (" + Doc + " step 5.4).");
+                    "value. In VS Code click CRLF in the status bar, choose LF, save.");
             }
             else add("Line endings", Level.Pass, "LF");
 
@@ -335,17 +337,17 @@ namespace Karobakbak.Live
             }
             var empty = required.Where(k => string.IsNullOrEmpty(d.Get(k))).ToList();
             if (empty.Count > 0)
-                add("Required settings", Level.Fail, "Empty in .env.laptop: " + string.Join(", ", empty) + " (" + Doc + " step 5).");
+                add("Required settings", Level.Fail, "Empty in .env.laptop: " + string.Join(", ", empty) + " (see " + Doc + ").");
             else add("Required settings", Level.Pass, required.Count + " required values present");
 
             var placeholders = d.Env.Where(kv => kv.Value.Contains("CHANGE_ME")).Select(kv => kv.Key).ToList();
             if (placeholders.Count > 0)
-                add("Placeholders", Level.Fail, "Still CHANGE_ME: " + string.Join(", ", placeholders) + " (" + Doc + " step 5.2).");
+                add("Placeholders", Level.Fail, "Still CHANGE_ME: " + string.Join(", ", placeholders) + " (see " + Doc + ").");
             else add("Placeholders", Level.Pass, "none left");
 
             string salt = d.Get("IP_HASH_SALT") ?? "";
             if (salt.Length < 32 || salt.Contains("change-me") || salt.Contains("not-for-production"))
-                add("IP hash salt", Level.Fail, "IP_HASH_SALT must be a long random value (openssl rand -hex 32, step 5.2).");
+                add("IP hash salt", Level.Fail, "IP_HASH_SALT must be a long random value (openssl rand -hex 32).");
             else add("IP hash salt", Level.Pass, salt.Length + " characters");
 
             if ((d.Get("AUTH_ENABLED") ?? "").ToLowerInvariant() == "true")
@@ -355,13 +357,13 @@ namespace Karobakbak.Live
                 if (missingAuth.Count > 0)
                     add("Sign-in settings", Level.Fail,
                         "AUTH_ENABLED=true but empty: " + string.Join(", ", missingAuth) +
-                        ". The backend refuses to start half-configured (step 5.3, SIGNIN-SETUP.md).");
+                        ". The backend refuses to start half-configured (docs/operations/SIGNIN-SETUP.md).");
                 else add("Sign-in settings", Level.Pass, "complete");
 
                 // The provider sends people back to AUTH_REDIRECT_URI, so it must
                 // be this site's own origin. The auth block is naturally copied
                 // from the development .env, and on the first live start that
-                // carried ***REMOVED*** along: sign-in completed at Google
+                // carried the development hostname along: sign-in completed at Google
                 // and landed on a tunnel that was not running (error 1033).
                 // Nothing else fails, so nothing else catches it.
                 string redirect = d.Get("AUTH_REDIRECT_URI") ?? "";
@@ -369,7 +371,7 @@ namespace Karobakbak.Live
                 if (redirect.Length > 0 && redirect != expected)
                     add("Sign-in return address", Level.Fail,
                         "AUTH_REDIRECT_URI is " + redirect + " but this site is " + d.PublicOrigin() +
-                        ". Sign-in would finish somewhere else. Set it to " + expected + " (step 5.3).");
+                        ". Sign-in would finish somewhere else. Set it to " + expected + ".");
                 else if (redirect.Length > 0) add("Sign-in return address", Level.Pass, redirect);
             }
             else add("Sign-in settings", Level.Warn,
@@ -378,13 +380,13 @@ namespace Karobakbak.Live
             string token = d.Get("CLOUDFLARE_TUNNEL_TOKEN") ?? "";
             if (token.Length > 0 && !(token.StartsWith("eyJ") && token.Length > 100))
                 add("Tunnel token", Level.Warn,
-                    "CLOUDFLARE_TUNNEL_TOKEN does not look like a token (they start eyJ and are long). Copy only the value after --token (step 4.1).");
+                    "CLOUDFLARE_TUNNEL_TOKEN does not look like a token (they start eyJ and are long). Copy only the value after --token.");
             else if (token.Length > 0) add("Tunnel token", Level.Pass, "present");
 
             string hops = d.Get("TRUST_PROXY_HOPS");
             if (hops != "2")
                 add("Proxy hops", Level.Warn,
-                    "TRUST_PROXY_HOPS is " + (hops ?? "unset") + "; the derived value behind the tunnel is 2. Only change it after measuring (step 10.2).");
+                    "TRUST_PROXY_HOPS is " + (hops ?? "unset") + "; the derived value behind the tunnel is 2. Only change it after measuring with npm run security:probe.");
             else add("Proxy hops", Level.Pass, "2");
 
             if (string.IsNullOrEmpty(d.Get("MAX_CONNECTIONS")))
@@ -399,22 +401,22 @@ namespace Karobakbak.Live
             string rclone = Path.Combine(d.Root, "ops\\backup\\rclone.conf");
             if (Directory.Exists(rclone))
                 add("Backup storage key", Level.Fail,
-                    "ops\\backup\\rclone.conf is a DIRECTORY - Docker created it when the file was missing. Delete it and write the file (step 6.1).");
+                    "ops\\backup\\rclone.conf is a DIRECTORY - Docker created it when the file was missing. Delete it and write the file from ops\\backup\\rclone.conf.example.");
             else if (!File.Exists(rclone))
-                add("Backup storage key", Level.Fail, "ops\\backup\\rclone.conf is missing (step 6.1).");
+                add("Backup storage key", Level.Fail, "ops\\backup\\rclone.conf is missing (template: ops\\backup\\rclone.conf.example).");
             else
             {
                 // BACKUP_REMOTE is "<remote>:<bucket>"; that remote has to be a
                 // section in rclone.conf or every upload fails. A leftover
                 // rehearsal config ([drill], the MinIO stand-in) is the likely
-                // way to get this wrong, and backups then never leave the laptop.
+                // way to get this wrong, and backups then never leave the host.
                 string remote = (d.Get("BACKUP_REMOTE") ?? "").Split(':')[0];
                 var sections = Regex.Matches(File.ReadAllText(rclone), @"^\[([^\]]+)\]", RegexOptions.Multiline)
                                     .Cast<Match>().Select(m => m.Groups[1].Value).ToList();
                 if (remote.Length > 0 && !sections.Contains(remote))
                     add("Backup storage key", Level.Fail,
                         "BACKUP_REMOTE uses '" + remote + ":' but rclone.conf only defines [" + string.Join("], [", sections) +
-                        "]. Write the R2 credentials as [" + remote + "] (step 6.1), or no backup leaves this laptop.");
+                        "]. Write the R2 credentials as [" + remote + "] (see ops\\backup\\rclone.conf.example), or no backup leaves this host.");
                 else add("Backup storage key", Level.Pass, "rclone.conf defines [" + remote + "]");
             }
 
@@ -424,20 +426,20 @@ namespace Karobakbak.Live
                 string fileToken = File.ReadAllText(tokenFile);
                 if (fileToken != (d.Get("BACKUP_REPORT_TOKEN") ?? ""))
                     add("Backup token matches", Level.Fail,
-                        "BACKUP_REPORT_TOKEN in .env.laptop differs from ops\\backup\\report-token. Backups would succeed unobserved (step 6.3).");
+                        "BACKUP_REPORT_TOKEN in .env.laptop differs from ops\\backup\\report-token. Backups would succeed unobserved.");
                 else add("Backup token matches", Level.Pass, "file and setting agree");
             }
 
             if (string.IsNullOrEmpty(d.Get("BACKUP_REMOTE")))
-                add("Backup destination", Level.Warn, "BACKUP_REMOTE is empty: backups would stay on this laptop only.");
+                add("Backup destination", Level.Warn, "BACKUP_REMOTE is empty: backups would stay on this host only.");
             else add("Backup destination", Level.Pass, d.Get("BACKUP_REMOTE"));
 
             // ---- alerts ----------------------------------------------------
             string hook = Path.Combine(d.Root, "monitoring\\alertmanager\\webhook-url");
             if (Directory.Exists(hook))
-                add("Alert delivery", Level.Fail, "monitoring\\alertmanager\\webhook-url is a directory. Delete it and write the URL (step 7).");
+                add("Alert delivery", Level.Fail, "monitoring\\alertmanager\\webhook-url is a directory. Delete it and write the URL (template: webhook-url.example).");
             else if (!File.Exists(hook) || !File.ReadAllText(hook).Trim().StartsWith("http"))
-                add("Alert delivery", Level.Warn, "monitoring\\alertmanager\\webhook-url is missing or not a URL: every alert fires into nothing (step 7).");
+                add("Alert delivery", Level.Warn, "monitoring\\alertmanager\\webhook-url is missing or not a URL: every alert fires into nothing (template: webhook-url.example).");
             else add("Alert delivery", Level.Pass, "webhook configured");
 
             // ---- the machine -----------------------------------------------
@@ -475,11 +477,11 @@ namespace Karobakbak.Live
                 if (Regex.IsMatch(json, "\"AutoStart\"\\s*:\\s*false"))
                     add("Docker starts at sign-in", Level.Warn,
                         "Docker Desktop does not start when you sign in, so a restart leaves the site down until you open this app. " +
-                        "Docker Desktop > Settings > General > Start Docker Desktop when you sign in (step 2.1).");
+                        "Docker Desktop > Settings > General > Start Docker Desktop when you sign in.");
                 else add("Docker starts at sign-in", Level.Pass, "on");
                 if (Regex.IsMatch(json, "\"AutoDownloadUpdates\"\\s*:\\s*true"))
                     add("Docker auto-update", Level.Warn,
-                        "Docker Desktop downloads updates by itself; installing one restarts the site. Settings > Software updates (step 2.1).");
+                        "Docker Desktop downloads updates by itself; installing one restarts the site. Settings > Software updates.");
             }
 
             RunResult info = d.RunDocker("info --format \"{{.OSType}}|{{.MemTotal}}|{{.NCPU}}\"", 30000, null);
@@ -561,12 +563,12 @@ namespace Karobakbak.Live
             string path = Path.Combine(d.Root, rel);
             if (Directory.Exists(path))
             {
-                add(name, Level.Fail, rel + " is a DIRECTORY - Docker created it when the file was missing. Delete it and generate the file (step 6.2).");
+                add(name, Level.Fail, rel + " is a DIRECTORY - Docker created it when the file was missing. Delete it and generate the file.");
                 return;
             }
             if (!File.Exists(path))
             {
-                add(name, Level.Fail, rel + " is missing (step 6.2).");
+                add(name, Level.Fail, rel + " is missing (see its .example template beside it).");
                 return;
             }
             byte[] bytes = File.ReadAllBytes(path);
@@ -574,11 +576,11 @@ namespace Karobakbak.Live
             {
                 add(name, Level.Fail,
                     rel + " ends with a newline or carriage return, which becomes part of the secret (F-049). " +
-                    "Regenerate it in Git Bash with printf %s (step 6.2).");
+                    "Regenerate it in Git Bash with printf %s.");
                 return;
             }
             if (bytes.Length != expectedBytes)
-                add(name, Level.Warn, rel + " is " + bytes.Length + " bytes; step 6.2 produces " + expectedBytes + ".");
+                add(name, Level.Warn, rel + " is " + bytes.Length + " bytes; a generated one is " + expectedBytes + ".");
             else add(name, Level.Pass, bytes.Length + " bytes, no line ending");
         }
 
@@ -697,7 +699,7 @@ namespace Karobakbak.Live
 
         // karobakbak_app is created with no password on purpose (002_roles.sql).
         // On a fresh database it cannot log in until the deployment gives it
-        // the one in DATABASE_URL - LAPTOP-HOSTING step 8.4, done here so it
+        // the one in DATABASE_URL, which is done here so it
         // cannot be forgotten. Also repairs a password that disagrees with the
         // config, which the backend reports as an authentication failure.
         static bool EnsureAppRole(Deployment d, Action<string> log)
@@ -728,7 +730,7 @@ namespace Karobakbak.Live
                 log("FAILED: could not ask PostgreSQL about karobakbak_app: " + PreChecks.FirstLines(canLogin.Output, 3));
                 return false;
             }
-            else log("First start: karobakbak_app has no password yet - setting it from DATABASE_URL (step 8.4).");
+            else log("First start: karobakbak_app has no password yet - setting it from DATABASE_URL.");
 
             Match m = Regex.Match(d.Get("DATABASE_URL") ?? "", @"^postgres(?:ql)?://karobakbak_app:([^@]+)@");
             if (!m.Success)
@@ -739,8 +741,8 @@ namespace Karobakbak.Live
             string password = m.Groups[1].Value;
             if (!Regex.IsMatch(password, "^[A-Za-z0-9]+$"))
             {
-                log("FAILED: the password in DATABASE_URL is not plain letters and digits. Step 5.2 generates hex; " +
-                    "set it by hand as in step 8.4.");
+                log("FAILED: the password in DATABASE_URL is not plain letters and digits. Generate it as hex; " +
+                    "or set it by hand with ALTER ROLE karobakbak_app LOGIN PASSWORD.");
                 return false;
             }
 
@@ -803,7 +805,7 @@ namespace Karobakbak.Live
                 }
                 if (cf.Contains("Unauthorized") || cf.Contains("Invalid tunnel secret") || cf.Contains("invalid token"))
                 {
-                    log("FAILED: Cloudflare refused the tunnel token. Copy it again from Zero Trust > Networks > Tunnels (step 4.1).");
+                    log("FAILED: Cloudflare refused the tunnel token. Copy it again from Zero Trust > Networks > Tunnels.");
                     return false;
                 }
                 Thread.Sleep(3000);
@@ -830,7 +832,7 @@ namespace Karobakbak.Live
                 Thread.Sleep(4000);
             }
             log("FAILED: " + url + " last answered " + (last == 0 ? "nothing" : last.ToString()) + ".");
-            log("1033 = tunnel not connected; 502 = the tunnel's service is not http://frontend:80 (step 4.2).");
+            log("1033 = tunnel not connected; 502 = the tunnel's service is not http://frontend:80.");
             return false;
         }
 
@@ -901,11 +903,11 @@ namespace Karobakbak.Live
     // AI personas: one on/off switch
     // -----------------------------------------------------------------------
     // Two things decide whether personas join conversations, and both must say
-    // yes (docs/AI-PERSONAS.md): the `personas` container, which sits behind a
+    // yes: the `personas` container, which sits behind a
     // compose profile, and the global row of `persona_control` in PostgreSQL,
     // which ships disabled. "On" here means both. The switch writes the row as
-    // the database superuser with updated_by/reason, the same as the SQL route
-    // in PERSONA-SETUP.md; the moderation console is the audited route.
+    // the database superuser with updated_by/reason; the moderation console is
+    // the audited route and the preferred one.
     sealed class PersonaStatus
     {
         public bool Known;          // false when PostgreSQL could not be asked
@@ -994,7 +996,7 @@ namespace Karobakbak.Live
             string model = d.Get("PERSONA_MODEL") ?? "";
             if (provider.Length == 0 || model.Length == 0)
             {
-                log("FAILED: PERSONA_PROVIDER and PERSONA_MODEL must be set in .env.laptop (PERSONA-SETUP.md step 2).");
+                log("FAILED: PERSONA_PROVIDER and PERSONA_MODEL must be set in .env.laptop (see the persona section of .env.example).");
                 return false;
             }
             if (string.IsNullOrEmpty(d.Get("PERSONA_API_KEY")))
@@ -1046,7 +1048,7 @@ namespace Karobakbak.Live
             string tail = d.RunDocker("logs --tail 60 " + d.Container("personas"), 30000, null).Output;
             if (tail.Contains("28P01") || tail.Contains("auth_failed"))
             {
-                log("FAILED: the personas container cannot log in to PostgreSQL (28P01). PERSONA-SETUP.md, troubleshooting.");
+                log("FAILED: the personas container cannot log in to PostgreSQL (28P01). Check that its database role has the password its DATABASE_URL names.");
                 return false;
             }
             if (!health.StartsWith("running|healthy"))
@@ -1374,7 +1376,7 @@ namespace Karobakbak.Live
                 Log("Pre-checks: " + results.Count(r => r.Level == Level.Pass) + " passed, " + warns + " warnings, " + fails + " failed.");
                 if (fails > 0)
                 {
-                    Log("Fix the FAIL rows, then press Run pre-checks. Each names its step in docs\\operations\\LAPTOP-HOSTING.md.");
+                    Log("Fix the FAIL rows, then press Run pre-checks. Each says what fixes it.");
                     SetBusy(false);
                     if (!siteLive)
                         SetSite("Not started", CRed, fails + (fails == 1 ? " pre-check failed" : " pre-checks failed") + " - nothing was started",

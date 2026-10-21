@@ -37,7 +37,7 @@ logging {
 //
 // This used to match any container carrying a compose project label, on the
 // assumption that the only compose stack on the host was this one. On the
-// laptop deployment it is not: the live site (`karobakbak-live`), development
+// single-host deployment it is not: the live site (`karobakbak-live`), development
 // (`karobakbak-dev`) and a load test (`karobakbak-loadtest`) can share one
 // Docker engine, and each stack's Alloy would ship all of them into its own
 // Loki. Live dashboards would then count development traffic, and a load test's

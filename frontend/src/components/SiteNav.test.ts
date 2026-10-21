@@ -14,7 +14,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const SUPPORT_URL = 'https://buymeacoffee.com/***REMOVED***';
+const SUPPORT_URL = 'https://buymeacoffee.com/example';
 
 async function navWith(options: {
   payments: boolean;

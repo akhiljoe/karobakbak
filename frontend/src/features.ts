@@ -40,7 +40,7 @@
  * things a person opts into one at a time about somebody they already met.
  *
  * The minor-safety position is unchanged and is not answered by this flag. The
- * age gate remains the whole of that enforcement (`minor-safety-policy.md` §3),
+ * age gate remains the whole of that enforcement (asked, not verified),
  * there is still no age assurance anywhere, and an account does not add any:
  * the provider tells us a subject identifier and nothing about who it belongs
  * to. What it does not do is create a durable profile of a stranger — the

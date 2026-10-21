@@ -315,7 +315,7 @@ export interface Config {
    * moderation decision, and the right durations are not the same number.
    */
   /**
-   * AI personas (`docs/AI-PERSONAS.md`).
+   * AI personas (automated chat partners, `personas/`).
    *
    * Off by default and off in the durable switch too: `persona_control` ships a
    * disabled global row, so enabling personas takes both a deployment setting

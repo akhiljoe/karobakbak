@@ -12,8 +12,8 @@
  *
  * It exists because there is a difference between a service that states its age
  * requirement before a conversation begins and one that does not, and that
- * difference is the whole of the enforcement today
- * (`docs/policies/minor-safety-policy.md` §3).
+ * difference is the whole of the enforcement today (adults only, asked and
+ * not verified).
  *
  * ---------------------------------------------------------------------------
  * WHY IT IS VERSIONED RATHER THAN DATED

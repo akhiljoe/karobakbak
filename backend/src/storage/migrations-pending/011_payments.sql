@@ -90,8 +90,7 @@ create table if not exists payment_orders (
 
   -- Stamped at insert, never computed at deletion time (D17). The period for a
   -- financial record is a statutory question and is longer than anything else
-  -- in this schema — see row 22 of the decision register in
-  -- `docs/policies/README.md`.
+  -- in this schema, and is recorded as an operator decision below.
   --
   -- Seven years, chosen by the operator on 2026-09-04, and the deletion worker
   -- sweeps this table on it. Two years was considered and rejected: it sits

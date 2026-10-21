@@ -41,7 +41,7 @@
  * It is account-scoped and never part of the declared `Profile`, so no chat
  * partner and no matchmaking path can reach it. Putting a face in front of
  * strangers on a service with no age assurance is a different decision, and one
- * that would need `minor-safety-policy.md` revisited before any code.
+ * that would need the minor-safety position revisited before any code.
  *
  * ---------------------------------------------------------------------------
  * A URL FROM OUTSIDE, USED TO MAKE A REQUEST — SO IT IS PINNED

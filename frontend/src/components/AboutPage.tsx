@@ -22,7 +22,7 @@
  * ---------------------------------------------------------------------------
  * The design mock for this page carried a section headed "No pretending" that
  * read "karobakbak does not use bots to pretend to be people". That is false —
- * personas ship (`docs/AI-PERSONAS.md`), the Privacy Policy and Terms 3a
+ * personas ship (`backend/src/personas/`), the Privacy Policy and Terms 3a
  * disclose them, and `pages.test.ts` fails an About page that does not contain
  * the word "automated". The section keeps the mock's treatment (a live sage dot
  * beside the prose) and the content's honest text.

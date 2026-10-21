@@ -1,4 +1,4 @@
-# Production on the operator's own laptop, behind a Cloudflare Tunnel.
+# Production as a single-host deployment behind a Cloudflare Tunnel.
 #
 #   npm run laptop:up
 #   = docker compose --env-file .env.laptop -f docker-compose.yml
@@ -11,10 +11,11 @@
 #   1. (Inherited) the project is karobakbak-live, never development's name.
 #   2. Caddy is replaced by cloudflared. TLS terminates at Cloudflare.
 #   3. No host port collides with a development stack on the same Docker.
-#   4. Every service has a CPU and memory ceiling, because this machine is
-#      also somebody's daily computer.
+#   4. Every service has a CPU and memory ceiling, because this host may run
+#      other work besides the site.
 #
-# The procedure is docs/operations/LAPTOP-HOSTING.md.
+# Deploying it is docs/operations/DEPLOY.md; `.env.laptop.example` documents
+# the settings.
 
 # ---------------------------------------------------------------------------
 # 1. THE NAME
@@ -31,14 +32,14 @@ services:
   # ---------------------------------------------------------------------------
   # An overlay can add a service and cannot remove one (the VPS rig learned that
   # the hard way), so Caddy is parked behind a profile nobody activates. It
-  # would otherwise publish 80 and 443 on the laptop and try to obtain a
+  # would otherwise publish 80 and 443 on the host and try to obtain a
   # certificate for a name whose DNS points at the tunnel - failing, retrying,
   # and spending Let's Encrypt's rate limit doing it.
   caddy:
     profiles: ["never-on-laptop"]
 
-  # The tunnel. It dials *out* to Cloudflare, so the laptop publishes no port,
-  # needs no router forwarding and never puts the home address in DNS.
+  # The tunnel. It dials *out* to Cloudflare, so the host publishes no port,
+  # needs no inbound forwarding and never puts the origin address in DNS.
   #
   # Remote-managed: the hostname-to-service mapping (`karobakbak.com` ->
   # `http://frontend:80`) lives in the Cloudflare dashboard, and the only thing
@@ -47,7 +48,7 @@ services:
   #
   # It runs on the compose network, which is how `frontend` resolves. Running it
   # as a Windows service instead would need a published frontend port, and then
-  # anything on the same Wi-Fi could reach the origin without passing
+  # anything on the same local network could reach the origin without passing
   # Cloudflare - which is what makes `CF-IPCountry`, and therefore the geo-block,
   # trustworthy.
   cloudflared:
@@ -77,12 +78,12 @@ services:
   # harmless on a dedicated VPS and collide with development here: Grafana and
   # the console are moved, everything else nobody opens by hand is removed.
   #
-  # Ceilings, not reservations: nothing is held back from the laptop while idle.
+  # Ceilings, not reservations: nothing is held back from the host while idle.
   # The serving path (cloudflared, nginx, backend, redis, postgres) is capped at
   # 4 cores and ~1.6 GB; everything with the console and personas running is
   # ~6.7 cores and ~4 GB. Real use at launch traffic is a fraction of a core and
   # ~400 MB. The ceilings are what the site may never exceed however busy it
-  # gets, so it degrades into "busy, try again" rather than into a laptop that
+  # gets, so it degrades into "busy, try again" rather than into a host that
   # will not respond.
   #
   # A memory ceiling that is too low shows up as `OOMKilled` / exit 137 in

@@ -96,7 +96,7 @@ scrape_configs:
     # ---------------------------------------------------------------------
     # ITS OWN JOB, AND ALLOWED TO BE ABSENT
     # ---------------------------------------------------------------------
-    # The persona service is optional and off by default (docs/AI-PERSONAS.md),
+    # The persona service is optional and off by default (DESIGN.md, D-AI-*),
     # so this target is down on most deployments. That is correct rather than a
     # gap: a deployment with no personas has nothing to report, and every
     # chat_persona_* alert is written to stay quiet when the series are absent.

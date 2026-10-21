@@ -223,7 +223,7 @@ describe('the static pages', () => {
   });
 
   it('says the age check is not verified, rather than implying it is', () => {
-    // `minor-safety-policy.md` §3 chose "exclude and ask". Copy that implied
+    // The minor-safety position chose "exclude and ask". Copy that implied
     // verification would be the single most consequential false claim here.
     const about = JSON.stringify(pageById('about')).toLowerCase();
     // Matched on 'not verify' rather than an exact sentence, so the copy can be

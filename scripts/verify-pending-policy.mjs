@@ -4,8 +4,8 @@
  * still be applied.
  *
  * WHY THIS EXISTS
- * The pending file holds exact replacement text for sections of three published
- * policy documents, staged until phase A2 of `docs/AI-PERSONAS.md` ships. A
+ * A pending file holds exact replacement text for sections of the published
+ * policy documents, staged until the feature it describes ships. A
  * staged patch rots silently: somebody edits a sentence in the privacy policy,
  * and months later the "replace this paragraph" instruction refers to a
  * paragraph that no longer exists. The person applying it then either skips the
@@ -20,9 +20,9 @@
  * This check is a no-op once a pending file is deleted, which is what applying
  * it involves. It is not a check that survives the feature.
  *
- * Each staged patch is one entry in `PATCHES` below. The list is expected to be
- * empty most of the time; it has two entries only because payments and personas
- * were both drafted ahead of being switched on.
+ * Each staged patch is one entry in `PATCHES` below. An entry whose pending file
+ * does not exist is skipped, so an applied (deleted) patch costs nothing. The
+ * persona entry is kept for that reason only: its pending file has been removed.
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -56,7 +56,7 @@ const PERSONA_ANCHORS = [
   ['privacy-policy.md', '## Other companies', 'the processor list heading'],
   ['privacy-policy.md', '**There are none.** As it stands today:', 'the claim that stops being true'],
 
-  // --- minor-safety-policy.md ---
+  // --- historical: a policy document no longer in the repository ---
   ['minor-safety-policy.md', '| Any jurisdiction is added with an explicit age-assurance duty', '§3 trigger table gains a row'],
   ['minor-safety-policy.md', '| The declared profile becomes filterable', '§6 trigger table gains a row'],
   ['minor-safety-policy.md', 'launch without automated grooming detection', '§6 position the new paragraph follows'],
@@ -93,7 +93,7 @@ const PAYMENT_ANCHORS = [
   ['privacy-policy.md', 'make no requests to any third party', 'the claim that must narrow'],
   ['privacy-policy.md', 'One cookie, nothing loaded from a third party into your browser, no analytics,', 'the cookie note that gains the payment-form exception'],
   ['privacy-policy.md', '## Other companies', 'the processor list heading'],
-  ['privacy-policy.md', '**One, and only for conversations with an automated account.**', 'the count that becomes two'],
+  ['privacy-policy.md', '**Only these, and each only when you use the feature it serves.**', 'the processor list opening line'],
   ['privacy-policy.md', '- Our pages make **no requests to any third party** from your browser — no', 'the bullet that narrows'],
   ['privacy-policy.md', 'There is no payment provider, because nothing is for sale.', 'the bullet that is deleted outright'],
   ['privacy-policy.md', '### What we deliberately do not collect', 'insertion point for the new "If you pay for something" subsection'],

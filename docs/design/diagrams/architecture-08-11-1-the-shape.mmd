@@ -6,7 +6,7 @@ sequenceDiagram
     participant R as Redis (Lua)
 
     C->>S: join_queue {profile, preferences, intent}
-    S->>S: rate limit (join_queue: 12/min)
+    S->>S: rate limit (join_queue: 10/min)
     S->>S: moderate declared name — ANY flag refuses (D20/D35)
     S->>S: country := connection.country (never the client's)
     S->>L: joinQueue(sid, profile, prefs, intent)

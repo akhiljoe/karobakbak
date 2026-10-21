@@ -5,7 +5,7 @@ graph TB
     subgraph cf["Cloudflare — INFERRED"]
         CFE["CDN / WAF<br/>sets CF-IPCountry"]
     end
-    subgraph vps["Single host — DO Bangalore"]
+    subgraph vps["Single host — <vps-hostname>"]
         subgraph net["docker compose network"]
             CADDY["caddy:2.8<br/>:80 :443 — ONLY published ports"]
             NG["frontend / nginx<br/>no host port in prod"]

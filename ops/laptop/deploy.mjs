@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Deploy one commit to the live stack on the laptop.
+ * Deploy one commit to the live stack on the single host (behind a
+ * Cloudflare Tunnel).
  *
  *   node ops/laptop/deploy.mjs                                       # env: LIVE_DIR, DEPLOY_REF
  *   node ops/laptop/deploy.mjs --live-dir <path> --ref main

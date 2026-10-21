@@ -11,7 +11,7 @@ sequenceDiagram
     S->>S: parseClientFrame — size, envelope, version, closed lists
     Note over S: a frame with no `version` is UNSUPPORTED_VERSION,<br/>not BAD_ENVELOPE (F-042, open)
     S->>P: send(sid, clientId, contentType, text)
-    P->>R: rateLimit('message')  → 5/s burst 10
+    P->>R: rateLimit('message')  → 3/s burst 8
     P->>R: resolvePartner.lua  (route + dedupe, ONE script)
     Note over R: NOT_MATCHED | PARTNER_GONE | DEDUPE_FULL |<br/>DUPLICATE | OK{mid, partner, partnerInstance}
     P->>P: moderate({type, text})

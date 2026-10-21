@@ -4,8 +4,8 @@
  * ---------------------------------------------------------------------------
  * WHAT THIS SCREEN IS FOR
  * ---------------------------------------------------------------------------
- * `docs/policies/minor-safety-policy.md` §3 settles on "exclude minors, and
- * ask" rather than verifying anyone, which makes this screen the *entire*
+ * The minor-safety position settles on "exclude minors, and ask" rather than
+ * verifying anyone, which makes this screen the *entire*
  * enforcement. Its wording therefore carries more weight than any other string
  * in the product, and it has exactly one job: to be a statement somebody
  * actually read, rather than a dialog they dismissed.

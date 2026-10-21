@@ -124,7 +124,7 @@ if ($Shortcut) {
     $s.TargetPath = "$out"
     $s.WorkingDirectory = Split-Path "$out"
     $s.IconLocation = "$out,0"
-    $s.Description = 'Start karobakbak.com on this laptop'
+    $s.Description = 'Start karobakbak.com on this host'
     $s.Save()
     Write-Host "Shortcut: $link" -ForegroundColor Green
 }

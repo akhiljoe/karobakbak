@@ -21,8 +21,7 @@
  * TERMS AND PRIVACY ARE PAGES, NOT OUTBOUND LINKS
  * ---------------------------------------------------------------------------
  * They used to point at a domain that does not exist, so they were hidden, and
- * `docs/policies/README.md` step 5 says a policy nobody can find is not
- * published. They ship with the bundle now (`content/legal.ts`), which takes
+ * A policy nobody can find is not published. They ship with the bundle now (`content/legal.ts`), which takes
  * the domain off the critical path entirely.
  */
 

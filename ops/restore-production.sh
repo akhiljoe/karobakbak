@@ -49,15 +49,15 @@ cd "$HERE"
 # Git Bash on Windows rewrites any argument that starts with `/` into a Windows
 # path, so `--entrypoint /usr/local/bin/restore.sh` would reach Docker as
 # `C:/Program Files/Git/usr/local/bin/restore.sh` and the container would not
-# start. The laptop deployment runs this from Git Bash.
+# start. The single-host (Cloudflare Tunnel) deployment runs this from Git Bash.
 case "$(uname -s)" in
   MINGW*|MSYS*) export MSYS_NO_PATHCONV=1 ;;
 esac
 
 # Which deployment this host is. An explicit APP_ENV_FILE wins; otherwise the
 # env file that exists decides, so the same command is right on the VPS and on
-# the laptop (docs/operations/LAPTOP-HOSTING.md) without anybody remembering a
-# flag on the day it matters.
+# the single-host deployment (docker-compose.laptop.yml) without anybody
+# remembering a flag on the day it matters.
 if [ -n "${APP_ENV_FILE:-}" ]; then
   ENV_FILE="$APP_ENV_FILE"
 elif [ ! -f .env.prod ] && [ -f .env.laptop ]; then
@@ -200,7 +200,7 @@ if [ "$MODE" = "production" ]; then
   If the backend now logs authentication failures, set it again --
   the value is already in DATABASE_URL:
 
-    grep '^DATABASE_URL=' .env.prod      # .env.laptop on the laptop
+    grep '^DATABASE_URL=' .env.prod      # .env.laptop on the single host
 
     docker exec -i karobakbak-live-postgres-1 \
       psql -U karobakbak -d karobakbak \

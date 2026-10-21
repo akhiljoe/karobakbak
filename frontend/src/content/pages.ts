@@ -22,8 +22,8 @@
  *   30 and 90 days      `CONVERSATION_RETENTION_DAYS`, `REPORTED_RETENTION_DAYS`
  *   text only           DESIGN.md §23 — binary frames are rejected outright
  *   no account          there is no account table and no sign-in
- *   asked, not verified `minor-safety-policy.md` §3 chose "exclude and ask"
- *   automated accounts  privacy policy, Terms 3a — disclosed, never denied
+ *   asked, not verified the minor-safety position chose "exclude and ask"
+ *   automated accounts  privacy policy, Terms 3a: disclosed, never claim to be human
  *   one cookie          strictly necessary, and only for blocking
  *   24h / 15 days       the report commitments in the Terms
  *

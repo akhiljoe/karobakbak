@@ -40,11 +40,11 @@
 -- ---------------------------------------------------------------------------
 -- Accounts make reconnection possible, and reconnection is what the
 -- minor-safety position on grooming detection currently rests on being
--- impossible: `docs/policies/` register #5 accepts no grooming detection
--- explicitly *because* a user cannot re-find a partner. The moment friend
--- requests ship (phase 3), that sentence becomes false and both
--- `minor-safety-policy.md` §6 and `DESIGN.md` §24.6 need rewriting in the same
--- change. Phase 1 alone does not break it — an account with no connections
+-- impossible: the policy position accepts no grooming detection explicitly
+-- *because* a user cannot re-find a partner. The moment friend requests ship
+-- (phase 3), that sentence becomes false and both the minor-safety position
+-- and `DESIGN.md` §24.6 need rewriting in the same change. Phase 1 alone
+-- does not break it: an account with no connections
 -- still cannot find anybody.
 
 create table if not exists accounts (

@@ -15,7 +15,7 @@
  * it is why an account holder asking about a conversation is in exactly the
  * same position as anybody else. A server-side history is precisely the link
  * that sentence denies, so building one would make a published claim false —
- * and `minor-safety-policy.md` §6 rests on the related clause that there is no
+ * and the minor-safety position rests on the related clause that there is no
  * way to request a specific past partner.
  *
  * None of that is in the way here, because none of this reaches the server. The

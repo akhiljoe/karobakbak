@@ -246,8 +246,8 @@ groups:
           description: >-
             The romantic register was locked irreversibly for that session and
             the session was flagged. Sustained volume here is a review trigger
-            for the age-assurance decision in minor-safety-policy.md §3, which
-            is the whole reason this counter exists.
+            for the age-assurance decision (whether a self-declared age gate
+            is still enough), which is the whole reason this counter exists.
 
       - alert: PersonaBudgetNearCeiling
         expr: >-
@@ -368,8 +368,8 @@ groups:
       # An under-18 declaration. Not a fault and deliberately not a page: it is a
       # safety signal the minor-safety work needs a count of, and a sudden change
       # in the rate is what is worth a human looking. The age gate remains the
-      # whole of the enforcement (minor-safety-policy §3); this is not age
-      # assurance and must never be described as such.
+      # whole of the enforcement; this is not age assurance and must never be
+      # described as such.
       - alert: AgeBelowMinimumDeclarations
         expr: sum(increase(chat_profiles_refused_total{reason="age_below_minimum"}[1h])) > 20
         for: 10m
