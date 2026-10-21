@@ -1,34 +1,256 @@
 # karobakbak
 
-Anonymous, real-time, text-only random stranger chat. Two strangers are paired
-at random over WebSockets, exchange messages, and either one can skip, report or
-block at any time. Conversations are **retained for a defined period** to
-support abuse investigation and then deleted automatically.
+Anonymous, real-time, text-only stranger chat. Two people are paired at random
+over WebSockets, talk, and either one can skip, report or block at any moment.
 
-Retained content is plaintext inside the trusted boundary of
-[`DESIGN.md`](./DESIGN.md) §2.1 and never leaves it: **no message content is
-ever logged, labelled or valued on a metric, put in an error message, or
-exported to any other system.** That rule is enforced in code by a recursive
-field denylist in `backend/src/logger.ts` that throws outside production.
+It ran in production at [karobakbak.com](https://karobakbak.com). I designed,
+built, tested, deployed and operated all of it on my own: the protocol, the
+matchmaking engine, the persistence pipeline, the safety tooling, the
+observability stack and the infrastructure. This README is the tour. The
+[design record](./DESIGN.md) is the full contract.
 
-It is built to be correct with **several backend instances running at once**.
-All matchmaking state lives in Redis and every state transition is a single Lua
-script, so no two instances can interleave a transition. Retention is
-write-behind, so a database outage can never become a chat outage.
+## At a glance
 
-## Contents
+| | |
+|---|---|
+| **Backend** | Node 22, TypeScript, `ws`, no HTTP framework. Redis for all live state, PostgreSQL for retained data |
+| **Frontend** | React, TypeScript, Vite, Tailwind, native WebSocket, a pure reducer for UI state |
+| **Correctness** | every state transition is one atomic Redis Lua script, so several backend instances can run at once with no locks and no interleaving |
+| **Resilience** | write-behind persistence with priority-ordered load shedding, a circuit breaker and an on-disk spool: a database outage never becomes a chat outage |
+| **Observability** | Prometheus, Alertmanager, Grafana, Loki, Tempo, Grafana Alloy, cAdvisor, Redis and PostgreSQL exporters, OpenTelemetry tracing |
+| **Safety** | per-IP and per-command rate limits, a moderation rule engine over a de-obfuscated view of the text, two-dimension blocks and bans, a separate audited moderation console |
+| **Infrastructure** | Docker Compose, Cloudflare (DNS, edge, Tunnel, Workers), AWS Cognito with Google sign-in, AWS Certificate Manager, Cloudflare R2 backups, GitHub Actions CI |
+| **Tests** | 969 backend unit, 226 frontend unit, 686 integration tests against real Redis, PostgreSQL and sockets, a 5,000-bot load swarm and a security probe suite |
 
-* [Quick start](#quick-start) · [Local development](#local-development-without-docker)
-* [Commands](#commands) · [Configuration](#configuration)
-* [Operating it](#operating-it) · [Production hardening](#production-hardening)
-* [Troubleshooting](#troubleshooting) · [Verification](#verification)
+## Architecture
 
----
+```mermaid
+flowchart TB
+    user([Browser])
+    cf["Cloudflare edge: DNS, TLS, rules"]
+    tunnel["Cloudflare Tunnel, outbound only"]
 
-## Quick start
+    subgraph host["Single host, Docker Compose"]
+        nginx["nginx: frontend and /ws proxy"]
+        backend["backend replicas"]
+        personas["personas, optional"]
+        redis[("Redis: live state, queue, Pub/Sub")]
+        pg[("PostgreSQL: retained data, audit")]
+        spool[["on-disk spool"]]
+        admin["moderation console, loopback only"]
+        backup["backup job"]
+        obs["Prometheus, Alertmanager, Loki, Tempo, Grafana"]
+    end
 
-Requires Docker with the Compose plugin. Nothing else — no local Node, Redis or
-PostgreSQL.
+    cognito["AWS Cognito, Google sign-in"]
+    r2[("Cloudflare R2")]
+
+    user --> cf --> tunnel --> nginx --> backend
+    personas -- WebSocket --> backend
+    backend <-- "Lua transitions, Pub/Sub" --> redis
+    backend -- write-behind --> pg
+    backend -. breaker open .-> spool
+    backend -- OIDC --> cognito
+    backend -. "metrics, logs, traces" .-> obs
+    admin --> pg
+    backup --> pg
+    backup --> r2
+```
+
+The host has no inbound ports: the Cloudflare Tunnel connects outward, so the
+origin cannot be reached except through the edge. Redis and PostgreSQL publish
+nothing. The moderation console listens on loopback and is reached through an
+SSH tunnel, never through the public proxy.
+
+More diagrams, all with sources in `docs/design/diagrams`, cover the logical
+layering, network, cross-instance delivery, the conversation pipeline, and the
+end-to-end flows for session creation, chat, skip, reconnect and reporting:
+see [`docs/design/ARCHITECTURE.md`](./docs/design/ARCHITECTURE.md).
+
+## Pairing and matching
+
+The interesting problem in random chat is not sending messages. It is pairing
+strangers correctly when many backend processes are making decisions at the
+same time.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE: socket accepted
+    IDLE --> SEARCHING: join_queue
+    SEARCHING --> MATCHED: try_match wins a pair
+    SEARCHING --> IDLE: leave_queue
+    MATCHED --> SEARCHING: skip (re-queue and try again)
+    MATCHED --> IDLE: block, leave_chat, partner left
+    MATCHED --> [*]: socket closed
+    SEARCHING --> [*]: socket closed
+```
+
+How it stays correct:
+
+- **One Lua script per transition.** Join, match, skip, block and leave each run
+  as a single script inside Redis, so no two instances can interleave a
+  transition and there are no distributed locks to get wrong.
+- **Enqueue yourself, then scan.** Two people arriving at the same instant can
+  never both see an empty queue, because Redis serialises the scripts and the
+  second one sees the first.
+- **A set, sampled, oldest first.** The waiting queue is a Redis set. Each match
+  attempt samples a few candidates and prefers the one that has waited longest,
+  which keeps pairing random while bounding the worst-case wait.
+- **Exactly one winner when a match ends.** Whoever deletes the match record
+  wins; the other side treats "already ended" as success. No extra lock.
+- **Routing that cannot go stale.** Each session has its own Pub/Sub channel, so
+  the channel name is the routing key. A partner on the same instance gets a
+  local fast path.
+- **Preferences without a scanning tool.** Optional preference matching is
+  rate limited by IP hash rather than by session, because reconnecting is free
+  and a session-keyed limit would reset on the first thing an abuser tries.
+- **Resumption.** A dropped socket keeps its session and its conversation for a
+  short grace period, with seats reserved so a burst of reconnects cannot be
+  refused for capacity.
+
+All twenty race scenarios in the design record's concurrency analysis
+(`DESIGN.md` §10) have tests against real Redis.
+
+## Design decisions I would defend
+
+| Decision | Why | What it costs |
+|---|---|---|
+| Live state only in Redis, persistence off | nothing in Redis, not even a Pub/Sub payload, can reach disk; live state is reconstructible | a Redis restart ends every session |
+| Messages delivered first, persisted after | chat latency never waits on PostgreSQL | retention is lossy under overload, so it sheds in priority order and counts every drop |
+| Safety records outrank ordinary chat in the write queue | reports, blocks and moderation evidence must survive a write path that cannot keep up | ordinary messages are the ones dropped first |
+| Protocol types are one file duplicated byte for byte into the frontend | each package builds and ships independently | a CI check fails the build on any drift |
+| No Express or Fastify | three HTTP endpoints and one upgrade path | about thirty lines of manual routing |
+| Moderation console as its own process and port | a console route on the public listener would put "read retained conversations" one proxy rule away from the internet | a second process and a second database role |
+| `message_ack` means accepted and routed, not read | an end-to-end receipt doubles latency | the UI says "sent", never "read" |
+
+## Privacy by construction
+
+- **No message content in logs, metrics, traces or errors.** A recursive field
+  denylist in `backend/src/logger.ts` enforces it and throws outside production,
+  so a leak fails a test instead of reaching a log file. Metric labels come from
+  closed enumerations only.
+- **No raw IP addresses at rest.** Only salted hashes are stored; the app refuses
+  to start in production with the default salt.
+- **Retention is stamped at insert time** and enforced by a leader-locked
+  deletion worker, so changing a retention setting never extends the life of
+  data already stored. Reports place a legal hold on what they reference in the
+  same transaction.
+- **Database errors are logged by code and constraint only,** because driver
+  errors echo the row that failed. Core dumps and heap snapshots are disabled in
+  the production image, since either would be a file full of message bodies.
+
+## Safety and abuse controls
+
+Described at the level of mechanism. Every threshold is configuration, and a
+deployment sets its own values outside the repository.
+
+- **Rate limits** at two layers: per IP on connections (rate and concurrency,
+  counted across instances in Redis), and a separate token bucket per command
+  so cheap commands cannot be used to dodge the message limit.
+- **Protocol hygiene.** Text frames only, size limits before parsing, and a
+  strike budget that closes connections sending malformed frames.
+- **Moderation** runs rules for links, contact details, invite links and crypto
+  addresses over a normalised view of the text that undoes common obfuscation
+  (spacing, homoglyphs, written-out punctuation). The default action is to flag
+  for human review; specific rules can be configured to block.
+- **Blocks and bans** apply to two dimensions at once, a salted IP hash and a
+  browser token hash. Bans are issued by a human in the console, are always
+  time-bounded (there is no appeals channel, so nothing is permanent), live in
+  PostgreSQL and are replayed into Redis on a timer.
+- **The moderation console** is a separate process with scrypt passwords and
+  TOTP, an origin allowlist, its own least-privilege database role, and an audit
+  row written before any content is read. A read whose audit row cannot be
+  written returns nothing.
+- **Optional AI conversation partners** can fill an empty queue. They are off by
+  default, need both a deployment setting and an audited console switch, have a
+  monthly spend cap, and run behind a guard layer that enforces fixed limits
+  between the model and the socket: no sexual content, a minor signal ends any
+  romantic register for the session, no escalation under pressure, a crisis
+  signal breaks character with helpline information, no soliciting personal
+  details, and never claiming to be human.
+
+## Resilience, measured
+
+Every claim above about failure behaviour was tested by breaking things on
+purpose. Highlights from [`docs/testing/RESULTS.md`](./docs/testing/RESULTS.md):
+
+| Run | Result |
+|---|---|
+| 5,000 bots, 300 s, realistic traffic mix | 19,196 conversations, 79,983 messages. Message ack p50 4 ms, p95 50 ms, p99 61 ms. Time to match p99 70 ms |
+| Same run, write path overloaded | 2,657 records shed, **every one ordinary chat**: zero reports, blocks or moderation evidence lost. Queue conservation held exactly |
+| PostgreSQL paused mid-run | delivery steady at 43.5 msg/s, breaker opened, 10,904 records spooled and drained back, client p99 unchanged |
+| One of two backends killed with SIGKILL | the survivor absorbed every session with no step in client latency |
+| Redis primary stopped under Sentinel | replica promoted, about 11 s of Redis unavailability, zero backend restarts, every conversation survived with message order agreed |
+| 1 vCPU, 2 GB rig shaped like a cheap VPS | about 36 KB of memory per active user; the bottleneck is CPU, with the knee between 1,000 and 2,000 concurrent users |
+
+Fault drills found real bugs that no other test could reach, including a
+rollback that waited out its deadline twice and a single orphan message that
+could destroy the batch it travelled in. Both are fixed and covered by
+regression tests.
+
+The load tool is a purpose-built swarm (`load-test/swarm`), not only k6. It
+drives realistic talkers, skippers, reconnecting users and deliberately abusive
+personas, then checks the results with oracles against Redis, PostgreSQL,
+metrics and logs. It refuses to run against anything but a local or private
+address unless told explicitly.
+
+## Observability
+
+- **Metrics:** Prometheus scrapes every backend replica through Docker DNS, plus
+  cAdvisor, Redis and PostgreSQL exporters. Grafana ships with provisioned
+  dashboards, including a cost deck that turns resource use into money per
+  conversation.
+- **Alerts:** Alertmanager rules for things that would otherwise fail silently:
+  retention deletion falling behind, safety records being dropped, the database
+  breaker opening, the spool filling, backups going stale, event-loop lag.
+  Alerts reach a phone through push notifications.
+- **Logs:** structured JSON, collected by Grafana Alloy into Loki, with the
+  content denylist applied before anything is written.
+- **Traces:** OpenTelemetry across HTTP, Redis and PostgreSQL, exported to Tempo.
+  Measured overhead on one core is recorded in the results log.
+
+## From laptop to production
+
+The deployment path, each step documented in [`docs/operations`](./docs/operations):
+
+1. **Local:** `docker compose up` brings up the full stack with two backend
+   replicas on purpose, so cross-instance behaviour is exercised every day, not
+   asserted.
+2. **Rehearsal rigs:** a compose overlay pins the app to one CPU core and the
+   memory of a small VPS (`cpuset`, not `cpus`, so containers genuinely contend),
+   and another runs Redis Sentinel for failover drills.
+3. **VPS:** a cloud droplet with Caddy terminating TLS behind Cloudflare,
+   provisioned from a runbook covering firewalling, users and first boot.
+4. **Single host behind a Cloudflare Tunnel:** no inbound ports at all, a
+   Cloudflare Worker serving a holding page when the origin is down, and
+   restore drills from R2 backups. Deploys run from a workflow that refuses any
+   commit CI has not passed, tags every release, and rolls back by tag.
+5. **Sign-in:** AWS Cognito as the OIDC provider with Google as the identity
+   provider, a custom auth domain on an AWS Certificate Manager certificate, and
+   sessions in an HttpOnly cookie. Sign-in is optional; anonymous chat needs no
+   account.
+6. **CI:** GitHub Actions runs the full verify gate, a dependency audit and a
+   secrets scan of the history on every push.
+
+## What building this taught me
+
+- Concurrency bugs live in the gaps between steps. Moving every transition into
+  one atomic script removed whole classes of bugs instead of patching them.
+- A failure you have not caused on purpose is a failure you have not tested.
+  Pausing the database and killing processes mid-run found bugs that thousands
+  of unit tests did not.
+- Configuration that looks applied and is not is its own category of bug. Several
+  settings were documented and silently ignored, so there is now a script that
+  proves every setting reaches the process that reads it.
+- Measure on the hardware you will pay for. The capacity estimate from a
+  development machine was wrong by a factor that mattered, and the bottleneck on
+  a small VPS was CPU, not memory or connections.
+- Safety and privacy are easier to get right as properties of the design than as
+  features added later.
+
+## Run it
+
+Requires Docker with the Compose plugin.
 
 ```bash
 cp .env.example .env
@@ -36,472 +258,55 @@ docker compose up --build -d
 open http://localhost:8081
 ```
 
-Seven services come up: nginx serving the built frontend, **two** backends,
-Redis, PostgreSQL, a one-shot migration job, Prometheus and Grafana.
-
-| Service | URL | Notes |
-|---|---|---|
-| Frontend + WebSocket | http://localhost:8081 | the only published application port; `FRONTEND_PORT` moves it |
-| Prometheus | http://localhost:9090 | both backends are scrape targets |
-| Grafana | http://localhost:3000 | `admin` / `admin` by default; dashboard **karobakbak — overview** |
-| Backends, Redis, PostgreSQL | — | private network, no published host port |
-
-`npm run where` prints the URL to open and lists every address this machine
-answers on, marking each with whether `ALLOWED_ORIGINS` will accept a socket
-from it. It runs at the end of `npm run up`. The mark is the point: an origin
-that is missing from the list serves the page perfectly and then refuses the
-WebSocket upgrade with a 403, so the site loads and pressing start does nothing.
-
-`FRONTEND_PORT` is the whole application origin, not a cosmetic setting. It is
-what `AUTH_REDIRECT_URI` and the provider's registered sign-out URL are built
-from, and every entry in `ALLOWED_ORIGINS` has to carry the same port or the
-WebSocket upgrade is refused with a 403. Change the three together.
-
-
-Two backend **replicas** is deliberate. Production starts at **one** (cost §26);
-the second exists here so cross-instance correctness is *exercised* on a laptop
-rather than asserted — it has caught real bugs. They are replicas of one
-service, so they are `karobakbak-dev-backend-1` and `karobakbak-dev-backend-2`, and
-`--scale backend=N` is how the count changes. nginx finds them through Docker's
-DNS and Prometheus discovers them the same way, so neither needs editing.
-
-To open a second, independent chat client, use a private window: the block token
-is a same-site cookie, so two normal tabs share one identity.
-
-```bash
-docker compose logs -f backend            # or: npm run logs
-docker compose down -v                     # or: npm run down  (drops volumes)
-```
-
-## Local development without Docker
-
-Node >= 20.
+Open a second private window to chat with yourself. Everything else, including
+local development without Docker, the command reference, the moderation console,
+metrics, alerts, production hardening and troubleshooting, is in
+[`docs/operations/RUNNING.md`](./docs/operations/RUNNING.md).
 
 ```bash
 npm run install:all
-
-# Redis and PostgreSQL on the test ports (6380 / 5433), which the defaults
-# in .env.example already point at for the integration suite.
+npm run verify              # protocol, config wiring, types, unit tests
 npm run redis:test:up
-
-npm run dev:backend     # tsx watch, :8080, ws path /ws
-npm run dev:frontend    # vite, :5173, proxies to the backend
+npm run test:integration    # real Redis, PostgreSQL and sockets
 ```
-
-`ALLOWED_ORIGINS` already contains `http://localhost:5173`. An empty allowlist is
-a **startup failure** in production (R9) and a warning in development, so a
-backend that refuses to start is usually this.
-
-## Commands
-
-```bash
-# repo root
-npm run install:all      # install backend + frontend
-npm run verify           # protocol drift + typecheck + backend unit + frontend unit
-npm run typecheck
-npm test                 # backend unit tests
-npm run test:frontend    # frontend unit tests
-npm run test:integration # needs redis:test:up — real Redis, Postgres, sockets
-npm run build            # tsc -> backend/dist, vite build -> frontend/dist
-npm run up / down / logs # the development stack
-npm run psql             # a shell in the running database
-npm run redis-cli        # a shell in the running Redis
-npm run unblock          # clear every block, so testing can continue
-
-npm run loadtest         # k6 against an isolated load-test stack
-npm run loadtest:down    # destroy that stack, volumes and all
-npm run prod:config      # resolve the production config without starting it
-npm run prod:up          # the production stack (needs .env.prod)
-
-# backend package — the moderation console (its own process, off by default)
-npm run console          # start it; needs ADMIN_CONSOLE_ENABLED=true
-npm run console:create   # create an operator account (password in ADMIN_PASSWORD)
-
-# integration dependencies
-npm run redis:test:up    # Redis :6380 and PostgreSQL :5433, both tmpfs-backed
-npm run redis:test:down
-```
-
-**`npm run verify` is the gate.** It fails the build if
-`frontend/src/protocol/types.ts` has drifted from the backend copy. That file is
-generated: edit the backend one, then run `node scripts/verify-protocol.mjs
---fix`. Never hand-edit the frontend copy.
-
-### Looking inside a running stack
-
-Development publishes PostgreSQL and Redis on **loopback only** — reachable
-from this machine, from nothing on the network. Production publishes neither
-(§8.1): PostgreSQL holds plaintext conversation content, and reaching it should
-mean coming through a bastion or a tunnel.
-
-DBeaver, or any PostgreSQL client: host `localhost`, port **5434**, database
-`karobakbak`, user `karobakbak`, password `karobakbak`. Port 5434 keeps clear of
-a PostgreSQL installed on the host (5432) and of the integration-test stack
-(5433).
-
-Redis holds only live state — sessions, the queue, rate-limit buckets — and has
-persistence off (D12), so it is small and empties itself. `npm run redis-cli --
-monitor` while chatting in a browser is the quickest way to watch matchmaking
-happen.
-
-### Load testing
-
-`npm run loadtest` runs the **same stack under a different compose project**
-(`karobakbak-loadtest`, port 8090), which gives it its own volumes and therefore
-its own database. Its traffic never reaches the development one. The differences
-are a handful of environment variables in `.env.loadtest`, not another compose
-file.
-
-Retention stays enabled there deliberately: the write-behind path is where load
-actually hurts, and a run that skipped it would prove much less. The per-IP
-abuse limits are raised in that override only — a single generator is one
-address, which is exactly the traffic shape those controls exist to refuse.
-
-```bash
-npm run loadtest         # bring the stack up and run k6 against it
-npm run loadtest:down    # destroy it, volumes and all
-```
-
-## Configuration
-
-Every variable is documented, with its reasoning, in
-[`.env.example`](./.env.example) — that file is the reference, not this section.
-Configuration is loaded once by `loadConfig(env)` and passed down; there is no
-module-level singleton to import.
-
-`loadConfig` also runs **cross-field coherence checks**, so a set of individually
-valid values can still be rejected — a heartbeat interval that is not comfortably
-below the session TTL, for instance, would silently expire live sessions, so it
-is a startup error instead.
-
-The ones you will actually change:
-
-| Variable | Why it matters |
-|---|---|
-| `ALLOWED_ORIGINS` | comma-separated. **Empty is fatal in production.** |
-| `TRUST_PROXY_HOPS` | how many proxies sit in front. Wrong value ⇒ wrong client IP ⇒ wrong rate limiting and wrong blocks. `1` behind the bundled nginx. |
-| `IP_HASH_SALT` | salts every IP hash. Change it in production; changing it later invalidates existing IP-dimension blocks. |
-| `REDIS_URL`, `DATABASE_URL` | credentials come from secret management, never from a compose file. |
-| `DATABASE_REQUIRE_SSL_IN_PRODUCTION` | defaults to `true` and refuses to start without TLS to the database. |
-| `MAX_MESSAGE_LENGTH` | 500 by default (security §11, cost §19). |
-| `CONVERSATION_RETENTION_DAYS` and friends | retention periods. Stamped **at insert time**, so a change never retroactively extends the life of data already stored (D17). |
-| `MODERATION_DEFAULT_ACTION` | `flag` by default: local rules flag for review rather than block. |
-| `ENFORCEMENT_ENABLED` | moderator-issued bans, checked at the upgrade before a session exists. Off means ban keys are neither read nor written. |
-| `ENFORCEMENT_MAX_BAN_SECONDS` | 365 days. A permanent ban is deliberately not expressible — an anonymous product has no appeals channel, so long sanctions are re-issued rather than eternal. |
-| `ADMIN_CONSOLE_ENABLED` | off by default. The console listens on **its own port** (`ADMIN_CONSOLE_PORT`), bound to loopback, and is never proxied by the public edge. |
-| `ADMIN_ALLOWED_ORIGINS` | **empty is fatal in production when the console is enabled.** It authenticates with a cookie, so an empty allowlist is CSRF against a live moderator session. |
-| `VITE_ADS_*` | the ad slots are real; the provider is a no-op until one is chosen. |
-
-## Operating it
-
-### Endpoints
-
-| Path | Serves |
-|---|---|
-| `/ws` | the WebSocket. Text frames only — **binary frames are rejected**, and that is architectural (§23.2). |
-| `/health` | liveness: this process. Stays `200` while Redis is down, because the process is fine. |
-| `/ready` | readiness: **Redis, not PostgreSQL.** A backend with a dead database still serves chat correctly and must stay in the load balancer. `503` when Redis is unreachable. |
-| `/metrics` | Prometheus text format. nginx returns **404** for it at the edge: the scrape is for the private network, not the internet. |
-
-### The moderation console
-
-Off by default. A deployment that is not being moderated opens no port and holds
-no operator credentials in memory anywhere.
-
-It is a **separate process on its own port**, not a route on the chat server —
-the chat port is the one nginx proxies to the internet, so a console route
-sharing that listener would put "read every retained conversation" one
-`location` block away from public. Never publish `ADMIN_CONSOLE_PORT`; reach it
-through an SSH tunnel.
-
-```bash
-# one operator account. The password comes from the environment, never argv,
-# because arguments are visible in `ps` to every other user on the host.
-cd backend
-ADMIN_PASSWORD='...' npm run console:create -- <username>
-
-# start it
-ADMIN_CONSOLE_ENABLED=true npm run console
-
-# reach it from your laptop, without publishing the port
-ssh -L 8088:127.0.0.1:8088 <host>
-```
-
-`console:create` prints the TOTP secret **once**. There is no path that shows it
-again: a console that can re-display an enrolled secret is one where reading a
-row of the database is enough to log in as its owner. A lost secret means
-deleting the account and making another.
-
-It connects as `karobakbak_console`, a role that can read conversations and
-cannot delete them — deletion belongs to the retention worker. The chat role has
-no access to `admin_accounts` at all. `migrate` creates both roles; passwords for
-them come from secret management (§8.1).
-
-| Path | Serves |
-|---|---|
-| `/` | the console. Three static files, no build step, no third-party script. |
-| `/health` | liveness only. Everything else needs a session. |
-| `/api/*` | the console API. `POST` requires an allowed `Origin`. |
-
-**What using it costs.** Opening a case writes an `admin_audit` row before any
-message is selected, with your account, the report, and the reason you typed. A
-read whose audit row cannot be written returns no content at all. That is the
-point: the guarantee is "a read that was not logged did not happen", not "reads
-are usually logged".
-
-**What a ban is.** A salted hash of the address *and* of the browser token, both
-dimensions, for a bounded period — a speed bump, not a wall, since a new network
-and a cleared cookie defeat it. Permanent bans are not expressible
-(`ENFORCEMENT_MAX_BAN_SECONDS` caps at a year): there is no appeals channel, so
-an indefinite sanction against a hash nobody can identify is one nobody could
-ever lift on evidence.
-
-**Sanctions live in PostgreSQL and are cached in Redis.** Redis runs with
-persistence off by design, so ban keys die with a Redis restart; every backend
-replays live sanctions at startup and every `ENFORCEMENT_RELOAD_INTERVAL_MS`.
-If bans stop being enforced, check that the chat instances can reach the
-database — not that Redis has the keys.
-
-### Metrics
-
-`chat_*`, plus `chat_process_*` for the Node defaults. No metric name, label or
-value ever carries message content — labels come from closed enumerations only.
-
-The families worth knowing: `chat_connections_*`, `chat_queue_depth`,
-`chat_matches_created_total`, `chat_matchmaking_latency_seconds`,
-`chat_messages_{received,delivered,rejected}_total`,
-`chat_delivery_latency_seconds`, `chat_moderation_flags_total`,
-`chat_retention_{queued,flushed,dropped,deleted}_total`,
-`chat_retention_queue_depth`, `chat_db_breaker_state`, `chat_spool_*`,
-`chat_deletion_failures_total`, `chat_backup_*`.
-
-### Alerts
-
-Shipped in `monitoring/prometheus/alerts.yml`:
-
-| Alert | Means |
-|---|---|
-| `BackendDown` | an instance stopped being scraped |
-| `RetentionDeletionFailing` | data is past its deadline and still stored — nothing else in the process will notice (I10) |
-| `SafetyRecordsDropped` | reports/blocks/moderation events were evicted from the write-behind queue: evidence is being lost |
-| `DatabaseCircuitOpen` | writes are spooling instead of landing. Chat is unaffected |
-| `SpoolNearCapacity` | the outage buffer is filling. It is **bounded tolerance, not durable storage** — a host failure loses it (D28) |
-| `BackupsStale` | no successful backup inside the window |
-| `EventLoopLagHigh` | the process is saturated |
-
-### What the write-behind path does under stress
-
-Messages are delivered first and persisted afterwards, through a
-priority-bounded queue → circuit breaker → batched inserts, with a bounded
-on-disk spool while the breaker is open. Under overflow, retention is lossy **by
-design** — but only in priority order, and every drop is counted and alerted,
-never silent. Priority is server-assigned only: nothing a client sends can raise
-its own durability class (D27), and a per-session sub-quota inside each class
-stops one session flooding it (D26).
-
-A rejection is not an outage. A constraint violation proves the database is
-*available* — it parsed the statement and refused the data — so permanent
-SQLSTATE classes (22, 23, 42) are discarded and counted rather than retried
-forever behind an open breaker.
-
-### Retention and deletion
-
-Deadlines are stamped at insert time. A leader-locked deletion worker removes
-rows past their deadline unless `legal_hold` is set; a report extends the
-deadline of what it references in the same transaction that inserts it, so a
-deletion pass running concurrently either has not selected the row yet or finds
-it already re-protected (§10.19).
-
-## Production hardening
-
-The compose stack is a development stack. Before this faces the internet:
-
-* **Age assurance and minor-safety policy are unbuilt and block public launch.**
-  They need legal counsel (`PHASES.md`, security §24). This is not a code TODO.
-* **TLS terminates in front of nginx**, and `DATABASE_REQUIRE_SSL_IN_PRODUCTION`
-  stays `true`.
-* **Set `IP_HASH_SALT` and every credential from secret management.** The
-  passwords in `docker-compose.yml` are local-only placeholders.
-* **Set `TRUST_PROXY_HOPS` to the real number of proxies.** Too high and a
-  client can forge its own address in `X-Forwarded-For`.
-* **Storage encryption at rest, and encrypted backups** for the PostgreSQL
-  volume and the spool volume. Both hold plaintext message bodies. That, plus
-  network isolation and least-privilege credentials, is what replaces
-  application-level encryption (D15, §18.2).
-* **The database security boundary is a first-class requirement, not a
-  backstop.** §18.2 states the residual gap plainly: valid PostgreSQL
-  credentials read message content.
-* **Run migrations as their own step**, with credentials that are not the
-  application's. The application role has no `CREATE` and could not run them.
-* **Neither Redis nor PostgreSQL publishes a host port**, and should not start.
-* **Core dumps are disabled** (`ulimits: core: 0`) and the image pins a
-  `NODE_OPTIONS` with no `--inspect` and no `--heapsnapshot-signal`: a dump or a
-  heap snapshot is a file full of plaintext bodies.
-* **The spool is a named volume, never a bind mount.**
-* Run **one** backend to start (cost §26) and scale on measured resource
-  pressure, not on user count.
-
-## Troubleshooting
-
-**Backend exits immediately in production.** Almost always an empty
-`ALLOWED_ORIGINS` (R9) or a coherence check in `loadConfig`. The error names the
-variable.
-
-**The WebSocket never opens; the upgrade gets `403 origin_not_allowed`.** The
-origin the browser sent is not in the allowlist — it must match scheme, host
-*and* port. The refusal deliberately does not say what *would* have been
-accepted. Watch `chat_connections_rejected_total{reason="origin"}`.
-
-**`/ready` returns 503.** Redis is unreachable. `/health` staying 200 alongside
-it is correct — the process is healthy, its dependency is not.
-
-**Everything returns `SESSION_GONE` and sockets close with 4001.** Redis
-restarted. Persistence is off on purpose (D12), so all live state is gone and
-clients reconnect into new sessions. There is no session resumption by design;
-reconnect always creates a *new* session.
-
-**Two tabs on one machine do match each other.** Sharing an IP and a block
-token does not prevent pairing — only an actual block record does. This is the
-easiest way to try the app. If they do not pair, check `chat_queue_depth`.
-
-**After testing Block, you cannot match any more.** Working as designed, and
-the fix is one command:
-
-```bash
-npm run unblock          # clears every block in Redis (development only)
-```
-
-A block is recorded against the salted IP hash **and** the client-token hash,
-in both directions (D18), and it lasts `BLOCK_TTL_SECONDS` — thirty days by
-default. Two tabs in one browser share both hashes, so blocking your own
-partner puts your own hashes in your own block set and that browser then
-refuses to match itself. Two devices on one network share the IP hash, so
-blocking between them stops those two matching for a month.
-
-Neither is a bug, and both make testing miserable without the escape hatch
-above. The Redis keys are the matching filter; the `blocks` table in PostgreSQL
-is the record and is not consulted during matchmaking, so clearing Redis
-restores matching without rewriting history.
-
-**`DUPLICATE_MESSAGE` on a retry.** Working as intended — `id` is required on
-`message` and deduplicated per match (I14, §10.17).
-
-**`NOT_MATCHED` when sending.** The partner skipped or disconnected in the
-instant before the send (§10.8, §10.9). It is a refusal, not an error; the
-client re-reads authoritative state.
-
-**A load test reports mass connection failures.** Check
-`chat_connections_rejected_total{reason="rate_limited"}` and
-`{reason="too_many_connections"}`. Every VU shares one IP, and both limits are
-per IP — the server is refusing an address that asked for too many sockets too
-quickly, which is its job. Resize the run, or raise the ceiling on the target
-stack for the test. See the sizing note under [Verification](#verification).
-
-**Grafana panels say "no data".** Check Prometheus → Status → Targets: both
-one target per backend replica must be `UP` (Prometheus finds them by DNS, so
-the list follows `--scale`). Grafana's datasource is pinned
-to uid `karobakbak-prometheus` and every panel references it by that uid.
-
-**Integration tests fail to connect.** `npm run redis:test:up` first. They use
-ports 6380 and 5433 deliberately, and their own compose project name
-(`karobakbak-test`), so the two stacks cannot wipe each other in either
-direction — a development stack is never what the tests reset, and
-`npm run down` never takes the test services with it.
-
-**A `pg` error appears in logs as `{}` or with only a code.** Deliberate.
-Driver errors echo parameter values — the row just attempted — on constraint
-violations, so they are logged through `dbErrorFields()` by code, constraint,
-table and routine only.
-
-## Verification
-
-`DESIGN.md` §22, executed at phase 12. Gate: `npm run verify` — protocol check
-OK, both packages typecheck clean, **338 backend unit + 25 frontend unit
-tests** green, and **281 integration tests** green against real Redis, real
-PostgreSQL and real sockets.
-
-| Area | Result |
-|---|---|
-| **Code** | every local import resolves; `tsc --noEmit` clean for both packages; no placeholder implementations; no TODOs for required functionality |
-| **Protocol** | frontend and backend `protocol/types.ts` byte-identical; event names, payload shapes and error codes agree; server-generated fields never read from client frames |
-| **Redis** | key names consistent; every script's KEYS/ARGV arity asserted before the call reaches Redis, and every script has a declared arity; match cleanup symmetric; TTLs applied; duplicate queue entries structurally impossible |
-| **PostgreSQL** | migrations apply from empty; every retained table carries `retention_expires_at`; the deletion worker honours `legal_hold`; no table stores raw IPs, user agents or fingerprints — salted hashes only; the application role holds DML on its own tables, `select, insert` on the audit log, and no `CREATE`; no host port in compose |
-| **Persistence pipeline** | queue bounded per class; per-session sub-quota enforced; priority server-assigned only; breaker opens on repeated failure and drains at a paced rate; spool bounded by size, count and age, survives a partial trailing write, and skips corrupt records |
-| **Concurrency** | all **20** scenarios of §10 have tests |
-| **Infrastructure** | images build; compose service names match every reference; health checks hit real endpoints; Prometheus scrapes both backends; Grafana's datasource uid matches every panel; Redis and PostgreSQL publish nothing to the host |
-| **Data handling** | grep-verified and test-asserted: no log line, metric name, label, value, error message or span receives message content or a report note; no `dangerouslySetInnerHTML` in `frontend/`; database errors logged by code and constraint only; core dumps disabled and no heap-snapshot signal in the production image |
-| **No stale encryption concepts** | the grep returns only infrastructure/storage/backup encryption and TLS, `util/ids.ts` hashing, and the design record's own account of why application-level encryption was removed. No column, config variable, phase entry or live prose claims message bodies are encrypted |
-
-k6 smoke run through nginx against the live stack, 20 VUs for 20s — all five
-thresholds green, exit 0: **66 matches, zero protocol errors**, ack p95 18.7ms,
-0.00% connection failures, 0.00% throttled upgrades. Retention verified end to
-end — conversations and messages in PostgreSQL, breaker closed, both spools
-empty.
-
-> **Sizing a load run.** Every k6 VU shares the generator's single IP, and the
-> abuse controls are per IP (`CONN_RATE_LIMIT` attempts per window,
-> `MAX_CONNECTIONS_PER_IP` concurrent sockets). A load generator is precisely
-> the traffic shape those controls exist to refuse, so the shipped defaults stay
-> inside them. For a real capacity run, raise the ceiling on the target stack
-> for the duration of the test rather than weakening the defaults:
-> `CONN_RATE_LIMIT=100000 MAX_CONNECTIONS_PER_IP=100000 docker compose up -d`,
-> then `k6 run -e VUS=200 -e DURATION=2m load-test/websocket.js`. A throttled
-> upgrade is counted as `kbb_upgrade_throttled`, never as a connect failure —
-> and if most of a run is throttled, that threshold fails so the profile gets
-> resized instead of the result being read as a capacity number.
 
 ## Where to read next
 
-| File | What it is |
+| | |
 |---|---|
-| [`DESIGN.md`](./DESIGN.md) | the contract: invariants, state machine, wire protocol, Redis data model, matchmaking, the §10 concurrency analysis, the threat model, and §23 on what was deliberately rejected |
-| [`PHASES.md`](./PHASES.md) | build order, what is done, and the trigger that pulls each deferred item in |
-| [`docs/operations/OPERATIONS.md`](./docs/operations/OPERATIONS.md) | every command: docker, Redis, PostgreSQL, Prometheus, Grafana, clearing and resetting |
-| [`docs/PROGRESS.md`](./docs/PROGRESS.md) | the running log: what changed each phase, what broke, and why |
-| [`CLAUDE.md`](./CLAUDE.md) | working notes — the rules that override normal judgement, and the things that will bite you |
-| [`docs/`](./docs) | the six product documents. `DESIGN.md` §1.2 records every place they conflicted and how each was resolved; on conflicts of fact, `DESIGN.md` wins |
+| [`DESIGN.md`](./DESIGN.md) | the contract: invariants, state machine, wire protocol, Redis data model, matchmaking, the concurrency analysis, the threat model, and what was deliberately rejected |
+| [`docs/design/ARCHITECTURE.md`](./docs/design/ARCHITECTURE.md) | the architecture with diagrams of every major flow |
+| [`docs/operations/RUNNING.md`](./docs/operations/RUNNING.md) | running, operating and troubleshooting the stack |
+| [`docs/operations/OPERATIONS.md`](./docs/operations/OPERATIONS.md) | every operational command, from Redis to Grafana |
+| [`docs/testing/RESULTS.md`](./docs/testing/RESULTS.md) | load and fault-injection results, with what each run taught |
+| [`PHASES.md`](./PHASES.md) | build order and the roadmap |
+| [`docs/PROGRESS.md`](./docs/PROGRESS.md) | the build log: what changed each phase, what broke and why |
 
 ## Repository layout
 
 ```
 karobakbak/
-├── backend/                 Node + TypeScript + ws + ioredis + pg + prom-client
-│   ├── src/
-│   │   ├── protocol/        wire types, validation (SOURCE OF TRUTH)
-│   │   ├── redis/           keys, client, Lua scripts, typed store
-│   │   ├── ws/              connections, session lifecycle, janitor
-│   │   ├── moderation/      normalisation view, rules, policy engine
-│   │   ├── storage/         migrations, queue, breaker, spool, repositories,
-│   │   │                    deletion worker
-│   │   ├── metrics/         registry
-│   │   └── util/            ids, time
-│   └── tests/               unit (hermetic) + integration (real everything)
-├── frontend/                React + TypeScript + Vite + Tailwind, native WebSocket
+├── backend/            Node + TypeScript: ws, ioredis, pg, prom-client, OpenTelemetry
 │   └── src/
-│       ├── protocol/        byte-identical COPY of the backend types
-│       ├── state/           the UI state machine (a pure reducer)
-│       ├── hooks/           useChat — socket, reconnect, typing throttle
-│       ├── view/            ChatState -> layout, as pure functions
-│       ├── components/      presentational only
-│       ├── ads/             slot provider (no-op)
-│       └── features.ts      flags for surface the server cannot back yet
-├── load-test/               k6 WebSocket load test
-├── monitoring/              Prometheus scrape config + alerts, Grafana
-├── scripts/                 protocol drift checker
-├── docs/                    product documents + PROGRESS log
-├── DESIGN.md · PHASES.md · CLAUDE.md
-├── .env.example             every environment variable, documented
-└── docker-compose.yml       frontend, 2× backend, redis, postgres, monitoring
+│       ├── protocol/   wire types and validation (source of truth)
+│       ├── redis/      keys, Lua scripts, typed store
+│       ├── ws/         connections, session lifecycle, janitor
+│       ├── moderation/ normalisation, rules, policy
+│       ├── storage/    migrations, write-behind queue, breaker, spool, deletion
+│       ├── accounts/   optional sign-in, saved connections
+│       ├── admin/      moderation console, enforcement, audit
+│       ├── personas/   optional AI partners and their guard layer
+│       ├── payments/   feature-flagged, off by default
+│       └── tracing/    OpenTelemetry setup
+├── frontend/           React + TypeScript + Vite + Tailwind
+├── load-test/          k6 smoke test and the population swarm
+├── security-test/      probes for origin checks, proxy trust, protocol abuse
+├── monitoring/         Prometheus, Alertmanager, Grafana, Loki, Tempo, Alloy
+├── ops/                Caddy, Cloudflare Worker, backups, restore, deploy tooling
+├── scripts/            verifiers for protocol drift, config wiring, log hygiene
+├── docs/               design, operations, testing, product, policies
+└── docker-compose*.yml development stack plus production, VPS and Sentinel overlays
 ```
-
-## Scope
-
-Text only. The `type` discriminator on messages exists so a future content type
-does not force a protocol version bump — it is not permission to build media.
-Image, voice and video are deferred behind explicit triggers in `DESIGN.md`
-§23.8, along with anonymous accounts, friend connections, premium entitlements
-and a moderator console. `PHASES.md` lists each with the condition that pulls it
-in.
 
 ## License
 
