@@ -52,7 +52,7 @@ services:
   # Cloudflare - which is what makes `CF-IPCountry`, and therefore the geo-block,
   # trustworthy.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.0
+    image: cloudflare/cloudflared:2026.10.4
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
       TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?the tunnel token from the Cloudflare dashboard (Zero Trust > Networks > Tunnels)}"
